@@ -1,0 +1,23 @@
+{
+  "name": "@scopeguard/cli",
+  "version": "0.4.0-preview",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "agentboard": "bin/agentboard.js",
+    "scopeguard": "bin/scopeguard.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "node bin/scopeguard.js"
+  },
+  "dependencies": {
+    "@scopeguard/codex-runner": "workspace:*",
+    "@scopeguard/core": "workspace:*",
+    "@scopeguard/repo-analyzer": "workspace:*",
+    "@scopeguard/server": "workspace:*"
+  }
+}

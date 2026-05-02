@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+.next/
+coverage/
+.cache/
+.turbo/
+turbo/
+*.tsbuildinfo
+
+.agentboard/worktrees/
+
+# Local planner outputs
+plan.json
+invalid-plan.json
+warning-plan.json
+
+# ScopeGuard local runtime data
+.scopeguard/
+.agentboard/
+
+# Local secrets and logs
+.env
+.env.*
+*.log

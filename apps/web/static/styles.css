@@ -1,0 +1,158 @@
+:root {
+  font-family: "Segoe UI", Tahoma, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fb;
+  color: #1d2433;
+}
+
+.container {
+  padding: 16px;
+}
+
+h1, h2, h3 {
+  margin: 0 0 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(220px, 1fr));
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.column {
+  background: #fff;
+  border: 1px solid #dbe2f0;
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 180px;
+}
+
+.column-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.card {
+  border: 1px solid #ccd6eb;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #fafcff;
+  cursor: pointer;
+}
+
+.card:hover {
+  border-color: #7fa2e8;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.actions button {
+  font-size: 12px;
+  border: 1px solid #b8c7e6;
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.meta {
+  font-size: 12px;
+  color: #5b6882;
+}
+
+.status-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-weight: 700;
+  font-size: 11px;
+  margin-right: 4px;
+  border: 1px solid #cdd7ed;
+  color: #2a3d64;
+  background: #eef3ff;
+}
+
+.status-ready {
+  background: #e8f4ff;
+  border-color: #9dc7f3;
+}
+
+.status-needs_review {
+  background: #fff6df;
+  border-color: #efcf7a;
+}
+
+.status-test_failed {
+  background: #ffeaea;
+  border-color: #ec9a9a;
+}
+
+.status-approved {
+  background: #eaf9ee;
+  border-color: #9ad5aa;
+}
+
+.status-merged {
+  background: #e7f7f4;
+  border-color: #8ed2c6;
+}
+
+.status-conflict {
+  background: #ffefdf;
+  border-color: #e7b27a;
+}
+
+.status-blocked {
+  background: #f3efff;
+  border-color: #b8a9e8;
+}
+
+.status-closed {
+  background: #eef1f4;
+  border-color: #b7c0cc;
+  color: #3a4656;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #dbe2f0;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f8faff;
+  border: 1px solid #e2e8f5;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.section {
+  margin-bottom: 12px;
+}
