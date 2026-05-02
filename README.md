@@ -85,6 +85,18 @@ It helps turn AI coding from a one-shot generation step into a controlled engine
 5. Review the generated diff and report.
 6. Approve and merge only after scope and review checks pass.
 
+```mermaid
+flowchart LR
+    A["Requirement"] --> B["Plan Tasks"]
+    B --> C["Set Scope and Locks"]
+    C --> D["Run in Worktree"]
+    D --> E["Verify Scope and Commands"]
+    E --> F["Review Report"]
+    F --> G{"Approved?"}
+    G -->|Yes| H["Merge Safely"]
+    G -->|No| I["Revise or Reject"]
+```
+
 ## Quick Start
 
 ```powershell
