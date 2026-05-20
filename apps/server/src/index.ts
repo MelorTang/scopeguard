@@ -4260,12 +4260,18 @@ function resolveReviewAssignmentStatus(gitRoot: string, taskId: string): "none" 
 }
 function toDesktopTaskListItem(gitRoot: string, task: TaskRecord): DesktopTaskListItem {
   const effectiveExecutor = resolveEffectiveTaskExecutor(task);
+  // Compute display status reflecting dispatch state
+  const hasActiveExec = task.id ? findTaskAssignment(gitRoot, task.id, "execution") !== null : false;
+  let displayStatus = mapCoreStatusToDesktopStatus(task.status);
+  if (displayStatus === "Ready" && hasActiveExec) {
+    displayStatus = "In Progress";
+  }
   return {
     id: task.id,
     projectId: task.projectId,
     title: task.title,
     subtitle: buildTaskSubtitle(gitRoot, task),
-    status: mapCoreStatusToDesktopStatus(task.status),
+    status: displayStatus,
     rawStatus: task.status as CoreTaskStatus,
     riskLevel: task.riskLevel,
     updatedAt: task.updatedAt,
@@ -4526,6 +4532,11 @@ function buildTaskSubtitle(gitRoot: string, task: TaskRecord): string {
       return depTask && depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed";
     });
     if (depBlocked) return "Waiting on dependency";
+  }
+  // If task has an active execution assignment, show queued/dispatched
+  const hasActiveExec = task.id ? findTaskAssignment(gitRoot, task.id, "execution") !== null : false;
+  if (task.status === "ready" && hasActiveExec) {
+    return "Queued — awaiting pickup";
   }
   switch (task.status) {
     case "ready":
