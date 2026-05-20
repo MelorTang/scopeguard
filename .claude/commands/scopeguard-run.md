@@ -1,4 +1,4 @@
-Immediately run one ScopeGuard task workflow using the four MCP tools (scopeguard_status, scopeguard_list_pending, scopeguard_claim_assignment, scopeguard_finish_assignment).
+Immediately run one ScopeGuard task workflow using the five MCP tools (scopeguard_status, scopeguard_list_pending, scopeguard_claim_assignment, scopeguard_submit_review, scopeguard_finish_assignment).
 
 CRITICAL: Your output must be ONLY the final report below. Do not output anything else.
 
@@ -29,9 +29,13 @@ Execution rules (call tools in order, stop at the first applicable result):
 
 4. Execute the task using the returned handoff. Work within allowedFiles only.
 
-5. Report results via scopeguard_finish_assignment. Do not skip this step.
+5. If the handoff title mentions "Review assignment", evaluate the task result against acceptance criteria and call scopeguard_submit_review with your verdict.
+   - status: "ready_for_review" if criteria are met, "needs_attention" if changes are needed.
+   - suggestion: detailed feedback explaining your verdict.
 
-6. Output the final report in the format above. Only one line per field. No additional commentary.
+6. Report results via scopeguard_finish_assignment. Do not skip this step.
+
+7. Output the final report in the format above. Only one line per field. No additional commentary.
 
 Forbidden:
 - Do NOT output anything before the final report (no reasoning, no explanation, no thinking).

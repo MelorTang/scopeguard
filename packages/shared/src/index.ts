@@ -46,6 +46,7 @@ export type DesktopTaskListItem = {
   acceptanceCriteria?: string[];
   commands?: string[];
   dependsOn?: string[];
+  depBlocked?: boolean;
   priority: string;
   parallelizable: boolean;
   reviewAssignmentStatus: "none" | "pending" | "claimed";
@@ -94,12 +95,14 @@ export type DesktopTaskDetail = {
   preferredExecutor: DesktopExecutorId | null;
   assignedExecutor: DesktopExecutorId | null;
   dependsOn: string[];
+  depBlocked: boolean;
   parallelizable: boolean;
   priority: string;
   latestRunResult: DesktopLatestRunResult | null;
   latestReviewSummary: DesktopTaskReviewSummary | null;
   dispatchInfo: DesktopTaskDispatchInfo;
   assignmentId: string | null;
+  activeExecutionAssignmentId: string | null;
   reviewAssignmentStatus: "none" | "pending" | "claimed";
   reviewStatus: "none" | "ready_for_review" | "needs_attention";
   createdAt: string;

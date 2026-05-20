@@ -77,6 +77,9 @@ const MCP_VERSION = "2025-03-26";
 
 let serverSessionId = null;
 let serverCapabilities = {};
+let sessionHeartbeatId = null;
+
+const HEARTBEAT_INTERVAL_MS = 25000; // 25s — keeps session present within 45s staleness window
 
 // ── HTTP helpers (mirroring external-bridge-example.js) ──────────────────
 
@@ -203,6 +206,15 @@ async function ensureSession() {
   serverSessionId = initRes.sessionId;
   serverCapabilities = initRes.serverCapabilities || {};
   debug("ensureSession: session established, id=" + serverSessionId);
+  // Start periodic heartbeat to keep session presence alive
+  if (sessionHeartbeatId) clearInterval(sessionHeartbeatId);
+  sessionHeartbeatId = setInterval(function () {
+    if (!serverSessionId) return;
+    httpPost("/api/desktop/external/ping", { sessionId: serverSessionId, clientName: CLIENT_NAME }).catch(function () {
+      debug("heartbeat failed — session may have expired");
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+  debug("heartbeat started: interval=" + HEARTBEAT_INTERVAL_MS + "ms");
   return serverSessionId;
 }
 
@@ -284,6 +296,27 @@ async function toolClaimAssignment(args) {
   };
 }
 
+async function toolCancelAssignment(args) {
+  await ensureSession();
+  if (!args || !args.assignmentId) {
+    return { isError: true, content: [{ type: "text", text: "assignmentId is required." }] };
+  }
+  var cancelRes = await httpPost("/api/desktop/external/pending/" + encodeURIComponent(args.assignmentId) + "/cancel", {})
+    .catch(function (err) {
+      return { error: err.message };
+    });
+  if (cancelRes.error || !cancelRes.ok) {
+    return { isError: true, content: [{ type: "text", text: "Cancel failed: " + (cancelRes.error || cancelRes.message || JSON.stringify(cancelRes)) }] };
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify({
+      ok: true,
+      assignmentId: args.assignmentId,
+      status: "canceled",
+    }, null, 2) }],
+  };
+}
+
 async function toolFinishAssignment(args) {
   await ensureSession();
   if (!args || !args.assignmentId || !args.taskId) {
@@ -339,6 +372,35 @@ async function toolFinishAssignment(args) {
   };
 }
 
+async function toolSubmitReview(args) {
+  await ensureSession();
+  if (!args || !args.taskId || !args.status || !args.suggestion) {
+    return { isError: true, content: [{ type: "text", text: "taskId, status, and suggestion are required." }] };
+  }
+  if (args.status !== "ready_for_review" && args.status !== "needs_attention") {
+    return { isError: true, content: [{ type: "text", text: "status must be 'ready_for_review' or 'needs_attention'." }] };
+  }
+  const revRes = await httpPost("/api/desktop/tasks/" + encodeURIComponent(args.taskId) + "/external-review", {
+    executorId: EXECUTOR_ID,
+    externalSessionId: "review-" + Date.now(),
+    status: args.status,
+    suggestion: args.suggestion,
+    sessionId: serverSessionId,
+  }).catch(function (err) {
+    return { error: err.message };
+  });
+  if (revRes.error) {
+    return { isError: true, content: [{ type: "text", text: "Review submission failed: " + revRes.error }] };
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify({
+      ok: revRes.ok,
+      taskId: args.taskId,
+      reviewStatus: args.status,
+    }, null, 2) }],
+  };
+}
+
 // ── MCP request router ────────────────────────────────────────────────────
 
 function handleMcpRequest(request) {
@@ -371,7 +433,7 @@ function handleMcpRequest(request) {
   }
 
   if (method === "tools/list") {
-    debug("tools/list called — advertising 4 tools: scopeguard_status, scopeguard_list_pending, scopeguard_claim_assignment, scopeguard_finish_assignment");
+    debug("tools/list called — advertising 6 tools: scopeguard_status, scopeguard_list_pending, scopeguard_claim_assignment, scopeguard_cancel_assignment, scopeguard_finish_assignment, scopeguard_submit_review");
     return Promise.resolve({
       jsonrpc: "2.0",
       id: id,
@@ -426,6 +488,30 @@ function handleMcpRequest(request) {
               required: ["assignmentId", "taskId"],
             },
           },
+          {
+            name: "scopeguard_submit_review",
+            description: "Submit a structured review result for a task after evaluating the execution output. Must be called before finishing a review assignment.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                taskId: { type: "string", description: "The task ID to submit review for" },
+                status: { type: "string", enum: ["ready_for_review", "needs_attention"], description: "Review verdict: ready_for_review = passed, needs_attention = changes requested" },
+                suggestion: { type: "string", description: "Detailed review feedback explaining the verdict" },
+              },
+              required: ["taskId", "status", "suggestion"],
+            },
+          },
+          {
+            name: "scopeguard_cancel_assignment",
+            description: "Cancel a pending or claimed execution assignment and reset the task to ready for re-queue.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                assignmentId: { type: "string", description: "The assignment ID to cancel" },
+              },
+              required: ["assignmentId"],
+            },
+          },
         ],
       },
     });
@@ -440,7 +526,9 @@ function handleMcpRequest(request) {
     if (toolName === "scopeguard_status") handler = toolStatus;
     else if (toolName === "scopeguard_list_pending") handler = toolListPending;
     else if (toolName === "scopeguard_claim_assignment") handler = toolClaimAssignment;
+    else if (toolName === "scopeguard_cancel_assignment") handler = toolCancelAssignment;
     else if (toolName === "scopeguard_finish_assignment") handler = toolFinishAssignment;
+    else if (toolName === "scopeguard_submit_review") handler = toolSubmitReview;
     else {
       return Promise.resolve({
         jsonrpc: "2.0",
@@ -522,8 +610,11 @@ function handleMcpRequest(request) {
                   "3. Call scopeguard_claim_assignment with the first assignmentId.",
                   "   - If claim fails: output status: failed / result: <error>. Stop.",
                   "4. Execute the task using the returned handoff. Work within allowedFiles only.",
-                  "5. Call scopeguard_finish_assignment with results. Do not skip this step.",
-                  "6. Output the final report. Only one line per field. No additional text.",
+                  "5. If the handoff contains a review assignment (title mentions 'Review assignment'), evaluate the task result against acceptance criteria, then call scopeguard_submit_review with your review verdict.",
+                  "   - status: 'ready_for_review' if criteria are met, 'needs_attention' if changes are needed.",
+                  "   - suggestion: detailed feedback explaining your verdict.",
+                  "6. Call scopeguard_finish_assignment with results. Do not skip this step.",
+                  "7. Output the final report. Only one line per field. No additional text.",
                   "",
                   "Forbidden:",
                   "- Do NOT output anything before the final report.",

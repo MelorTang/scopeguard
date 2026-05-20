@@ -24,8 +24,8 @@
 
   // ── Build identity ──
   // Updated manually each deploy so the UI shows what version is running.
-  const WEB_BUILD_TIME = "2026-05-20T08:45:00.000Z";
-  const WEB_BUILD_LABEL = "2026-05-20 08:45 UTC";
+  const WEB_BUILD_TIME = "2026-05-20T13:00:00.000Z";
+  const WEB_BUILD_LABEL = "2026-05-20 13:00 UTC";
 
   function App() {
     const [projects, setProjects] = useState([]);
@@ -63,6 +63,7 @@
     const [cliTestResults, setCliTestResults] = useState({});
     const [recentRuns, setRecentRuns] = useState([]);
     const [projectSummary, setProjectSummary] = useState(null);
+    const [projectTaskSummary, setProjectTaskSummary] = useState(null);
     const [draftInput, setDraftInput] = useState("");
     const [homeDraftInput, setHomeDraftInput] = useState("");
     const [editingProjectTitle, setEditingProjectTitle] = useState(false);
@@ -106,6 +107,15 @@
     useEffect(function () {
       activeTaskIdRef.current = activeTaskId;
     }, [activeTaskId]);
+
+    // Periodic connected clients polling
+    useEffect(function () {
+      refreshConnectedClients();
+      var pollId = setInterval(function () {
+        refreshConnectedClients();
+      }, 30000);
+      return function () { clearInterval(pollId); };
+    }, [activeProjectId]);
 
     async function boot(targetProjectId) {
       setLoading(true);
@@ -308,6 +318,7 @@
 
     function resetTaskState() {
       setTasks([]);
+      setProjectTaskSummary(null);
       setActiveTaskId(null);
       setTaskDetail(null);
       setTaskContext(null);
@@ -358,6 +369,26 @@
       }
     }
 
+    // ── Refresh connected clients for current active project ──
+    async function refreshConnectedClients() {
+      var rootPath = activeProject && activeProject.rootPath ? activeProject.rootPath : "";
+      if (!activeProjectId || !rootPath) return;
+      var desktopApi = getDesktopApi();
+      var token = "";
+      if (desktopApi && typeof desktopApi.getExternalApiToken === "function") {
+        try {
+          var tokenResult = await desktopApi.getExternalApiToken(rootPath);
+          if (tokenResult && tokenResult.ok && tokenResult.token) token = tokenResult.token;
+        } catch { /* ignore */ }
+      }
+      if (token) {
+        try {
+          var clientsRes = await fetchJson("/api/desktop/external/clients", { externalApiToken: token });
+          if (clientsRes && Array.isArray(clientsRes.clients)) setConnectedClients(clientsRes.clients);
+        } catch { /* ignore */ }
+      }
+    }
+
     async function loadProjectTasks(projectId, preferredTaskId) {
       const result = await fetchJson("/api/desktop/projects/" + encodeURIComponent(projectId) + "/tasks");
       const nextTasks = Array.isArray(result.tasks) ? result.tasks : [];
@@ -366,6 +397,7 @@
         : null;
 
       setTasks(nextTasks);
+      setProjectTaskSummary(result.summary || null);
       setActiveProjectId(projectId);
       activeProjectIdRef.current = projectId;
 
@@ -393,6 +425,7 @@
       const result = await fetchJson("/api/desktop/projects/" + encodeURIComponent(projectId) + "/tasks");
       const nextTasks = Array.isArray(result.tasks) ? result.tasks : [];
       setTasks(nextTasks);
+      setProjectTaskSummary(result.summary || null);
       activeProjectIdRef.current = projectId;
       if (preferredTaskId && !nextTasks.some(function (task) { return task.id === preferredTaskId; })) {
         setActiveTaskId(null);
@@ -541,6 +574,8 @@
         setTaskRuns([]);
         setView("task");
         loadTaskRuns(taskId);
+        // Refresh sidebar task list so dependency badges and statuses stay consistent with the detail page
+        refreshTaskList(projectId, null).catch(function () {});
 
         if (persist !== false) {
           await persistSession({
@@ -796,7 +831,7 @@
           await appendMessages(incoming);
         }
 
-        if (action === "approve") { console.log("[scopeguard-web] approve request ok"); setMessage("Task approved."); await refreshCurrentTask(); }
+        if (action === "approve") { console.log("[scopeguard-web] approve request ok"); setMessage("Task approved."); await refreshCurrentTask(); refreshConnectedClients(); }
 
         if (action === "review") {
           await refreshCurrentTask();
@@ -823,6 +858,7 @@
           if (activeProjectId) {
             await refreshTaskList(activeProjectId, activeTaskId);
           }
+          refreshConnectedClients();
         }
 
         if (action === "update-details") {
@@ -1025,6 +1061,113 @@
       }
     }
 
+    async function handleCancelAssignment() {
+      if (!activeTaskId || !taskDetail) {
+        console.log("[scopeguard-web] handleCancelAssignment: no activeTaskId or taskDetail");
+        return;
+      }
+      var execAssignId = taskDetail.activeExecutionAssignmentId;
+      if (!execAssignId) {
+        setError("No active execution assignment to cancel.");
+        return;
+      }
+      setError("");
+      setMessage("Canceling dispatch...");
+      console.log("[scopeguard-web] handleCancelAssignment: taskId=" + activeTaskId + " assignmentId=" + execAssignId);
+      try {
+        var result = await fetchJson("/api/desktop/external/pending/" + encodeURIComponent(execAssignId) + "/cancel", {
+          method: "POST"
+        });
+        if (result && result.ok) {
+          setMessage("Dispatch canceled. Task is ready to queue again.");
+          // Refresh task detail and sidebar task list so status badges update
+          if (activeProjectId && activeTaskId) {
+            await selectTask(activeProjectId, activeTaskId, true);
+          }
+          if (activeProjectId) {
+            loadProjectTasks(activeProjectId).catch(function (e) {
+              console.log("[scopeguard-web] handleCancelAssignment: loadProjectTasks error: " + (e && e.message || e));
+            });
+          }
+        } else {
+          var errMsg = result && result.message ? result.message : "Cancel failed.";
+          console.log("[scopeguard-web] handleCancelAssignment: rejected: " + errMsg);
+          setError(errMsg);
+        }
+      } catch (err) {
+        var errMsg = err && err.message ? err.message : "Cancel failed.";
+        console.log("[scopeguard-web] handleCancelAssignment: error: " + errMsg);
+        setError(errMsg);
+      }
+    }
+
+    async function handleBatchQueue() {
+      if (!activeProjectId) {
+        setError("No active project.");
+        return;
+      }
+      setError("");
+      setMessage("Queueing ready tasks...");
+      try {
+        var result = await fetchJson("/api/desktop/projects/" + encodeURIComponent(activeProjectId) + "/queue-ready", {
+          method: "POST"
+        });
+        if (result && result.ok) {
+          var parts = [];
+          if (result.queued && result.queued.length > 0) {
+            parts.push("Queued " + String(result.queued.length) + " task(s).");
+          }
+          if (result.skipped && result.skipped.length > 0) {
+            var skipSummary = result.skipped.map(function (s) { return s.message; }).join("; ");
+            parts.push("Skipped " + String(result.skipped.length) + " (" + skipSummary + ").");
+          }
+          setMessage(parts.length > 0 ? parts.join(" ") : "No tasks were eligible to queue.");
+          if (activeProjectId) {
+            await refreshTaskList(activeProjectId, null);
+          }
+        } else {
+          var errMsg = result && result.message ? result.message : "Batch queue failed.";
+          setError(errMsg);
+        }
+      } catch (err) {
+        var errMsg = err && err.message ? err.message : "Failed to queue tasks.";
+        setError(errMsg);
+      }
+    }
+
+    async function handleBatchCancel() {
+      if (!activeProjectId) {
+        setError("No active project.");
+        return;
+      }
+      setError("");
+      setMessage("Canceling active dispatches...");
+      try {
+        var result = await fetchJson("/api/desktop/projects/" + encodeURIComponent(activeProjectId) + "/cancel-dispatches", {
+          method: "POST"
+        });
+        if (result && result.ok) {
+          var parts = [];
+          if (result.canceled && result.canceled.length > 0) {
+            parts.push("Canceled " + String(result.canceled.length) + " active dispatch(es).");
+          }
+          if (result.skipped && result.skipped.length > 0) {
+            parts.push("Skipped " + String(result.skipped.length) + " (" + result.skipped.map(function (s) { return s.message; }).join("; ") + ").");
+          }
+          setMessage(parts.length > 0 ? parts.join(" ") : "No active dispatches to cancel.");
+          if (activeProjectId) {
+            await refreshTaskList(activeProjectId, null);
+          }
+        } else {
+          var errMsg = result && result.message ? result.message : "Batch cancel failed.";
+          setError(errMsg);
+        }
+      } catch (err) {
+        var errMsg = err && err.message ? err.message : "Failed to cancel dispatches.";
+        setError(errMsg);
+      }
+    }
+
     async function handleProjectPlan(textOverride, options) {
       var text = String(textOverride != null ? textOverride : homeDraftInput || "").trim();
       var config = options || {};
@@ -1183,6 +1326,25 @@
         "#     }",
         "#   }",
       ].join("\n");
+    }
+
+    // ── Project-local MCP JSON snippet for Claude Desktop config ──
+    function buildProjectMCPJsonSnippet(projectRoot, token) {
+      var baseUrl = "http://127.0.0.1:" + (typeof SCOPEGUARD_PORT !== "undefined" ? String(SCOPEGUARD_PORT) : "3737");
+      var rootPath = String(projectRoot || "").replace(/\\/g, "/");
+      var bridgePath = rootPath ? rootPath + "/scripts/scopeguard-mcp-bridge.js" : "scripts/scopeguard-mcp-bridge.js";
+      return JSON.stringify({
+        "scopeguard-connect": {
+          command: "node",
+          args: [bridgePath],
+          env: {
+            SCOPEGUARD_BASE_URL: baseUrl,
+            SCOPEGUARD_TOKEN: token || "<project-token>",
+            SCOPEGUARD_EXECUTOR_ID: "claude-cli",
+          },
+          description: "ScopeGuard MCP bridge for " + rootPath.replace(/^.*[\\/]/, ""),
+        }
+      }, null, 2);
     }
 
     function buildQuickConnectText() {
@@ -1940,7 +2102,7 @@
                                 ]),
                                 h("div", { key: "status-group", className: "task-status-group" }, [
                                   h("span", { key: "badge", className: "status-badge status-" + slugStatus(task.status) }, task.status),
-                                  (function () { var rb = null; if (task.rawStatus === "approved" || task.rawStatus === "merged" || task.rawStatus === "closed") { /* no badge for terminal states */ } else if (task.reviewStatus === "needs_attention") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-needs-attn" }, "Needs attention"); } else if (task.reviewStatus === "ready_for_review") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-ready" }, "Ready for approval"); } else if (task.reviewAssignmentStatus === "claimed") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-claimed" }, "Review in progress"); } else if (task.reviewAssignmentStatus === "pending") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-pending" }, "Review queued"); } return rb; })()
+                                  (function () { var rb = null; if (task.rawStatus === "approved" || task.rawStatus === "merged" || task.rawStatus === "closed") { /* no badge for terminal states */ } else if (task.depBlocked) { rb = h("span", { key: "dep-badge", className: "review-meta-badge review-meta-pending" }, "Waiting on dependency"); } else if (task.reviewStatus === "needs_attention") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-needs-attn" }, "Needs attention"); } else if (task.reviewStatus === "ready_for_review") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-ready" }, "Ready for approval"); } else if (task.reviewAssignmentStatus === "claimed") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-claimed" }, "Review in progress"); } else if (task.reviewAssignmentStatus === "pending") { rb = h("span", { key: "review-badge", className: "review-meta-badge review-meta-pending" }, "Review queued"); } return rb; })()
                                 ])
                               ]);
                             })
@@ -1972,7 +2134,7 @@
               ? renderEmptyState(folderNotice, handleOpenProjectFolder, handleInitializeProject)
               : view === "task" && taskDetail
                 ? renderTaskWorkspace(activeProject, taskDetail, taskContext, thread, draftInput, setDraftInput, handleMessageAction, runTaskAction, handleSend, currentDrawerState(), toggleDrawer, editingTaskTitle, taskRenameDraft, setTaskRenameDraft, setEditingTaskTitle, handleTaskRenameSave, selectedContextFilePath, selectedContextFileContent, selectedContextFileLoading, openContextFilePreview, streamingTaskReply, executors, activeRun, handleTaskRun, handleCopyHandoff, handleImportExternalResult, handoffPreviewText, setHandoffPreviewText, lastCompletedRun, handleQueueAssignment, deletingDraft, setDeletingDraft, setMessage, setError, activeProjectId, loadProjectTasks, setView, setActiveTaskId, setTaskDetail, setTaskContext, setThread, externalApiToken)
-                : renderHome(activeProject, tasks, projectThread, homeDraftInput, setHomeDraftInput, handleProjectMessageAction, handleHomeSend, handleInitializeProject, handleInitializeGit, handleOpenProjectFolder, handleProjectTrust, editingProjectTitle, projectRenameDraft, setProjectRenameDraft, setEditingProjectTitle, handleProjectRenameSave, selectTask, projectOverviewExpanded, setProjectOverviewExpanded, streamingProjectReply, planningTasks, planningBusy, recentRuns, projectSummary, capabilityMenuVisible, setCapabilityMenuVisible, handleProjectPlan, startTaskConversationFromProjectGoal, openSettings, setConnectionGuideVisible, connectedClients, externalApiToken, showAddTaskForm, setShowAddTaskForm, showImportPlanForm, setShowImportPlanForm, importPlanText, setImportPlanText, addTaskTitle, setAddTaskTitle, setPlanningTasks, setMessage, setError, activeProjectId, loadProjectTasks, refreshProjectOverview, deletePersistedProposalItems)
+                : renderHome(activeProject, tasks, projectThread, homeDraftInput, setHomeDraftInput, handleProjectMessageAction, handleHomeSend, handleInitializeProject, handleInitializeGit, handleOpenProjectFolder, handleProjectTrust, editingProjectTitle, projectRenameDraft, setProjectRenameDraft, setEditingProjectTitle, handleProjectRenameSave, selectTask, projectOverviewExpanded, setProjectOverviewExpanded, streamingProjectReply, planningTasks, planningBusy, recentRuns, projectSummary, projectTaskSummary, capabilityMenuVisible, setCapabilityMenuVisible, handleProjectPlan, handleBatchQueue, handleBatchCancel, startTaskConversationFromProjectGoal, openSettings, setConnectionGuideVisible, connectedClients, executors, externalApiToken, showAddTaskForm, setShowAddTaskForm, showImportPlanForm, setShowImportPlanForm, importPlanText, setImportPlanText, addTaskTitle, setAddTaskTitle, setPlanningTasks, setMessage, setError, activeProjectId, loadProjectTasks, refreshProjectOverview, deletePersistedProposalItems)
         ])
       ])
     ]);
@@ -2410,7 +2572,7 @@
     ]);
   }
 
-  function renderHome(project, tasks, projectThread, homeDraftInput, setHomeDraftInput, handleProjectMessageAction, handleHomeSend, handleInitializeProject, handleInitializeGit, handleOpenProjectFolder, handleProjectTrust, editingProjectTitle, projectRenameDraft, setProjectRenameDraft, setEditingProjectTitle, handleProjectRenameSave, selectTask, projectOverviewExpanded, setProjectOverviewExpanded, streamingProjectReply, planningTasks, planningBusy, recentRuns, projectSummary, capabilityMenuVisible, setCapabilityMenuVisible, handleProjectPlan, startTaskConversationFromProjectGoal, openSettings, setConnectionGuideVisible, connectedClients, externalApiToken, showAddTaskForm, setShowAddTaskForm, showImportPlanForm, setShowImportPlanForm, importPlanText, setImportPlanText, addTaskTitle, setAddTaskTitle, setPlanningTasks, setMessage, setError, activeProjectId, loadProjectTasks, refreshProjectOverview, deletePersistedProposalItems) {
+  function renderHome(project, tasks, projectThread, homeDraftInput, setHomeDraftInput, handleProjectMessageAction, handleHomeSend, handleInitializeProject, handleInitializeGit, handleOpenProjectFolder, handleProjectTrust, editingProjectTitle, projectRenameDraft, setProjectRenameDraft, setEditingProjectTitle, handleProjectRenameSave, selectTask, projectOverviewExpanded, setProjectOverviewExpanded, streamingProjectReply, planningTasks, planningBusy, recentRuns, projectSummary, projectTaskSummary, capabilityMenuVisible, setCapabilityMenuVisible, handleProjectPlan, handleBatchQueue, handleBatchCancel, startTaskConversationFromProjectGoal, openSettings, setConnectionGuideVisible, connectedClients, executors, externalApiToken, showAddTaskForm, setShowAddTaskForm, showImportPlanForm, setShowImportPlanForm, importPlanText, setImportPlanText, addTaskTitle, setAddTaskTitle, setPlanningTasks, setMessage, setError, activeProjectId, loadProjectTasks, refreshProjectOverview, deletePersistedProposalItems) {
   var isLocalWorkspace = project.source === "local-folder";
   var isManagedProject = project.isInitialized;
   var activeTasks = Array.isArray(tasks) ? tasks : [];
@@ -2665,10 +2827,30 @@ return h("div", { className: "workspace-shell" }, [
             h("div", { className: "project-header-meta" }, [
               h("span", { className: "mode-badge" }, isManagedProject ? "Managed" : isLocalWorkspace ? "Workspace" : "Git Repo"),
               project.defaultBranch ? h("span", { className: "title-caption" }, "Branch " + project.defaultBranch) : null,
-              h("span", { className: "title-caption" }, String(activeTasks.length) + " open tasks"),
-              connectedClients && connectedClients.length > 0 ? h("span", { className: "title-caption connected-clients-badge" }, connectedClients.filter(function (c) { return c.status === "online"; }).length + " agent(s) online") : null,
-              reviewCount > 0 ? h("span", { className: "title-caption" }, String(reviewCount) + " in review") : null,
-              blockedCount > 0 ? h("span", { className: "title-caption" }, String(blockedCount) + " blocked") : null
+              h("span", { className: "title-caption" }, String(activeTasks.length) + " open task(s)"),
+              connectedClients && connectedClients.length > 0 ? h("span", { className: "title-caption connected-clients-badge" }, (function () {
+  var grouped = {};
+  connectedClients.forEach(function (c) {
+    var key = c.executorId || "unknown";
+    if (!grouped[key] || (c.status === "online" && grouped[key].status !== "online")) {
+      grouped[key] = c;
+    }
+  });
+  var parts = [];
+  for (var exId in grouped) {
+    var ex = grouped[exId];
+    parts.push(ex.status === "online"
+      ? executorDisplayName(executors, exId)
+      : executorDisplayName(executors, exId) + " (" + ex.status + ")");
+  }
+  return parts.length > 0 ? parts.join(", ") + " online" : "0 agents online";
+})()) : null,
+              projectTaskSummary && projectTaskSummary.readyToQueue > 0 ? h("span", { className: "title-caption" }, String(projectTaskSummary.readyToQueue) + " ready to queue") : null,
+              projectTaskSummary && projectTaskSummary.queued > 0 ? h("span", { className: "title-caption" }, String(projectTaskSummary.queued) + " queued") : null,
+              projectTaskSummary && projectTaskSummary.awaitingReview > 0 ? h("span", { className: "title-caption" }, String(projectTaskSummary.awaitingReview) + " in review") : null,
+              projectTaskSummary && projectTaskSummary.blockedByDependency > 0 ? h("span", { className: "title-caption" }, String(projectTaskSummary.blockedByDependency) + " blocked by dependency") : null,
+              projectTaskSummary && projectTaskSummary.needsAttention > 0 ? h("span", { className: "title-caption" }, String(projectTaskSummary.needsAttention) + " needs attention") : null,
+              projectTaskSummary && projectTaskSummary.approved > 0 ? h("span", { className: "title-caption" }, String(projectTaskSummary.approved) + " approved") : null,
             ])
           ]),
           h("div", { className: "project-header-path" }, project.rootPath)
@@ -2677,6 +2859,12 @@ return h("div", { className: "workspace-shell" }, [
       h("div", { className: "header-actions" }, [
         isLocalWorkspace ? h("button", { className: "primary-button", onClick: function () { void handleInitializeGit(); } }, "Initialize Git") : null,
         !isManagedProject && !isLocalWorkspace ? h("button", { className: "primary-button", onClick: function () { void handleInitializeProject(); } }, "Enable Managed Project") : null,
+        projectTaskSummary && projectTaskSummary.readyToQueue > 0
+          ? h("button", { className: "primary-button", style: { marginLeft: "4px" }, onClick: function () { void handleBatchQueue(); } }, "Queue ready tasks (" + String(projectTaskSummary.readyToQueue) + ")")
+          : null,
+        projectTaskSummary && projectTaskSummary.queued > 0
+          ? h("button", { className: "ghost-button", style: { marginLeft: "4px", color: "#c44" }, onClick: function () { void handleBatchCancel(); } }, "Cancel active dispatches (" + String(projectTaskSummary.queued) + ")")
+          : null,
         h("button", { className: "ghost-button", title: "Open project folder", onClick: function () { void handleOpenProjectFolder(); } }, "[Folder]")
       ])
     ]),
@@ -2903,12 +3091,6 @@ return h("div", { className: "workspace-shell" }, [
         ? "logs"
         : null;
 
-    function executorDisplayName(id) {
-      if (!executors || !Array.isArray(executors)) return id;
-      const ex = executors.find(function (e) { return e.id === id; });
-      return ex && ex.displayName ? ex.displayName : id;
-    }
-
     // ── Unified primary task state machine ─────────────────────────────
     function computePrimaryTaskState(td, tc) {
       const isDraft = td.isDraft === true;
@@ -2954,14 +3136,22 @@ return h("div", { className: "workspace-shell" }, [
           showQueue: false, showQueued: false, showNoClient: false };
       }
 
-      // 5. Dispatch: queued
+      // 5. DepBlocked overrides dispatched — if a task is blocked by dependency,
+      //    show that even if it has a pending assignment (the assignment is stale).
+      if (td.depBlocked) {
+        return { label: "Blocked by Dependency", type: "blocked-by-dependency",
+          showQueue: false, showQueued: false, showNoClient: false,
+          assignedExecutor: (dispatch && dispatch.assignedExecutor) || td.assignedExecutor || "agent" };
+      }
+
+      // 6. Dispatch: queued
       if (dispatch && dispatch.status === "dispatched") {
         return { label: "Queued", type: "queued",
           showQueue: false, showQueued: true, showNoClient: false,
           assignedExecutor: dispatch.assignedExecutor || td.assignedExecutor || "agent" };
       }
 
-      // 6. Dispatch: ready or no_client (no run yet)
+      // 7. Dispatch: ready or no_client (no run yet)
       if (dispatch && (dispatch.status === "ready" || dispatch.status === "no_client" || dispatch.status === "idle")) {
         if (isDraft) {
           return { label: "Draft", type: "draft",
@@ -3005,7 +3195,7 @@ return h("div", { className: "workspace-shell" }, [
     const captionText = (function () {
   var parts = [];
   if (taskDetail && (taskDetail.assignedExecutor || (taskDetail.dispatchInfo && taskDetail.dispatchInfo.assignedExecutor))) {
-    parts.push("Connected route: " + executorDisplayName((taskDetail.assignedExecutor || (taskDetail.dispatchInfo && taskDetail.dispatchInfo.assignedExecutor))));
+    parts.push("Connected route: " + executorDisplayName(executors, (taskDetail.assignedExecutor || (taskDetail.dispatchInfo && taskDetail.dispatchInfo.assignedExecutor))));
   } else {
     parts.push("Project orchestration");
   }
@@ -3027,6 +3217,9 @@ return h("div", { className: "workspace-shell" }, [
   } else if (taskDetail.latestReviewSummary && taskDetail.latestReviewSummary.status === "ready_for_review") {
     parts.push("reviewer marked ready for approval");
   }
+  if (taskDetail && taskDetail.depBlocked && !(taskDetail.rawStatus === "approved" || taskDetail.rawStatus === "merged" || taskDetail.rawStatus === "closed")) {
+    parts.push("waiting on " + String(taskDetail.dependsOn.length) + " task(s) — must be approved first");
+  }
   return parts.join(" — ");
 })();
 
@@ -3034,7 +3227,7 @@ return h("div", { className: "workspace-shell" }, [
     if (taskDetail) {
       if (primaryState.showQueue) {
         executorSection = [
-          h("span", { key: "dispatch-ready", className: "dispatch-ready-label" }, "Dispatch ready: " + (primaryState.matchingClient ? primaryState.matchingClient.clientName : "connected agent") + " online"),
+          h("span", { key: "dispatch-ready", className: "dispatch-ready-label" }, "Dispatch ready: " + (primaryState.matchingClient ? primaryState.matchingClient.clientName + " (" + executorDisplayName(executors, primaryState.assignedExecutor) + ")" : "connected agent") + " online"),
           h("button", { className: "chip-button queue-button", type: "button", onClick: function (event) {
             if (event && typeof event.preventDefault === "function") event.preventDefault();
             if (event && typeof event.stopPropagation === "function") event.stopPropagation();
@@ -3044,25 +3237,76 @@ return h("div", { className: "workspace-shell" }, [
           }, key: "queue-button" }, "Queue for connected agent")
         ];
       } else if (primaryState.showQueued) {
-        executorSection = h("span", { className: "dispatch-queued-label" }, "Queued for " + primaryState.assignedExecutor + " - awaiting pickup");
-      } else if (primaryState.showNoClient) {
         executorSection = [
-          h("span", { className: "dispatch-no-client-label" }, "No connected agent for " + primaryState.assignedExecutor + " — this project's token is not being used by any active bridge session."),
-          h("div", { className: "dispatch-no-client-action", style: { marginTop: "6px", fontSize: "12px", lineHeight: "1.5", color: "#555" } }, [
-            h("div", { style: { marginBottom: "4px" } }, "To connect Claude Desktop / MCP bridge to this project:"),
-            h("div", { style: { background: "#f5f5f5", padding: "6px 8px", borderRadius: "4px", fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginBottom: "6px" } }, [
-              "SCOPEGUARD_BASE_URL=http://127.0.0.1:3737",
-              h("br"),
-              "SCOPEGUARD_TOKEN=" + String(externalApiToken || "<token>"),
-              h("br"),
-              "SCOPEGUARD_EXECUTOR_ID=claude-cli"
-            ]),
-            h("button", { className: "chip-button", type: "button", style: { fontSize: "11px" }, onClick: function () {
-              var envBlock = buildProjectMCPEnv(project && project.rootPath ? project.rootPath : "", externalApiToken);
-              void navigator.clipboard.writeText(envBlock).then(function () { setMessage("MCP env config copied to clipboard."); }).catch(function () { setError("Clipboard access denied."); });
-            } }, "Copy MCP Env"),
-            h("span", { style: { marginLeft: "8px", fontSize: "11px", color: "#888" } }, "Paste into your MCP host or Claude Desktop config.")
-          ])
+          h("span", { key: "queued-label", className: "dispatch-queued-label" }, "Queued for " + executorDisplayName(executors, primaryState.assignedExecutor) + " - awaiting pickup"),
+          h("button", {
+            key: "cancel-dispatch",
+            className: "ghost-button",
+            type: "button",
+            style: { marginLeft: "8px", fontSize: "11px" },
+            onClick: function (event) {
+              if (event && typeof event.preventDefault === "function") event.preventDefault();
+              if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+              console.log("[scopeguard-web] cancel dispatch button clicked");
+              try { handleCancelAssignment(); }
+              catch (e) { console.log("[scopeguard-web] cancel dispatch error: " + (e && e.message || e)); setError(e && e.message || "Button handler failed."); }
+            }
+          }, "Cancel dispatch")
+        ];
+      } else if (taskDetail && taskDetail.dependsOn && taskDetail.dependsOn.length > 0 && !(taskDetail.rawStatus === "approved" || taskDetail.rawStatus === "merged" || taskDetail.rawStatus === "closed")) {
+        executorSection = h("div", { className: "dispatch-no-client-action", style: { marginTop: "6px", fontSize: "12px", lineHeight: "1.5", color: "#888" } }, [
+          h("span", { style: { fontWeight: 600 } }, "Waiting on " + String(taskDetail.dependsOn.length) + " dependent task(s) to be approved before this can be queued.")
+        ]);
+      } else if (primaryState.showNoClient) {
+        var _isStale = taskDetail && taskDetail.dispatchInfo && taskDetail.dispatchInfo.status === "idle";
+        executorSection = [
+          h("span", { className: "dispatch-no-client-label" }, _isStale
+            ? "Connected session for " + executorDisplayName(executors, primaryState.assignedExecutor) + " is stale — the MCP bridge is no longer sending heartbeats."
+            : "No connected agent for " + executorDisplayName(executors, primaryState.assignedExecutor) + " — this project's token is not being used by any active bridge session."),
+          _isStale
+            ? h("div", { className: "dispatch-no-client-action", style: { marginTop: "6px", fontSize: "12px", lineHeight: "1.5", color: "#555" } }, [
+                h("div", { style: { marginBottom: "4px" } }, "The MCP bridge process was running but has gone silent. To reconnect:"),
+                h("ol", { style: { margin: "0 0 6px 16px", padding: 0 } }, [
+                  h("li", null, "Restart Claude Desktop (or restart the MCP bridge process)."),
+                  h("li", null, "Check that the bridge is using this project's token (Settings > Copy MCP Env)."),
+                  h("li", null, "Back on this page, queue readiness should reappear within 30 seconds."),
+                ]),
+                h("div", { style: { marginTop: "4px", display: "flex", gap: "6px", alignItems: "center" } }, [
+                  h("button", { className: "chip-button", type: "button", style: { fontSize: "11px" }, onClick: function () {
+                    var envBlock = buildProjectMCPEnv(project && project.rootPath ? project.rootPath : "", externalApiToken);
+                    void navigator.clipboard.writeText(envBlock).then(function () { setMessage("MCP env config copied."); }).catch(function () { setError("Clipboard access denied."); });
+                  } }, "Copy MCP Env"),
+                  h("button", { className: "chip-button", type: "button", style: { fontSize: "11px" }, onClick: function () {
+                    var jsonBlock = buildProjectMCPJsonSnippet(project && project.rootPath ? project.rootPath : "", externalApiToken);
+                    void navigator.clipboard.writeText(jsonBlock).then(function () { setMessage("Claude Desktop config snippet copied. Paste into claude_desktop_config.json."); }).catch(function () { setError("Clipboard access denied."); });
+                  } }, "Copy Claude Desktop Config"),
+                ])
+              ])
+            : h("div", { className: "dispatch-no-client-action", style: { marginTop: "6px", fontSize: "12px", lineHeight: "1.5", color: "#555" } }, [
+                h("div", { style: { marginBottom: "4px" } }, "To connect Claude Desktop / MCP bridge to this project:"),
+                h("ol", { style: { margin: "0 0 6px 16px", padding: 0 } }, [
+                  h("li", null, "Copy the project env config below."),
+                  h("li", null, "In Claude Desktop, add a new MCP server using the env vars or the JSON snippet."),
+                  h("li", null, "Restart Claude Desktop and come back here — readiness should appear within 30 seconds."),
+                ]),
+                h("div", { style: { background: "#f5f5f5", padding: "6px 8px", borderRadius: "4px", fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginBottom: "6px" } }, [
+                  "SCOPEGUARD_BASE_URL=http://127.0.0.1:3737",
+                  h("br"),
+                  "SCOPEGUARD_TOKEN=" + String(externalApiToken || "<token>"),
+                  h("br"),
+                  "SCOPEGUARD_EXECUTOR_ID=claude-cli"
+                ]),
+                h("div", { style: { display: "flex", gap: "6px", alignItems: "center" } }, [
+                  h("button", { className: "chip-button", type: "button", style: { fontSize: "11px" }, onClick: function () {
+                    var envBlock = buildProjectMCPEnv(project && project.rootPath ? project.rootPath : "", externalApiToken);
+                    void navigator.clipboard.writeText(envBlock).then(function () { setMessage("MCP env config copied."); }).catch(function () { setError("Clipboard access denied."); });
+                  } }, "Copy MCP Env"),
+                  h("button", { className: "chip-button", type: "button", style: { fontSize: "11px" }, onClick: function () {
+                    var jsonBlock = buildProjectMCPJsonSnippet(project && project.rootPath ? project.rootPath : "", externalApiToken);
+                    void navigator.clipboard.writeText(jsonBlock).then(function () { setMessage("Claude Desktop config snippet copied."); }).catch(function () { setError("Clipboard access denied."); });
+                  } }, "Copy Claude Desktop Config"),
+                ])
+              ])
         ];
       }
     }
@@ -3801,6 +4045,12 @@ return h("div", { className: "workspace-shell" }, [
     return String(status || "")
       .toLowerCase()
       .replace(/\s+/g, "-");
+  }
+
+  function executorDisplayName(executors, id) {
+    if (!executors || !Array.isArray(executors)) return id;
+    const ex = executors.find(function (e) { return e.id === id; });
+    return ex && ex.displayName ? ex.displayName : id;
   }
 
   // Returns true for external executor API paths that require Bearer token auth.

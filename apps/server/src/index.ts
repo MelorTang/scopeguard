@@ -413,6 +413,24 @@ async function handleRequest(gitRoot: string, req: IncomingMessage, res: ServerR
     return;
   }
 
+  // ── Project batch queue ──
+
+  const batchQueueMatch = path.match(/^\/api\/desktop\/projects\/([^/]+)\/queue-ready$/);
+  if (req.method === "POST" && batchQueueMatch) {
+    const projectId = decodeURIComponent(batchQueueMatch[1]);
+    await handlePostDesktopProjectBatchQueue(gitRoot, projectId, res);
+    return;
+  }
+
+  // ── Project batch cancel ──
+
+  const batchCancelMatch = path.match(/^\/api\/desktop\/projects\/([^/]+)\/cancel-dispatches$/);
+  if (req.method === "POST" && batchCancelMatch) {
+    const projectId = decodeURIComponent(batchCancelMatch[1]);
+    await handlePostDesktopProjectBatchCancel(gitRoot, projectId, res);
+    return;
+  }
+
   // ── Desktop task routes (context, runs, run, queue-assignment, handoff, etc.) ──
 
   if (req.method === "GET" && path.startsWith("/api/desktop/tasks/") && path.endsWith("/context")) {
@@ -557,7 +575,41 @@ async function handleRequest(gitRoot: string, req: IncomingMessage, res: ServerR
     const parsedUrl = new URL(req.url ?? "", "http://localhost");
     const executorId = parsedUrl.searchParams.get("executorId") ?? null;
     const pending = listAssignments(gitRoot, { status: "pending", executorId: executorId || undefined });
-    sendJson(res, 200, { assignments: pending });
+    // Filter out assignments whose task has unsatisfied dependsOn dependencies
+    const filtered = pending.filter((a) => {
+      if (!a.taskId || !a.kind || a.kind !== "execution") return true; // only check execution assignments
+      const task = readTaskById(gitRoot, a.taskId);
+      if (!task) return true;
+      const deps = task.dependsOn ?? [];
+      if (deps.length === 0) return true;
+      // A dependency is unsatisfied if the referenced task is not in a terminal done state
+      for (const depId of deps) {
+        const depTask = readTaskById(gitRoot, depId);
+        if (!depTask) continue; // dependency not found → skip filter (might be a title not an ID)
+        if (depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed") {
+          return false; // dependency not completed → exclude this assignment
+        }
+      }
+      return true;
+    });
+    // Filter by parallelizable: if a task has parallelizable === false and the executor
+    // already has a **claimed** (actively executing) non-parallelizable task, exclude this one.
+    // Pending (unclaimed) tasks do not block each other — the executor can only claim one at a time,
+    // and once claimed the other becomes blocked naturally.
+    const parallelizableFiltered = filtered.filter((a) => {
+      if (!a.taskId || !a.kind || a.kind !== "execution") return true;
+      const task = readTaskById(gitRoot, a.taskId);
+      if (!task) return true;
+      if (task.parallelizable !== false) return true; // true or undefined → allow
+      // parallelizable === false: check if the executor is already actively executing another
+      const hasClaimedExec = listAssignments(gitRoot).some((x) =>
+        x.taskId !== a.taskId && x.kind === "execution" && x.status === "claimed"
+        && x.assignedExecutor === a.assignedExecutor
+      );
+      if (hasClaimedExec) return false; // executor is busy with another non-parallelizable task
+      return true; // no active execution → allow this one
+    });
+    sendJson(res, 200, { assignments: parallelizableFiltered });
     return;
   }
 
@@ -578,6 +630,16 @@ async function handleRequest(gitRoot: string, req: IncomingMessage, res: ServerR
     if (!claimPayload.sessionId) {
       sendJson(res, 400, { ok: false, code: "INVALID_REQUEST", message: "sessionId is required to claim." });
       return;
+    }
+    // Verify caller's executor matches the assignment's assignedExecutor
+    const session = readExternalSession(gitRoot, claimPayload.sessionId);
+    const callerExecutorId = session && typeof session.executorId === "string" ? session.executorId : null;
+    if (callerExecutorId) {
+      const preCheckAssignment = readAssignment(gitRoot, assignmentId);
+      if (preCheckAssignment && preCheckAssignment.assignedExecutor !== callerExecutorId) {
+        sendJson(res, 403, { ok: false, code: "EXECUTOR_MISMATCH", message: `Claim rejected: assignment requires executor "${preCheckAssignment.assignedExecutor}" but caller is "${callerExecutorId}".` });
+        return;
+      }
     }
     const claimed = claimAssignment(gitRoot, assignmentId, claimPayload.sessionId);
     if (!claimed) {
@@ -616,9 +678,13 @@ async function handleRequest(gitRoot: string, req: IncomingMessage, res: ServerR
     }
     if (preCheck && preCheck.kind === "review") {
       const task = preCheck.taskId ? readTaskById(gitRoot, preCheck.taskId) : null;
-      if (task && !task.latestReviewSummary) {
-        sendJson(res, 422, { ok: false, code: "REVIEW_REQUIRED", message: "Review assignment must be completed via external-review before marking the assignment done. Submit a review result first." });
-        return;
+      if (task) {
+        const rev = (task as Record<string, unknown>).latestReviewSummary as Record<string, unknown> | null | undefined;
+        const isRealReview = rev && typeof rev.reviewId === "string" && rev.reviewId.startsWith("external-");
+        if (!isRealReview) {
+          sendJson(res, 422, { ok: false, code: "REVIEW_REQUIRED", message: "Review assignment must be completed via scopeguard_submit_review before marking the assignment done." });
+          return;
+        }
       }
     }
     const done = completeAssignment(gitRoot, assignmentId);
@@ -627,6 +693,24 @@ async function handleRequest(gitRoot: string, req: IncomingMessage, res: ServerR
       return;
     }
     sendJson(res, 200, { ok: true, assignment: done });
+    return;
+  }
+
+  // ── Cancel assignment ──
+
+  const cancelMatch = path.match(/^\/api\/desktop\/external\/pending\/([^/]+)\/cancel$/);
+  if (req.method === "POST" && cancelMatch) {
+    if (!validateExternalApiToken(gitRoot, req.headers.authorization)) {
+      sendJson(res, 401, { ok: false, code: "UNAUTHORIZED", message: "Missing or invalid Authorization header." });
+      return;
+    }
+    const assignmentId = decodeURIComponent(cancelMatch[1]);
+    const canceled = cancelAssignment(gitRoot, assignmentId);
+    if (!canceled) {
+      sendJson(res, 409, { ok: false, code: "CANCEL_FAILED", message: "Assignment could not be canceled (not found, already completed/canceled, not an execution assignment, or task is past the execution phase)." });
+      return;
+    }
+    sendJson(res, 200, { ok: true, assignment: canceled });
     return;
   }
 
@@ -1799,6 +1883,94 @@ function handleGetConnectArtifact(gitRoot: string, projectId: string, req: Incom
   });
 }
 
+async function handlePostDesktopProjectBatchQueue(gitRoot: string, projectId: string, res: ServerResponse): Promise<void> {
+  const project = buildDesktopProject(gitRoot);
+  if (!project || project.id !== projectId) {
+    sendJson(res, 404, { ok: false, code: "PROJECT_NOT_FOUND", message: `Project not found: ${projectId}` });
+    return;
+  }
+  const allTasks = readAllTasks(gitRoot).filter((task) => task.projectId === projectId);
+  const queued: string[] = [];
+  const skipped: Array<{ taskId: string; title: string; code: string; message: string }> = [];
+
+  for (const task of allTasks) {
+    // Skip tasks not in "ready" status or that are drafts
+    if (task.status !== "ready") continue;
+    if (task.id.startsWith("DRAFT-")) continue;
+
+    // Check dispatch readiness: executor assigned + client online
+    const dispatchInfo = resolveTaskDispatchInfo(gitRoot, task);
+    if (dispatchInfo.status !== "ready") {
+      let msg: string;
+      if (dispatchInfo.status === "no_client") {
+        msg = `Executor "${dispatchInfo.assignedExecutor}" has no client connected.`;
+      } else if (dispatchInfo.status === "idle") {
+        msg = `Executor "${dispatchInfo.assignedExecutor}" is not online.`;
+      } else {
+        msg = "Task is not dispatch-ready.";
+      }
+      skipped.push({ taskId: task.id, title: task.title, code: "NOT_DISPATCH_READY", message: msg });
+      continue;
+    }
+
+    // Attempt via queueSingleTask (checks executor, duplicates, dependsOn)
+    const result = queueSingleTask(gitRoot, task.id, task);
+    if (result.ok) {
+      queued.push(task.id);
+    } else {
+      skipped.push({ taskId: task.id, title: task.title, code: result.code, message: result.message });
+    }
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    queued,
+    skipped,
+    summary: {
+      queuedCount: queued.length,
+      skippedCount: skipped.length,
+      totalEligible: allTasks.filter((t) => t.status === "ready" && !t.id.startsWith("DRAFT-")).length,
+    },
+  });
+}
+
+async function handlePostDesktopProjectBatchCancel(gitRoot: string, projectId: string, res: ServerResponse): Promise<void> {
+  const project = buildDesktopProject(gitRoot);
+  if (!project || project.id !== projectId) {
+    sendJson(res, 404, { ok: false, code: "PROJECT_NOT_FOUND", message: `Project not found: ${projectId}` });
+    return;
+  }
+  const allTasks = readAllTasks(gitRoot).filter((task) => task.projectId === projectId);
+  const taskIds = new Set(allTasks.map((t) => t.id));
+  const canceled: string[] = [];
+  const skipped: Array<{ taskId: string; message: string }> = [];
+
+  // Scan all assignments; cancel active execution ones belonging to this project's tasks
+  const allAssignments = listAssignments(gitRoot);
+  for (const a of allAssignments) {
+    if (a.kind !== "execution") continue;
+    if (a.status !== "pending" && a.status !== "claimed") continue;
+    if (!a.taskId || !taskIds.has(a.taskId)) continue;
+    // Reuse the existing single-assignment cancel logic
+    const result = cancelAssignment(gitRoot, a.assignmentId);
+    if (result && result.status === "canceled") {
+      canceled.push(a.taskId);
+    } else {
+      skipped.push({ taskId: a.taskId, message: result ? "Cancel returned unexpected status: " + result.status : "Assignment not found during cancel" });
+    }
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    canceled,
+    skipped,
+    summary: {
+      canceledCount: canceled.length,
+      skippedCount: skipped.length,
+    },
+  });
+}
+
 function ensureProjectConnectArtifacts(
   gitRoot: string,
   project: DesktopProject,
@@ -2704,6 +2876,12 @@ async function handlePostDesktopExternalRunStart(gitRoot: string, taskId: string
     sendJson(res, 404, { ok: false, code: "TASK_NOT_FOUND", message: `Task not found: ${taskId}` });
     return;
   }
+  // Verify caller's executor matches the task's assigned executor
+  const taskExecutor = resolveEffectiveTaskExecutor(task);
+  if (taskExecutor && payload.executorId !== taskExecutor) {
+    sendJson(res, 403, { ok: false, code: "EXECUTOR_MISMATCH", message: `Run rejected: task requires executor "${taskExecutor}" but caller is "${payload.executorId}".` });
+    return;
+  }
   if (payload.sessionId) {
     if (!touchExternalSession(gitRoot, payload.sessionId)) {
       sendJson(res, 404, { ok: false, code: "SESSION_NOT_FOUND", message: "Session not found: " + payload.sessionId });
@@ -2783,6 +2961,19 @@ async function handlePostDesktopExternalRunFinish(gitRoot: string, taskId: strin
   if (payload.changedFiles !== undefined) run.changedFiles = payload.changedFiles;
   writeTaskRun(gitRoot, run);
   advanceTaskStatusAfterRun(gitRoot, taskId, payload.success ?? false);
+  // Auto-complete the claimed execution assignment now that the run is finished
+  try {
+    const execAssignments = listAssignments(gitRoot).filter((a) =>
+      a.taskId === taskId && a.kind === "execution" && a.status === "claimed"
+    );
+    if (execAssignments.length > 0) {
+      for (const ea of execAssignments) {
+        completeAssignment(gitRoot, ea.assignmentId);
+      }
+    }
+  } catch (e) {
+    // non-critical — don't fail the run-finish for assignment bookkeeping errors
+  }
   const task = readTaskById(gitRoot, taskId);
   if (task) {
     (task as TaskRecord & { latestRunResult: unknown }).latestRunResult = {
@@ -2812,7 +3003,8 @@ async function handlePostDesktopExternalRunFinish(gitRoot: string, taskId: strin
       } else {
         try {
           const reviewHandoff = "Review assignment for: " + taskAfterRun.title + " — evaluate execution result and submit structured review via external-review.";
-          const reviewAssignment = createTaskAssignment(gitRoot, taskId, taskAfterRun.projectId, "claude-cli", reviewHandoff, "review");
+          const reviewExecutor = resolveEffectiveTaskExecutor(taskAfterRun) || "claude-cli";
+          const reviewAssignment = createTaskAssignment(gitRoot, taskId, taskAfterRun.projectId, reviewExecutor, reviewHandoff, "review");
           console.log("[scopeguard-server] auto-created review assignment: " + reviewAssignment.assignmentId + " for task: " + taskId);
         } catch (reviewErr) {
           console.log("[scopeguard-server] auto-create review assignment FAILED: " + (reviewErr instanceof Error ? reviewErr.message : String(reviewErr)));
@@ -2874,13 +3066,67 @@ function handleGetDesktopProjectTasks(gitRoot: string, projectId: string, res: S
     sendJson(res, 404, { ok: false, code: "PROJECT_NOT_FOUND", message: `Project not found: ${projectId}` });
     return;
   }
-  const tasks = readAllTasks(gitRoot)
-    .filter((task) => task.projectId === projectId)
-    .filter((task) => !["merged", "closed"].includes(task.status))
-    .map((task) => toDesktopTaskListItem(gitRoot, task));
+  const allTasks = readAllTasks(gitRoot).filter((task) => task.projectId === projectId);
+  const activeTasks = allTasks.filter((task) => !["merged", "closed"].includes(task.status));
+  const taskItems = activeTasks.map((task) => toDesktopTaskListItem(gitRoot, task));
   const draftTasks = readDesktopDraftTasks(gitRoot, projectId)
     .map((draftTask) => toDesktopTaskListItemFromDraft(gitRoot, draftTask));
-  sendJson(res, 200, { projectId, tasks: draftTasks.concat(tasks) });
+
+  // Compute summary counts across ALL non-draft tasks (including merged/closed)
+  let readyToQueue = 0;
+  let queued = 0;
+  let awaitingReview = 0;
+  let blockedByDependency = 0;
+  let needsAttention = 0;
+  let approved = 0;
+  let notReady = 0;
+
+  for (const task of allTasks) {
+    if (task.id.startsWith("DRAFT-")) continue; // skip drafts in summary
+    const dispatchInfo = resolveTaskDispatchInfo(gitRoot, task);
+    const reviewStatus = resolveTaskReviewStatus(task);
+
+    if (task.status === "approved" || task.status === "merged" || task.status === "closed") {
+      approved++;
+    } else if (reviewStatus === "needs_attention") {
+      needsAttention++;
+    } else if (task.status === "needs_review") {
+      awaitingReview++;
+    } else if (dispatchInfo.status === "dispatched") {
+      queued++;
+    } else if (task.status === "ready") {
+      // Check dependsOn FIRST, regardless of dispatch status
+      const deps = task.dependsOn ?? [];
+      const depBlocked = deps.some((depId) => {
+        const depTask = allTasks.find((t) => t.id === depId);
+        return depTask && depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed";
+      });
+      if (depBlocked) {
+        blockedByDependency++;
+      } else if (dispatchInfo.status === "ready") {
+        readyToQueue++;
+      } else {
+        notReady++;
+      }
+    } else {
+      notReady++;
+    }
+  }
+
+  sendJson(res, 200, {
+    projectId,
+    tasks: draftTasks.concat(taskItems),
+    summary: {
+      readyToQueue,
+      queued,
+      awaitingReview,
+      blockedByDependency,
+      needsAttention,
+      approved,
+      notReady,
+      total: allTasks.filter((t) => !t.id.startsWith("DRAFT-")).length,
+    },
+  });
 }
 
 function handleGetDesktopTask(gitRoot: string, taskId: string, res: ServerResponse): void {
@@ -3303,7 +3549,7 @@ function listExternalSessions(gitRoot: string): Record<string, unknown>[] {
 
 function resolveConnectedClients(gitRoot: string): DesktopConnectedClient[] {
   const sessions = listExternalSessions(gitRoot);
-  const stalenessMs = 120_000;
+  const stalenessMs = 45_000; // 45s — bridge sends heartbeats every 25s, so 2 missed = stale
   const now = Date.now();
   return sessions
     .filter((s) => s.mode === "connected")
@@ -3450,6 +3696,46 @@ function completeAssignment(gitRoot: string, assignmentId: string): DesktopAssig
   return assignment as unknown as DesktopAssignmentRecord;
 }
 
+function cancelAssignment(gitRoot: string, assignmentId: string): DesktopAssignmentRecord | null {
+  const assignmentRaw = readAssignment(gitRoot, assignmentId);
+  if (!assignmentRaw) return null;
+  if (assignmentRaw.status !== "pending" && assignmentRaw.status !== "claimed") return null;
+  if (assignmentRaw.kind !== "execution") return null;
+  const assignment = assignmentRaw as unknown as DesktopAssignmentRecord;
+  // Task-level guard: reject if task is past the execution phase
+  if (assignment.taskId) {
+    const task = readTaskById(gitRoot, assignment.taskId);
+    if (task && (task.status === "needs_review" || task.status === "approved" || task.status === "merged" || task.status === "closed")) return null;
+  }
+  // Mark canceled (terminal, preserves history; completedAt reused as terminal timestamp)
+  assignment.status = "canceled" as DesktopAssignmentStatus;
+  assignment.completedAt = new Date().toISOString();
+  writeAssignment(gitRoot, assignment);
+  // Reset task to ready; clear only cached summaries (underlying run/assignment records on disk preserved)
+  if (assignment.taskId) {
+    const task = readTaskById(gitRoot, assignment.taskId);
+    if (task) {
+      task.status = "ready" as TaskStatus;
+      delete (task as Record<string, unknown>).latestRunResult;
+      delete (task as Record<string, unknown>).latestReviewSummary;
+      task.updatedAt = new Date().toISOString();
+      writeTaskById(gitRoot, assignment.taskId, task);
+    }
+    // Mark any active (starting/running) runs as failed (run records preserved, not deleted)
+    const activeRuns = listTaskRuns(gitRoot, assignment.taskId)
+      .filter((r) => r.status === "starting" || r.status === "running");
+    for (const run of activeRuns) {
+      run.status = "failed" as DesktopTaskRunStatus;
+      run.exitCode = -1;
+      run.finishedAt = new Date().toISOString();
+      run.resultSummary = "Canceled.";
+      run.stderr = (run.stderr || "") + "\n[Canceled] Assignment was canceled before the run completed.";
+      writeTaskRun(gitRoot, run);
+    }
+  }
+  return assignment;
+}
+
 // ── Queue-assignment helpers ──
 
 function scanAllTasksForId(gitRoot: string, targetTaskId: string): TaskRecord | null {
@@ -3495,20 +3781,55 @@ function scanAllDraftsForId(gitRoot: string, targetTaskId: string): DesktopDraft
   return null;
 }
 
-async function processQueueAssignment(gitRoot: string, taskId: string, task: TaskRecord | DesktopDraftTaskRecord, res: ServerResponse, kind?: "execution" | "review"): Promise<void> {
+/**
+ * Synchronously queues a single task by validating executor, checking for
+ * duplicate assignments, verifying dependency satisfaction, and creating
+ * the assignment record. Never sends HTTP responses.
+ *
+ * Returns:
+ *   { ok: true, assignment }   -- the assignment was created.
+ *   { ok: false, code, message } -- the task cannot be queued.
+ *
+ * Error codes:
+ *   "NO_EXECUTOR"         -- task has no assigned/preferred executor.
+ *   "ALREADY_QUEUED"      -- an existing pending/claimed assignment exists.
+ *   "DEPENDENCY_NOT_MET"  -- a dependency is not in a terminal state.
+ */
+function queueSingleTask(
+  gitRoot: string,
+  taskId: string,
+  task: TaskRecord | DesktopDraftTaskRecord,
+): { ok: true; assignment: DesktopAssignmentRecord } | { ok: false; code: string; message: string } {
   const executor = resolveEffectiveTaskExecutor(task);
   if (!executor) {
-    sendJson(res, 400, { ok: false, code: "NO_EXECUTOR", message: "Task has no assignedExecutor." });
-    return;
+    return { ok: false, code: "NO_EXECUTOR", message: "Task has no assigned executor." };
   }
   const existingAssignment = findTaskAssignment(gitRoot, taskId);
   if (existingAssignment) {
-    sendJson(res, 409, { ok: false, code: "ALREADY_QUEUED", message: "Task already has a pending/claimed assignment." });
-    return;
+    return { ok: false, code: "ALREADY_QUEUED", message: "Task already has a pending/claimed assignment." };
+  }
+  // Check dependsOn: every depId must be in a terminal state (approved/merged/closed)
+  // or not found (orphaned dependency — treat as satisfied).
+  const deps = task.dependsOn ?? [];
+  for (const depId of deps) {
+    const depTask = readTaskById(gitRoot, depId);
+    if (depTask && depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed") {
+      return { ok: false, code: "DEPENDENCY_NOT_MET", message: `Waiting on dependent task "${depTask.title}" (${depId}) to be approved.` };
+    }
   }
   const handoffString = buildDesktopHandoff(gitRoot, task, executor);
   const assignment = createTaskAssignment(gitRoot, taskId, task.projectId, executor, handoffString);
-  sendJson(res, 200, { ok: true, assignment });
+  return { ok: true, assignment };
+}
+
+async function processQueueAssignment(gitRoot: string, taskId: string, task: TaskRecord | DesktopDraftTaskRecord, res: ServerResponse, kind?: "execution" | "review"): Promise<void> {
+  const result = queueSingleTask(gitRoot, taskId, task);
+  if (!result.ok) {
+    const httpCode = result.code === "ALREADY_QUEUED" ? 409 : 400;
+    sendJson(res, httpCode, result);
+    return;
+  }
+  sendJson(res, 200, result);
 }
 
 // ── Task run persistence ──
@@ -3943,7 +4264,7 @@ function toDesktopTaskListItem(gitRoot: string, task: TaskRecord): DesktopTaskLi
     id: task.id,
     projectId: task.projectId,
     title: task.title,
-    subtitle: buildTaskSubtitle(task),
+    subtitle: buildTaskSubtitle(gitRoot, task),
     status: mapCoreStatusToDesktopStatus(task.status),
     rawStatus: task.status as CoreTaskStatus,
     riskLevel: task.riskLevel,
@@ -3956,6 +4277,10 @@ function toDesktopTaskListItem(gitRoot: string, task: TaskRecord): DesktopTaskLi
     acceptanceCriteria: task.acceptanceCriteria,
     commands: task.commands,
     dependsOn: task.dependsOn ?? task.dependencies ?? [],
+    depBlocked: (task.dependsOn ?? []).some((depId) => {
+      const depTask = readTaskById(gitRoot, depId);
+      return depTask && depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed";
+    }),
     priority: task.priority ?? "medium",
     parallelizable: task.parallelizable ?? false,
     reviewAssignmentStatus: resolveReviewAssignmentStatus(gitRoot, task.id),
@@ -3981,6 +4306,7 @@ function toDesktopTaskListItemFromDraft(gitRoot: string, draftTask: DesktopDraft
     acceptanceCriteria: draftTask.acceptanceCriteria ?? [],
     commands: draftTask.commands ?? [],
     dependsOn: draftTask.dependsOn ?? [],
+    depBlocked: false,
     priority: draftTask.priority ?? "medium",
     parallelizable: draftTask.parallelizable ?? false,
     reviewAssignmentStatus: "none",
@@ -4009,12 +4335,17 @@ function toDesktopTaskDetail(gitRoot: string, task: TaskRecord): DesktopTaskDeta
     preferredExecutor: (task.preferredExecutor ?? effectiveExecutor) as DesktopExecutorId | null,
     assignedExecutor: effectiveExecutor as DesktopExecutorId | null,
     dependsOn: task.dependsOn ?? [],
+    depBlocked: (task.dependsOn ?? []).some((depId) => {
+      const depTask = readTaskById(gitRoot, depId);
+      return depTask && depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed";
+    }),
     parallelizable: task.parallelizable ?? false,
     priority: task.priority ?? "medium",
     latestRunResult: task.latestRunResult ?? null,
     latestReviewSummary: task.latestReviewSummary ?? null,
     dispatchInfo: resolveTaskDispatchInfo(gitRoot, task),
     assignmentId: findTaskAssignment(gitRoot, task.id)?.assignmentId ?? null,
+    activeExecutionAssignmentId: findTaskAssignment(gitRoot, task.id, "execution")?.assignmentId ?? null,
     reviewAssignmentStatus: resolveReviewAssignmentStatus(gitRoot, task.id),
     reviewStatus: resolveTaskReviewStatus(task),
     createdAt: task.createdAt,
@@ -4041,12 +4372,14 @@ function toDesktopTaskDetailFromDraft(gitRoot: string, draftTask: DesktopDraftTa
     preferredExecutor: (draftTask.preferredExecutor ?? null) as DesktopExecutorId | null,
     assignedExecutor: (draftTask.assignedExecutor ?? null) as DesktopExecutorId | null,
     dependsOn: draftTask.dependsOn ?? [],
+    depBlocked: false,
     parallelizable: draftTask.parallelizable ?? false,
     priority: draftTask.priority ?? "medium",
     latestRunResult: null,
     latestReviewSummary: null,
     dispatchInfo: resolveTaskDispatchInfo(gitRoot, draftTask),
     assignmentId: findTaskAssignment(gitRoot, draftTask.id)?.assignmentId ?? null,
+    activeExecutionAssignmentId: null,
     reviewAssignmentStatus: "none",
     reviewStatus: "none",
     createdAt: draftTask.createdAt,
@@ -4185,7 +4518,15 @@ function ensureProjectAgentCommandFiles(gitRoot: string): void {
   }
 }
 
-function buildTaskSubtitle(task: TaskRecord): string {
+function buildTaskSubtitle(gitRoot: string, task: TaskRecord): string {
+  const deps = task.dependsOn ?? [];
+  if (task.status === "ready" && deps.length > 0) {
+    const depBlocked = deps.some((depId) => {
+      const depTask = readTaskById(gitRoot, depId);
+      return depTask && depTask.status !== "approved" && depTask.status !== "merged" && depTask.status !== "closed";
+    });
+    if (depBlocked) return "Waiting on dependency";
+  }
   switch (task.status) {
     case "ready":
     case "planned":

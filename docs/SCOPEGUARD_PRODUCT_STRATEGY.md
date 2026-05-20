@@ -235,3 +235,26 @@ ScopeGuard is most meaningful as:
 - a connected-agent integration surface
 
 That is the product direction this repository should continue to reinforce.
+
+---
+
+## Current Capability Baseline
+
+A detailed capability matrix is maintained in
+[`SCOPEGUARD_CAPABILITY_MATRIX.md](./SCOPEGUARD_CAPABILITY_MATRIX.md).
+
+It covers:
+
+- Planning / Proposal
+- Single-task orchestration
+- Review actor
+- Multi-task orchestration (dependsOn, parallelizable)
+- Connected session / MCP presence
+- Assignment lifecycle / recovery (complete, cancel)
+- Multi-executor routing
+- Project-level batch queue / dispatch UX
+
+Each capability is marked as:
+- ✅ Established — genuinely working and verified
+- ⚠️ Minimal — functional but not fully productized
+- ❌ Not yet — explicitly not supported in the current baseline
