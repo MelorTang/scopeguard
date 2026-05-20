@@ -23,3 +23,9 @@ warning-plan.json
 .env
 .env.*
 *.log
+
+# Temporary / debug files
+_temp_server_fn.js
+
+# Local Claude settings
+.claude/settings.local.json

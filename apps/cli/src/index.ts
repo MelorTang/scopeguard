@@ -719,8 +719,9 @@ async function runBoard(args: string[]): Promise<void> {
   const port = parseBoardPort(args);
 
   try {
-    await startBoardServer(gitRoot, port);
+    const board = await startBoardServer(gitRoot, port);
     console.log(`ScopeGuard running at http://localhost:${port}`);
+    await waitForBoardShutdown(board);
   } catch (error) {
     if (error instanceof Error && error.message.includes("EADDRINUSE")) {
       console.log("ScopeGuard board may already be running at:");
@@ -734,6 +735,22 @@ async function runBoard(args: string[]): Promise<void> {
     console.log(message);
     process.exitCode = 1;
   }
+}
+
+function waitForBoardShutdown(board: { close: () => Promise<void> }): Promise<void> {
+  return new Promise((resolve) => {
+    let closing = false;
+    const close = (): void => {
+      if (closing) {
+        return;
+      }
+      closing = true;
+      void board.close().finally(resolve);
+    };
+
+    process.once("SIGINT", close);
+    process.once("SIGTERM", close);
+  });
 }
 
 function runTui(): void {
@@ -2416,5 +2433,4 @@ function runGit(cwd: string, args: string): string {
 function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
 }
-
 

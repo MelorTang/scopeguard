@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScopeGuard Desktop Home Mockup</title>
+  <style>
+    :root {
+      --bg: #f4f4fb;
+      --panel: #fcfcff;
+      --panel-soft: #f2f1fb;
+      --sidebar: #f0eefb;
+      --sidebar-deep: #e7e4f7;
+      --line: #dddaf0;
+      --text: #1a1730;
+      --text-soft: #686381;
+      --accent: #5a4fd4;
+      --accent-2: #7a5be8;
+      --accent-soft: #e5e1ff;
+      --status-draft-bg: #eef0f4;
+      --status-draft-text: #5f6877;
+      --status-progress-bg: #e4f4e8;
+      --status-progress-text: #2f6b3d;
+      --status-review-bg: #f8ebbf;
+      --status-review-text: #7c5a12;
+      --status-blocked-bg: #f6d9de;
+      --status-blocked-text: #8a3947;
+      --shadow: 0 24px 60px rgba(43, 31, 92, 0.10);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, rgba(122, 91, 232, 0.14), transparent 24%),
+        radial-gradient(circle at bottom left, rgba(90, 79, 212, 0.10), transparent 28%),
+        linear-gradient(180deg, #f8f8fe 0%, var(--bg) 100%);
+    }
+
+    .window {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 38px 1fr;
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px 0 14px;
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      user-select: none;
+    }
+
+    .menu {
+      display: flex;
+      gap: 18px;
+      color: var(--text-soft);
+    }
+
+    .menu span:first-child {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .window-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .window-btn {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .window-btn.min { background: #f2c14f; }
+    .window-btn.max { background: #7bc96f; }
+    .window-btn.close { background: #e67c73; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 314px 1fr;
+      min-height: 0;
+    }
+
+    .sidebar {
+      background: linear-gradient(180deg, #f1effc 0%, #ebe8f8 100%);
+      border-right: 1px solid var(--line);
+      padding: 18px 16px 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .sidebar-top {
+      display: grid;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 2px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+    }
+
+    .brand p {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: var(--text-soft);
+    }
+
+    .new-project {
+      width: 100%;
+      border: none;
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: white;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: left;
+      box-shadow: var(--shadow);
+    }
+
+    .project-list {
+      display: grid;
+      gap: 14px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+      margin: 2px 4px 0;
+    }
+
+    .project-card {
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .project-card.active {
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .project-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .project-meta h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .project-meta p {
+      margin: 5px 0 0;
+      color: var(--text-soft);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .count {
+      min-width: 24px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .task-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--panel-soft);
+      font-size: 13px;
+    }
+
+    .task-row.active {
+      background: #e8e4ff;
+      border: 1px solid #d4cef7;
+    }
+
+    .task-title {
+      display: grid;
+      gap: 4px;
+    }
+
+    .task-title strong {
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .task-title span {
+      font-size: 11px;
+      color: var(--text-soft);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.draft { background: var(--status-draft-bg); color: var(--status-draft-text); }
+    .badge.progress { background: var(--status-progress-bg); color: var(--status-progress-text); }
+    .badge.review { background: var(--status-review-bg); color: var(--status-review-text); }
+    .badge.blocked { background: var(--status-blocked-bg); color: var(--status-blocked-text); }
+
+    .sidebar-bottom {
+      margin-top: auto;
+      display: grid;
+      gap: 8px;
+    }
+
+    .side-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      color: var(--text-soft);
+      font-size: 13px;
+    }
+
+    .side-link.active {
+      background: rgba(90, 79, 212, 0.08);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .main {
+      padding: 24px 28px 28px;
+      display: grid;
+      align-items: start;
+      justify-items: center;
+      min-width: 0;
+    }
+
+    .composer-shell {
+      width: min(920px, 100%);
+      display: grid;
+      gap: 18px;
+    }
+
+    .intro-card {
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 20px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .intro-copy {
+      display: grid;
+      gap: 6px;
+    }
+
+    .intro-copy strong {
+      font-size: 16px;
+    }
+
+    .intro-copy span {
+      color: var(--text-soft);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .composer {
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      padding: 30px;
+      display: grid;
+      gap: 22px;
+    }
+
+    .composer-header {
+      text-align: center;
+      display: grid;
+      gap: 8px;
+    }
+
+    .composer-header h2 {
+      margin: 0;
+      font-size: 36px;
+      line-height: 1.12;
+    }
+
+    .composer-header p {
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .input {
+      min-height: 148px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background:
+        radial-gradient(circle at top right, rgba(122, 91, 232, 0.07), transparent 22%),
+        linear-gradient(180deg, #fdfdff 0%, #f5f4fd 100%);
+      padding: 18px 20px;
+      color: var(--text-soft);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      font: inherit;
+      cursor: default;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 14px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: white;
+    }
+
+    .btn.secondary {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+
+    .continue-card {
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 20px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .continue-copy {
+      display: grid;
+      gap: 6px;
+    }
+
+    .continue-copy strong {
+      font-size: 16px;
+    }
+
+    .continue-copy span {
+      color: var(--text-soft);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 1100px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .main {
+        padding: 20px;
+      }
+    }
+
+    .brand h1,
+    .intro-copy strong,
+    .composer-header h2,
+    .project-meta h2,
+    .task-title strong,
+    .continue-copy strong {
+      letter-spacing: -0.02em;
+    }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <header class="titlebar">
+      <div class="menu">
+        <span>ScopeGuard</span>
+        <span>File</span>
+        <span>Edit</span>
+        <span>View</span>
+        <span>Window</span>
+        <span>Help</span>
+      </div>
+      <div class="window-actions">
+        <div class="window-btn min" title="Minimize"></div>
+        <div class="window-btn max" title="Maximize"></div>
+        <div class="window-btn close" title="Close"></div>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <div class="brand">
+            <div>
+              <h1>ScopeGuard</h1>
+              <p>Desktop workspace for AI engineering</p>
+            </div>
+          </div>
+
+          <button class="new-project">+ Open New Project</button>
+
+          <div class="section-label">Projects</div>
+
+          <div class="project-list">
+            <section class="project-card active">
+              <div class="project-header">
+                <div class="project-meta">
+                  <h2>scopeguard</h2>
+                  <p>/path/to/scopeguard</p>
+                </div>
+                <span class="count">3</span>
+              </div>
+
+              <div class="task-list">
+                <div class="task-row active">
+                  <div class="task-title">
+                    <strong>Add README redesign</strong>
+                    <span>Context pack ready</span>
+                  </div>
+                  <span class="badge progress">In Progress</span>
+                </div>
+
+                <div class="task-row">
+                  <div class="task-title">
+                    <strong>Review auth session fix</strong>
+                    <span>Waiting for approval</span>
+                  </div>
+                  <span class="badge blocked">Blocked</span>
+                </div>
+
+                <div class="task-row">
+                  <div class="task-title">
+                    <strong>Check README publish copy</strong>
+                    <span>Waiting for final sign-off</span>
+                  </div>
+                  <span class="badge review">Needs Review</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="project-card">
+              <div class="project-header">
+                <div class="project-meta">
+                  <h2>growpilot</h2>
+                  <p>D:\apps\growpilot</p>
+                </div>
+                <span class="count">2</span>
+              </div>
+
+              <div class="task-list">
+                <div class="task-row">
+                  <div class="task-title">
+                    <strong>Add diagnosis history page</strong>
+                    <span>Planned, not started</span>
+                  </div>
+                  <span class="badge draft">Draft</span>
+                </div>
+
+                <div class="task-row">
+                  <div class="task-title">
+                    <strong>Supabase query cleanup</strong>
+                    <span>Last updated yesterday</span>
+                  </div>
+                  <span class="badge review">Needs Review</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="sidebar-bottom">
+          <div class="side-link active">Home</div>
+          <div class="side-link">Policies</div>
+          <div class="side-link">Settings</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="composer-shell">
+          <section class="intro-card">
+            <div class="intro-copy">
+              <strong>ScopeGuard suggestion</strong>
+              <span>
+                Choose a project folder to begin. A new folder starts a new project conversation, while an existing ScopeGuard folder opens that project and starts a fresh task.
+              </span>
+            </div>
+            <button class="btn secondary">How folder opening works</button>
+          </section>
+
+          <section class="composer">
+            <div class="composer-header">
+              <h2>What do you want to get done?</h2>
+              <p>
+                Open a folder to start a new project or continue work inside an existing one. ScopeGuard will treat existing project history as context and begin a new task conversation from there.
+              </p>
+            </div>
+
+            <div class="input">
+              Example: Open my current repo and help me start a task to redesign the README homepage for new users.
+            </div>
+
+            <div class="actions">
+              <div class="quick-actions">
+                <button class="btn secondary">Open Project Folder</button>
+              </div>
+              <button class="btn primary">Open Folder and Start</button>
+            </div>
+          </section>
+
+          <section class="continue-card">
+            <div class="continue-copy">
+              <strong>Continue where you left off</strong>
+              <span>
+                Reopen an existing project folder to keep working in context, or pick a new folder to begin a fresh project conversation.
+              </span>
+            </div>
+            <button class="btn primary">Continue in Existing Project</button>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,203 +1,262 @@
 # ScopeGuard
 
+面向多 Agent 软件协作的任务编排与交付协调层。
+
 [English](./README.md)
 
-面向 AI 编码工作流的安全编排工具。
-
-ScopeGuard 帮你在使用 AI 生成代码变更时，获得更清晰的文件边界、更安全的并行协作，以及更容易审查的输出结果。
+ScopeGuard 用来把项目目标拆成结构化任务，把任务路由给合适的执行器，并把执行结果重新收回到统一的项目状态里。
 
 它不是编码模型。
-它与 Codex、Claude Code、Cursor 等编码助手配合使用，而不是替代它们。
+它不是 IDE 替代品。
+它与 Claude、Codex、OpenCode 以及其他支持 MCP 或 connected integration 的 agent 协作。
 
-## 一句话说明
+## 一句话
 
-ScopeGuard 帮你在 AI 写出的代码进入主分支之前，先把风险管住。
+ScopeGuard 是 AI 软件工作的编排层：`plan -> queue -> execute -> report -> review`。
 
-## 它为什么存在
+## 产品定位
 
-AI 编码工具很擅长“做出改动”。
-但它们并不擅长稳定地遵守文件边界、协调并行任务，或者在合并前产出容易验证的结果。
+ScopeGuard 最适合解决“真实项目中的多 agent 协作”问题。
 
-这类问题通常会表现为：
+它提供的是：
 
-- agent 修改了超出预期的文件
-- 并行任务之间出现重叠改动
-- 生成产物混进源码 diff
-- 工作区改动难以人工审查
-- AI 看起来“完成了”，但合并过程依然不安全
+- 项目级 planning 和 task breakdown
+- 基于 `assignedExecutor` 的任务路由
+- 结构化 handoff 契约
+- connected agent 的 queue 与状态跟踪
+- 结果、review 和 project state 的回流
 
-ScopeGuard 的作用，就是给这套流程加上一层安全护栏。
+你应该把 ScopeGuard 理解成：
 
-## 没有 ScopeGuard / 使用 ScopeGuard
+- 编排核心
+- connected / MCP 友好的标准接入层
+- 可选的自动化增强层
 
-没有 ScopeGuard：
+而不应该把它理解成：
 
-- 直接让 AI 工具去改代码
-- 事后再看一大坨 diff
-- 在 review 或 merge 时才发现越界修改
-- 手动拆解并行任务之间的冲突
+- 通用本地 CLI runtime
+- Claude 或 Codex 的替代品
+- 一个以启动 shell 进程为主要价值的工具
 
-使用 ScopeGuard：
+## 核心问题
 
-- 先定义任务和文件边界
-- 在独立的 git worktree 中隔离执行
-- 在信任结果前先验证是否越界
-- 在批准和合并前先生成可审查的报告
+大多数 coding agent 擅长完成单个任务，但不擅长：
 
-## ScopeGuard 能做什么
+- 把项目目标稳定拆成任务图
+- 协调多个执行器
+- 保持 scope、review 和上下文连续
+- 把结果结构化回写到项目状态
 
-- 将工作拆成带明确文件边界的任务
-- 通过文件锁和任务依赖避免不安全的并行执行
-- 在隔离的 git worktree 中运行任务
-- 验证任务是否超出允许范围
-- 在批准和合并前生成人工审查报告
-- 当改动直接发生在当前工作区时，支持 working-tree 验证
+ScopeGuard 的意义，就是补这层 orchestration gap。
 
-## 适合谁使用
+## ScopeGuard 负责什么
 
-ScopeGuard 最适合这些场景：
+ScopeGuard 负责：
 
-- 你在真实仓库里重度使用 AI 编码工具
-- 多个任务可能并行执行
-- 你希望 AI 产出的代码在 review 和 merge 前更安全、更可控
-- 你需要的不只是“模型说它做完了”
+- project planning
+- task lifecycle
+- task handoff 结构
+- assignment queue
+- connected client 可见性
+- review 与 approval 状态
+- project memory 与协调上下文
 
-它大概率不适合这些场景：
+执行器负责：
 
-- 很小的脚本项目
-- 只改 1 到 2 个文件的轻量任务
-- 没有 review 要求的随手探索式 prompting
+- 写代码
+- 跑命令
+- 返回结果
 
-## 核心理念
+人负责：
 
-ScopeGuard 不尝试取代你的编码助手。
+- 决定目标
+- 审查结果
+- 批准下一步
 
-它做的是把 AI 编码从一次性的生成动作，变成一条可控的工程流程：
+## 产品三层结构
 
-`plan -> scope -> run -> verify -> review -> approve -> merge`
+### 1. Orchestration Core
 
-## 典型工作流
+这是 ScopeGuard 的核心价值层。
 
-1. 描述需求并生成任务计划。
-2. 导入带有 `allowedFiles`、锁和依赖关系的任务。
-3. 在独立 worktree 中运行单个任务。
-4. 在信任结果前先执行验证。
-5. 查看生成的 diff 和审查报告。
-6. 只有在范围检查和审查都通过后才批准和合并。
+包含：
+
+- project conversation
+- task schema
+- dependencies、priority、parallelism
+- `assignedExecutor`
+- handoff 生成
+- queue / claim / complete 生命周期
+- review 与状态回写
+
+### 2. Standard Connected Interface
+
+这是标准接入层。
+
+包含：
+
+- connected HTTP API
+- MCP bridge
+- token auth
+- connected client registry
+- pending assignment queue
+- claim / finish / complete 动作
+
+这也是当前推荐的执行主路线。
+
+### 3. Automation Enhancements
+
+这是建立在 connected core 之上的增强层。
+
+包含：
+
+- skill / command workflow
+- MCP prompts
+- optional companion worker
+- experimental local CLI launch
+
+这些能力有用，但它们不定义 ScopeGuard 本身。
+
+## 推荐主流程
+
+1. 在 Project 页描述目标
+2. 用 planning 把目标拆成 tasks
+3. 给每个 task 指定 executor
+4. 通过 MCP / connected integration 接入一个或多个 agent
+5. 把 task queue 给匹配的 connected agent
+6. 让 agent claim、执行并回传结果
+7. review 结果并决定下一步
 
 ```mermaid
 flowchart LR
-    A["需求"] --> B["生成任务计划"]
-    B --> C["设置范围与锁"]
-    C --> D["在 Worktree 中执行"]
-    D --> E["验证范围与命令"]
-    E --> F["生成审查报告"]
-    F --> G{"是否批准？"}
-    G -->|是| H["安全合并"]
-    G -->|否| I["修改或拒绝"]
+    A["项目目标"] --> B["生成任务计划"]
+    B --> C["指定执行器"]
+    C --> D["Queue 给 Connected Agent"]
+    D --> E["Agent Claim 任务"]
+    E --> F["执行并回传结果"]
+    F --> G["Review 并更新项目状态"]
 ```
+
+## Connected MCP Workflow（连接式 MCP 工作流）
+
+ScopeGuard 的 connected MCP workflow 让 agent 通过标准 MCP 接口发现、认领和汇报任务：
+
+1. **连接** — Agent 使用 token 连接到 ScopeGuard 的 MCP bridge。
+2. **发现** — Agent 调用 `scopeguard_list_pending` 查看待处理的 assignment。
+3. **认领** — Agent 调用 `scopeguard_claim_assignment` 锁定一个任务，拿到包含 goal、allowedFiles 和 acceptance criteria 的结构化 handoff。
+4. **执行** — Agent 在 handoff 约束内完成工作，通过 `scopeguard_finish_assignment` 回传结果。
+5. **审查** — 结果回流到项目中，供人工或自动化 review。
+
+这四步循环（`status → list_pending → claim → finish`）是最主要的 agent 交互模式。MCP bridge 负责 auth、queue 排序和 handoff 序列化，让 agent 专注于执行任务本身而非管理工作流状态。
+
+## 当前执行优先级
+
+### 主路线
+
+Connected / MCP-style execution。
+
+这也是当前要重点打磨的能力：
+
+- connected agents
+- assignment queue
+- claim / finish / complete
+- MCP bridge
+- skill / prompt workflow
+
+### 次路线
+
+建立在 MCP 之上的 skill / command workflow。
+
+这是更容易被宿主接受的引导式执行方式，不依赖后台 daemon。
+
+### 实验性 / fallback
+
+从 ScopeGuard 内直接启动本地 CLI。
+
+它仍然保留，但主要用于调试与兜底，不再是默认执行主线。
+
+## 适合谁
+
+如果你符合下面这些情况，ScopeGuard 会很有价值：
+
+- 你在真实项目里混合使用多个 coding agent
+- 你想要稳定的任务模型，而不是散落在聊天记录里的上下文
+- 你需要 connected execution 和结构化结果回传
+- 你关心 review、状态和交付过程，而不只是“模型说做完了”
+
+如果你只是：
+
+- 做一次性小改动
+- 不需要 task state
+- 不关心哪个 agent 执行了哪个任务
+
+那 ScopeGuard 可能偏重。
+
+## 当前真正跑通的方向
+
+当前桌面产品正在收敛到这条主线：
+
+- 显式 project planning
+- 带 executor 语义的 task
+- connected client 注册与在线状态
+- queue assignment 给 connected agent
+- pending / claim / finish 生命周期
+- 通过 MCP bridge 作为通用 host 接入面
+
+## 明确不是主故事的方向
+
+ScopeGuard 现在不打算把这些作为主价值：
+
+- 通吃所有 IDE 的后台 worker 平台
+- Claude-only 的特供接入
+- 处理所有本地 CLI 启动兼容细节
+
+这些可以作为 adapter 或增强层存在，但不是核心承诺。
 
 ## 快速开始
 
+### Desktop app
+
 ```powershell
 pnpm install
-pnpm build
-pnpm --filter @scopeguard/cli dev -- init
-pnpm --filter @scopeguard/cli dev -- scan
-pnpm --filter @scopeguard/cli dev -- doctor
-pnpm --filter @scopeguard/cli dev -- smoke
+pnpm --filter @scopeguard/desktop build
+node .\apps\desktop\scripts\run-electron.mjs
 ```
 
-## 最小可用入口
+### Connected / MCP 路线
 
-如果你暂时不想使用完整任务流，可以先从验证和审查开始：
+1. 打开 ScopeGuard Desktop
+2. 进入 `Settings > Connected Agents / MCP`
+3. 复制 token
+4. 把 agent 或 MCP host 接到 ScopeGuard bridge/API
+5. 将 task queue 给 connected agent
 
-```powershell
-scopeguard verify T-001 --working-tree
-scopeguard review T-001 --working-tree
-scopeguard verify T-001 --working-tree --scope-only
-```
-
-这是验证 ScopeGuard 是否对你的仓库有价值的最快方式。
-
-它先帮你回答一个很实际的问题：
-
-“这次 AI 生成的改动，是否真的只落在我预期的文件和边界里？”
-
-## 核心流程
-
-```powershell
-scopeguard plan requirements/feature.md
-scopeguard validate-plan plan.json
-scopeguard import-plan plan.json
-scopeguard tasks
-scopeguard next
-scopeguard schedule
-scopeguard verify T-001
-scopeguard review T-001
-```
-
-源码运行说明：
-把 `scopeguard ...` 替换为以下任意一种形式：
-
-- `pnpm --filter @scopeguard/cli dev -- ...`
-- `node apps\cli\bin\scopeguard.js ...`
-
-## 手动 Working-Tree 工作流
-
-当改动不是在任务 worktree 中产生，而是直接发生在当前仓库工作区时，使用这个模式：
-
-```powershell
-scopeguard verify T-001 --working-tree
-scopeguard review T-001 --working-tree
-scopeguard verify T-001 --working-tree --scope-only
-scopeguard verify T-002 --working-tree --include-dependencies
-```
-
-## 兼容性
-
-- `scopeguard` 是主 CLI 命令
-- `agentboard` 仍作为兼容旧版本的别名保留
-- `.scopeguard` 是主数据目录
-- `.agentboard` 仅用于兼容旧数据
-
-## 本地 CLI 用法
+### CLI / 本地工具
 
 ```powershell
 pnpm --filter @scopeguard/cli dev -- doctor
 pnpm --filter @scopeguard/cli dev -- smoke
-node apps\cli\bin\scopeguard.js doctor
-node apps\cli\bin\scopeguard.js smoke
-node apps\cli\bin\agentboard.js doctor
-node apps\cli\bin\agentboard.js smoke
 ```
 
-## Web 和 TUI
+## 仓库导读
 
-```powershell
-pnpm --filter @scopeguard/cli dev -- board
-pnpm --filter @scopeguard/cli dev -- tui
-```
-
-## 第一次试用时建议重点关注
-
-如果你第一次尝试 ScopeGuard，建议先看这几个问题：
-
-- `verify` 有没有抓到你在 review 时可能漏掉的文件
-- `working-tree` 模式是否适合你现在直接让 AI 修改真实仓库的方式
-- 任务边界是否让并行工作变得更安全
-- `review` 这一步是否让 AI 输出更容易被信任或拒绝
+- `docs/SCOPEGUARD_PRODUCT_STRATEGY.md` - 当前产品定位
+- `docs/SCOPEGUARD_DESKTOP_MVP.md` - 桌面流程范围
+- `docs/SCOPEGUARD_DESKTOP_ARCHITECTURE.md` - 架构说明
+- `docs/SCOPEGUARD_DESKTOP_ADAPTER_API.md` - connected / adapter API
+- `docs/QUICKSTART.md` - 开发者快速开始
+- `docs/COMMANDS.md` - CLI 命令
 
 ## 当前状态
 
-ScopeGuard 目前处于 Developer Preview 阶段。
-这套工作流已经可以用于 dogfooding 和真实仓库测试，但界面和使用体验仍在持续迭代中。
+ScopeGuard 目前处于产品定位收敛期和 Developer Preview 阶段。
 
-## 更多文档
+现在最重要的问题已经不是：
 
-- `docs/QUICKSTART.md`
-- `docs/COMMANDS.md`
-- `docs/MVP_WORKFLOW.md`
-- `docs/SAFETY_MODEL.md`
-- `docs/DOGFOOD.md`
-- `docs/PREVIEW_LIMITATIONS.md`
+“能不能顺利启动某个本地 CLI？”
+
+而是：
+
+“能不能为多 agent 软件协作提供一个稳定、可连接、可回流的编排层？”
+
+这个仓库现在就是围绕这个方向持续收敛的。

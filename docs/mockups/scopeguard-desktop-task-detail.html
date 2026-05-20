@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScopeGuard Task Conversation Workspace Mockup</title>
+  <style>
+    :root {
+      --bg: #f4f4fb;
+      --panel: #fcfcff;
+      --panel-soft: #f2f1fb;
+      --line: #dddaf0;
+      --text: #1a1730;
+      --text-soft: #686381;
+      --accent: #5a4fd4;
+      --accent-2: #7a5be8;
+      --accent-soft: #e7e2ff;
+      --status-draft-bg: #eef0f4;
+      --status-draft-text: #5f6877;
+      --status-progress-bg: #e4f4e8;
+      --status-progress-text: #2f6b3d;
+      --status-review-bg: #f8ebbf;
+      --status-review-text: #7c5a12;
+      --status-blocked-bg: #f6d9de;
+      --status-blocked-text: #8a3947;
+      --shadow: 0 24px 60px rgba(43, 31, 92, 0.10);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top right, rgba(122, 91, 232, 0.14), transparent 24%),
+        radial-gradient(circle at bottom left, rgba(90, 79, 212, 0.10), transparent 28%),
+        linear-gradient(180deg, #f8f8fe 0%, var(--bg) 100%);
+    }
+
+    .window {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 38px 1fr;
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px 0 14px;
+      background: rgba(255, 255, 255, 0.72);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      user-select: none;
+    }
+
+    .menu { display: flex; gap: 18px; color: var(--text-soft); }
+    .menu span:first-child { color: var(--text); font-weight: 700; }
+    .window-actions { display: flex; gap: 8px; align-items: center; }
+    .window-btn { width: 12px; height: 12px; border-radius: 999px; border: 1px solid rgba(0, 0, 0, 0.08); }
+    .window-btn.min { background: #f2c14f; }
+    .window-btn.max { background: #7bc96f; }
+    .window-btn.close { background: #e67c73; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 314px 1fr;
+      min-height: 0;
+    }
+
+    .sidebar {
+      background: linear-gradient(180deg, #f1effc 0%, #ebe8f8 100%);
+      border-right: 1px solid var(--line);
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .brand h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+    .brand p { margin: 4px 0 0; font-size: 12px; color: var(--text-soft); }
+
+    .new-project {
+      width: 100%;
+      border: none;
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: white;
+      font-size: 14px;
+      font-weight: 700;
+      text-align: left;
+      box-shadow: var(--shadow);
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+      margin: 2px 4px 0;
+    }
+
+    .project-list { display: grid; gap: 14px; overflow: auto; }
+
+    .project-card {
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .project-card.active { background: var(--panel); box-shadow: var(--shadow); }
+    .project-header { display: flex; justify-content: space-between; gap: 10px; }
+    .project-meta h2 { margin: 0; font-size: 16px; letter-spacing: -0.02em; }
+    .project-meta p { margin: 5px 0 0; color: var(--text-soft); font-size: 12px; line-height: 1.5; }
+
+    .count {
+      min-width: 24px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .task-list { display: grid; gap: 8px; }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: var(--panel-soft);
+      font-size: 13px;
+    }
+
+    .task-row.active { background: #e8e4ff; border: 1px solid #d4cef7; }
+    .task-title { display: grid; gap: 4px; }
+    .task-title strong { font-size: 13px; line-height: 1.3; }
+    .task-title span { font-size: 11px; color: var(--text-soft); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.draft { background: var(--status-draft-bg); color: var(--status-draft-text); }
+    .badge.progress { background: var(--status-progress-bg); color: var(--status-progress-text); }
+    .badge.review { background: var(--status-review-bg); color: var(--status-review-text); }
+    .badge.blocked { background: var(--status-blocked-bg); color: var(--status-blocked-text); }
+    .sidebar-bottom { margin-top: auto; display: grid; gap: 8px; }
+
+    .side-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      color: var(--text-soft);
+      font-size: 13px;
+    }
+
+    .side-link.active { background: rgba(90, 79, 212, 0.08); color: var(--text); font-weight: 700; }
+
+    .main {
+      min-width: 0;
+      padding: 24px 28px 28px;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 18px;
+    }
+
+    .task-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 4px 6px;
+      flex-wrap: wrap;
+    }
+
+    .task-meta { display: grid; gap: 8px; }
+    .crumbs { color: var(--text-soft); font-size: 13px; }
+
+    .task-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .task-title-row h2 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -0.02em;
+    }
+
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .btn {
+      border: none;
+      border-radius: 14px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: default;
+      font-family: inherit;
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: white;
+    }
+
+    .btn.secondary {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+
+    .task-summary {
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 20px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .task-summary-copy { display: grid; gap: 6px; }
+    .task-summary-copy strong { font-size: 16px; }
+    .task-summary-copy span { color: var(--text-soft); font-size: 14px; line-height: 1.6; }
+
+    .layout {
+      min-height: 0;
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .chat-panel {
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: 1fr auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .chat-scroll {
+      padding: 26px;
+      display: grid;
+      align-content: start;
+      gap: 18px;
+      overflow: auto;
+    }
+
+    .message {
+      max-width: 78%;
+      border-radius: 24px;
+      padding: 17px 19px;
+      display: grid;
+      gap: 10px;
+      line-height: 1.7;
+      font-size: 15px;
+    }
+
+    .message.system {
+      background: linear-gradient(180deg, #f6f4ff 0%, #fbfaff 100%);
+      border: 1px solid #e1dcf8;
+      color: var(--text);
+    }
+
+    .message.user {
+      margin-left: auto;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      color: white;
+    }
+
+    .message.system.emphasis {
+      background: linear-gradient(180deg, #f3f0ff 0%, #faf8ff 100%);
+      border-color: #d9d2fb;
+    }
+
+    .label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.78;
+    }
+
+    .message ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .message pre {
+      margin: 0;
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(90, 79, 212, 0.08);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #4b4187;
+      white-space: pre-wrap;
+    }
+
+    .inline-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+    }
+
+    .action-pill {
+      border-radius: 999px;
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--text);
+    }
+
+    .chat-composer {
+      border-top: 1px solid var(--line);
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+      background: rgba(251, 251, 255, 0.86);
+    }
+
+    .quick-prompts {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .prompt-chip {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .input-box {
+      min-height: 88px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background:
+        radial-gradient(circle at top right, rgba(122, 91, 232, 0.07), transparent 22%),
+        linear-gradient(180deg, #fdfdff 0%, #f5f4fd 100%);
+      padding: 16px 18px;
+      color: var(--text-soft);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .drawer-handle {
+      position: absolute;
+      top: 22px;
+      right: -18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .drawer-tab {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+      color: var(--text-soft);
+      border-radius: 16px 16px 0 0;
+      padding: 11px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      letter-spacing: 0.04em;
+      box-shadow: 0 16px 34px rgba(43, 31, 92, 0.08);
+      min-height: 92px;
+      text-align: center;
+    }
+
+    .mini-list { display: grid; gap: 8px; }
+
+    .mini-item {
+      padding: 9px 11px;
+      border-radius: 12px;
+      background: rgba(242, 241, 251, 0.78);
+      border: 1px solid var(--line);
+    }
+
+    .mini-item strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      margin-bottom: 3px;
+    }
+
+    @media (max-width: 1220px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .layout { grid-template-columns: 1fr; }
+      .message { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <header class="titlebar">
+      <div class="menu">
+        <span>ScopeGuard</span>
+        <span>File</span>
+        <span>Edit</span>
+        <span>View</span>
+        <span>Window</span>
+        <span>Help</span>
+      </div>
+      <div class="window-actions">
+        <div class="window-btn min"></div>
+        <div class="window-btn max"></div>
+        <div class="window-btn close"></div>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>ScopeGuard</h1>
+          <p>Desktop workspace for AI engineering</p>
+        </div>
+
+        <button class="new-project">+ Open New Project</button>
+        <div class="section-label">Projects</div>
+
+        <div class="project-list">
+          <section class="project-card active">
+            <div class="project-header">
+              <div class="project-meta">
+                <h2>scopeguard</h2>
+                <p>/path/to/scopeguard</p>
+              </div>
+              <span class="count">3</span>
+            </div>
+
+            <div class="task-list">
+              <div class="task-row active">
+                <div class="task-title">
+                  <strong>Add README redesign</strong>
+                  <span>In conversation</span>
+                </div>
+                  <span class="badge progress">In Progress</span>
+                </div>
+
+              <div class="task-row">
+                <div class="task-title">
+                  <strong>Review auth session fix</strong>
+                  <span>Needs approval</span>
+                </div>
+                <span class="badge blocked">Blocked</span>
+              </div>
+
+              <div class="task-row">
+                <div class="task-title">
+                  <strong>Check README publish copy</strong>
+                  <span>Waiting for final sign-off</span>
+                </div>
+                <span class="badge review">Needs Review</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="sidebar-bottom">
+          <div class="side-link">Home</div>
+          <div class="side-link">Policies</div>
+          <div class="side-link active">Settings</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="task-header">
+          <div class="task-meta">
+            <div class="crumbs">scopeguard / master / task / T-014</div>
+            <div class="task-title-row">
+              <h2>Add README redesign</h2>
+              <span class="badge progress">In Progress</span>
+            </div>
+          </div>
+
+          <div class="header-actions">
+            <button class="btn secondary">Open context drawer</button>
+            <button class="btn primary">Generate Codex Handoff</button>
+          </div>
+        </section>
+
+        <section class="task-summary">
+          <div class="task-summary-copy">
+            <strong>ScopeGuard suggestion</strong>
+            <span>
+              Stay in this conversation to continue the task, review the finished result, and approve any risky step only when it actually becomes necessary.
+            </span>
+          </div>
+          <button class="btn secondary">Summarize current state</button>
+        </section>
+
+        <section class="layout">
+          <article class="chat-panel">
+            <div class="chat-scroll">
+              <div class="message system">
+                <div class="label">ScopeGuard</div>
+                <div>
+                  You are now in the task workspace for <strong>Add README redesign</strong>.
+                </div>
+                <div>
+                  Current goal: rewrite the README homepage so first-time users can quickly understand what ScopeGuard is, when to use it, and what to do next.
+                </div>
+              </div>
+
+              <div class="message user">
+                <div class="label">You</div>
+                <div>Generate a Codex handoff, but keep me in the loop if anything needs review later.</div>
+              </div>
+
+              <div class="message system">
+                <div class="label">ScopeGuard</div>
+                <div>
+                  I can do that. The current task already has enough context for execution.
+                </div>
+                <ul>
+                  <li>Goal and acceptance criteria are recorded</li>
+                  <li>Allowed files and protected areas are defined</li>
+                  <li>The route decision is medium-risk and does not require approval before execution</li>
+                  <li>Validation will happen after the draft changes are ready</li>
+                </ul>
+                <div class="inline-actions">
+                  <button class="action-pill">Generate executor handoff</button>
+                  <button class="action-pill">Explain protected files</button>
+                  <button class="action-pill">Show validation path</button>
+                </div>
+              </div>
+
+              <div class="message system emphasis">
+                <div class="label">ScopeGuard</div>
+                <div>
+                  Execution is complete. I reviewed the draft against the task context and can now help you move into the review stage without leaving this conversation.
+                </div>
+                <ul>
+                  <li>README.md has been updated</li>
+                  <li>README.zh-CN.md remains aligned with the new positioning</li>
+                  <li>No out-of-scope file edits were detected</li>
+                </ul>
+                <div class="inline-actions">
+                  <button class="action-pill">Summarize the diff</button>
+                  <button class="action-pill">Explain remaining risks</button>
+                  <button class="action-pill">Start review in this chat</button>
+                </div>
+              </div>
+
+              <div class="message user">
+                <div class="label">You</div>
+                <div>Start the review here and tell me if there is anything I need to approve.</div>
+              </div>
+
+              <div class="message system emphasis">
+                <div class="label">ScopeGuard</div>
+                <div>
+                  Review summary: the task is ready to continue, but one step now needs your approval before I prepare the final merge recommendation.
+                </div>
+                <div>
+                  Reason: this task changes the project-facing positioning and release messaging, so I want confirmation before treating the updated copy as the approved public narrative.
+                </div>
+                <div class="inline-actions">
+                  <button class="action-pill">Approve this review step</button>
+                  <button class="action-pill">Ask for a safer revision</button>
+                </div>
+              </div>
+
+              <div class="message system">
+                <div class="label">ScopeGuard</div>
+                <div>
+                  If you approve, I will stay in this conversation and continue with:
+                </div>
+                <ul>
+                  <li>a concise review summary</li>
+                  <li>the final validation checklist</li>
+                  <li>a recommendation on whether this task is ready to close</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="chat-composer">
+              <div class="quick-prompts">
+                <button class="prompt-chip">Continue this task</button>
+                <button class="prompt-chip">Summarize current state</button>
+                <button class="prompt-chip">Generate Context Pack</button>
+                <button class="prompt-chip">Explain route decision</button>
+                <button class="prompt-chip">Review the finished draft</button>
+              </div>
+
+              <div class="input-row">
+                <div class="input-box">
+                  Ask ScopeGuard to continue the task, review the result, explain a risky change, or request a safer revision. Example: "Approve this step, then summarize the final review in plain language."
+                </div>
+                <button class="btn primary">Send</button>
+              </div>
+            </div>
+          </article>
+
+          <div class="drawer-handle">
+            <div class="drawer-tab">Context</div>
+            <div class="drawer-tab">Logs</div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

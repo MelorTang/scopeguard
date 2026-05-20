@@ -6,10 +6,11 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "pnpm --filter @scopeguard/shared build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @scopeguard/shared build && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@scopeguard/core": "workspace:*"
+    "@scopeguard/core": "workspace:*",
+    "@scopeguard/shared": "workspace:*"
   }
 }

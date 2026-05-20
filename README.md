@@ -1,202 +1,258 @@
 # ScopeGuard
 
-Safety orchestration for AI coding workflows.
+Task orchestration and delivery coordination for multi-agent software work.
 
-[简体中文](./README.zh-CN.md)
+[Simplified Chinese](./README.zh-CN.md)
 
-ScopeGuard helps you run AI-generated code changes with clearer boundaries, safer parallelism, and more reviewable outputs.
+ScopeGuard helps you turn project goals into structured tasks, route those tasks to the right agent, and bring results back into a shared project state.
 
 It is not a coding model.
-It works alongside Codex, Claude Code, Cursor, and other coding assistants.
+It is not an IDE replacement.
+It works alongside Claude, Codex, OpenCode, and other MCP-compatible or connected agents.
 
 ## In One Sentence
 
-ScopeGuard helps you manage the risk of AI-written code before it reaches your main branch.
+ScopeGuard is an orchestration layer for AI software work: `plan -> queue -> execute -> report -> review`.
 
-## Why It Exists
+## Product Position
 
-AI coding tools are great at making changes.
-They are much less reliable at staying inside file boundaries, coordinating parallel work, and producing changes that are easy to verify before merge.
+ScopeGuard is most useful when you are coordinating real project work across one or more agents.
 
-That usually shows up as:
+It is designed to provide:
 
-- agents editing more files than expected
-- overlapping changes between parallel tasks
-- generated artifacts mixed into source diffs
-- hard-to-review working tree changes
-- unsafe merges after "successful" AI output
+- project-level planning and task breakdown
+- task routing through `assignedExecutor`
+- structured handoff contracts
+- connected agent queueing and status tracking
+- result, review, and project-state feedback loops
 
-ScopeGuard adds a safety layer around that workflow.
+ScopeGuard should be understood as:
 
-## Without vs With ScopeGuard
+- an orchestration core
+- a connected / MCP-friendly integration layer
+- an optional automation layer on top
 
-Without ScopeGuard:
+It should not be understood as:
 
-- ask an AI tool to make a change
-- inspect a large diff after the fact
-- discover scope drift during review or merge
-- manually untangle overlapping work between tasks
-
-With ScopeGuard:
-
-- define the task and file boundaries up front
-- isolate work in a dedicated git worktree
-- verify whether the change stayed in scope
-- generate a review artifact before approval and merge
-
-## What ScopeGuard Does
-
-- Breaks work into scoped tasks with explicit file boundaries.
-- Prevents unsafe parallelism with file locks and task dependencies.
-- Runs work in isolated git worktrees.
-- Verifies whether a task stayed within its allowed scope.
-- Generates a human review report before approval and merge.
-- Supports working-tree verification when changes were made directly in the current repo.
-
-## Who It Is For
-
-ScopeGuard is most useful when:
-
-- you rely heavily on AI coding tools in a real repository
-- multiple tasks may run in parallel
-- you want safer review and merge discipline around AI-generated changes
-- you need more than "the model said it was done"
-
-It is probably overkill for:
-
-- tiny scripts
-- one-file edits
-- casual exploratory prompting without review requirements
+- a universal local CLI runtime
+- a replacement for Claude or Codex
+- a tool whose main value is launching shell processes
 
 ## Core Idea
 
-ScopeGuard does not try to replace your coding assistant.
+Most coding agents are good at doing one task.
+They are much less reliable at:
 
-It helps turn AI coding from a one-shot generation step into a controlled engineering workflow:
+- breaking a project into a clean task graph
+- coordinating multiple executors
+- preserving scope and review context
+- reporting completed work back into shared state
 
-`plan -> scope -> run -> verify -> review -> approve -> merge`
+ScopeGuard exists to solve that orchestration gap.
 
-## Typical Workflow
+## What ScopeGuard Owns
 
-1. Describe the requirement and generate a task plan.
-2. Import tasks with explicit allowed files, locks, and dependencies.
-3. Run one task in an isolated worktree.
-4. Verify the result before trusting it.
-5. Review the generated diff and report.
-6. Approve and merge only after scope and review checks pass.
+ScopeGuard is responsible for:
+
+- project planning
+- task lifecycle
+- task handoff structure
+- assignment queueing
+- connected client visibility
+- review and approval state
+- project memory and coordination context
+
+Executors are responsible for:
+
+- editing code
+- running commands
+- returning results
+
+Humans are responsible for:
+
+- choosing goals
+- reviewing outcomes
+- approving next steps
+
+## Product Layers
+
+### 1. Orchestration Core
+
+This is the core product value.
+
+It includes:
+
+- project conversations
+- task schema
+- dependencies, priority, and parallelism
+- `assignedExecutor`
+- handoff generation
+- queue / claim / complete lifecycle
+- review and status reporting
+
+### 2. Standard Connected Interface
+
+This is the standard integration surface.
+
+It includes:
+
+- connected HTTP API
+- MCP bridge
+- token auth
+- connected client registry
+- pending assignment queue
+- claim / finish / complete actions
+
+This is the primary route for execution.
+
+### 3. Automation Enhancements
+
+These are optional layers on top of the connected core.
+
+They include:
+
+- skill / command workflows
+- MCP prompts
+- optional companion workers
+- experimental local CLI launch
+
+These are useful, but they do not define what ScopeGuard is.
+
+## Recommended Main Workflow
+
+1. Describe a goal in the project conversation.
+2. Use planning to turn that goal into tasks.
+3. Assign each task to an executor.
+4. Connect one or more agents through MCP / connected integration.
+5. Queue a task for a matching connected agent.
+6. Let the agent claim, execute, and report results.
+7. Review the result and decide the next step.
 
 ```mermaid
 flowchart LR
-    A["Requirement"] --> B["Plan Tasks"]
-    B --> C["Set Scope and Locks"]
-    C --> D["Run in Worktree"]
-    D --> E["Verify Scope and Commands"]
-    E --> F["Review Report"]
-    F --> G{"Approved?"}
-    G -->|Yes| H["Merge Safely"]
-    G -->|No| I["Revise or Reject"]
+    A["Project Goal"] --> B["Plan Tasks"]
+    B --> C["Assign Executor"]
+    C --> D["Queue for Connected Agent"]
+    D --> E["Agent Claims Task"]
+    E --> F["Execute and Report"]
+    F --> G["Review and Update Project State"]
 ```
+
+## Connected MCP Workflow
+
+ScopeGuard's connected MCP workflow enables agents to discover, claim, and report on tasks through a standard MCP interface:
+
+1. **Connect** — The agent connects to ScopeGuard's MCP bridge using a token.
+2. **Discover** — The agent calls `scopeguard_list_pending` to find queued assignments.
+3. **Claim** — The agent calls `scopeguard_claim_assignment` to lock a task, receiving a structured handoff with goal, allowed files, and acceptance criteria.
+4. **Execute** — The agent works within the handoff's constraints and reports completion via `scopeguard_finish_assignment`.
+5. **Review** — Results flow back into the project for human or automated review.
+
+This four-step cycle (`status → list_pending → claim → finish`) is the primary agent interaction pattern. The MCP bridge handles auth, queue ordering, and structured handoff serialization, so agents can focus on executing tasks rather than managing workflow state.
+
+## Current Execution Priority
+
+### Primary
+
+Connected / MCP-style execution.
+
+This is the direction we expect to harden:
+
+- connected agents
+- assignment queue
+- claim / finish / complete
+- MCP bridge
+- skill / prompt workflows
+
+### Secondary
+
+Skill or command workflows on top of MCP.
+
+This is the most host-friendly path for guided task execution without requiring a background worker.
+
+### Experimental / Fallback
+
+Local CLI launch from inside ScopeGuard.
+
+This remains available for debugging and fallback scenarios, but it is not the product's primary execution story.
+
+## Who It Is For
+
+ScopeGuard is a good fit if:
+
+- you use multiple coding agents on real projects
+- you want a stable task model instead of scattered chat transcripts
+- you want connected execution and structured result reporting
+- you need reviewable project state, not just "the model said it finished"
+
+It is probably overkill if:
+
+- you only do one-off edits
+- you do not need task state or review structure
+- you do not care which agent handled which task
+
+## What Is Working Today
+
+The current desktop product direction is centered on:
+
+- explicit project planning
+- task creation with executor semantics
+- connected client registration
+- queueing work for connected agents
+- pending / claim / finish lifecycle
+- MCP bridge as a generic host integration surface
+
+## What Is Deliberately Not the Main Story
+
+ScopeGuard is not currently trying to become:
+
+- a universal background worker platform for every IDE
+- a host-specific Claude-only integration
+- a local shell launcher for every agent runtime edge case
+
+Those may exist as adapters or optional enhancements, but they are not the core promise.
 
 ## Quick Start
 
+### Desktop app
+
 ```powershell
 pnpm install
-pnpm build
-pnpm --filter @scopeguard/cli dev -- init
-pnpm --filter @scopeguard/cli dev -- scan
-pnpm --filter @scopeguard/cli dev -- doctor
-pnpm --filter @scopeguard/cli dev -- smoke
+pnpm --filter @scopeguard/desktop build
+node .\apps\desktop\scripts\run-electron.mjs
 ```
 
-## Smallest Useful Entry Point
+### Connected / MCP path
 
-If you do not want the full task workflow yet, start with verification and review:
+1. Open ScopeGuard desktop.
+2. Go to `Settings > Connected Agents / MCP`.
+3. Copy the token.
+4. Connect your agent or MCP host to the ScopeGuard bridge/API.
+5. Queue a task for a connected agent.
 
-```powershell
-scopeguard verify T-001 --working-tree
-scopeguard review T-001 --working-tree
-scopeguard verify T-001 --working-tree --scope-only
-```
-
-This is the fastest way to evaluate whether ScopeGuard adds value in your repo.
-
-It lets you answer a simple question first:
-
-"Did this AI-generated change stay inside the files and boundaries I expected?"
-
-## Core Workflow
-
-```powershell
-scopeguard plan requirements/feature.md
-scopeguard validate-plan plan.json
-scopeguard import-plan plan.json
-scopeguard tasks
-scopeguard next
-scopeguard schedule
-scopeguard verify T-001
-scopeguard review T-001
-```
-
-Source-run mode note:
-Replace `scopeguard ...` with either:
-- `pnpm --filter @scopeguard/cli dev -- ...`
-- `node apps\cli\bin\scopeguard.js ...`
-
-## Manual Working-Tree Workflow
-
-Use this when changes are made directly in the current repository working tree instead of task worktrees.
-
-```powershell
-scopeguard verify T-001 --working-tree
-scopeguard review T-001 --working-tree
-scopeguard verify T-001 --working-tree --scope-only
-scopeguard verify T-002 --working-tree --include-dependencies
-```
-
-## Compatibility
-
-- `scopeguard` is the primary CLI.
-- `agentboard` remains a legacy alias.
-- `.scopeguard` is the primary data directory.
-- `.agentboard` is legacy compatibility only.
-
-## Local CLI Usage
+### CLI / local tooling
 
 ```powershell
 pnpm --filter @scopeguard/cli dev -- doctor
 pnpm --filter @scopeguard/cli dev -- smoke
-node apps\cli\bin\scopeguard.js doctor
-node apps\cli\bin\scopeguard.js smoke
-node apps\cli\bin\agentboard.js doctor
-node apps\cli\bin\agentboard.js smoke
 ```
 
-## Web and TUI
+## Repo Guide
 
-```powershell
-pnpm --filter @scopeguard/cli dev -- board
-pnpm --filter @scopeguard/cli dev -- tui
-```
-
-## What To Evaluate First
-
-If you are trying ScopeGuard for the first time, focus on these questions:
-
-- Did `verify` catch files you would have missed in review?
-- Did working-tree mode help with direct AI edits in a real repo?
-- Did the task boundaries make parallel work feel safer?
-- Did the review step make AI output easier to trust or reject?
+- `docs/SCOPEGUARD_PRODUCT_STRATEGY.md` - current product positioning
+- `docs/SCOPEGUARD_DESKTOP_MVP.md` - desktop workflow scope
+- `docs/SCOPEGUARD_DESKTOP_ARCHITECTURE.md` - architecture notes
+- `docs/SCOPEGUARD_DESKTOP_ADAPTER_API.md` - connected / adapter API
+- `docs/QUICKSTART.md` - developer quick start
+- `docs/COMMANDS.md` - CLI commands
 
 ## Status
 
-ScopeGuard is in Developer Preview.
-The workflow is usable for dogfooding and real-repository testing, but interfaces and ergonomics are still evolving.
+ScopeGuard is in active product-definition and developer-preview mode.
 
-## More Docs
+The central question is no longer "can we launch a local CLI?".
+The central question is:
 
-- `docs/QUICKSTART.md`
-- `docs/COMMANDS.md`
-- `docs/MVP_WORKFLOW.md`
-- `docs/SAFETY_MODEL.md`
-- `docs/DOGFOOD.md`
-- `docs/PREVIEW_LIMITATIONS.md`
+"Can we give projects a stable orchestration layer that multiple agents can plug into?"
+
+That is the direction this repository now optimizes for.
