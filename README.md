@@ -214,10 +214,72 @@ Those may exist as adapters or optional enhancements, but they are not the core 
 
 ## Quick Start
 
-### Desktop app
+### Before you begin: build from source
+
+If you just cloned this repository, install dependencies and build first:
 
 ```powershell
+cd scopeguard
 pnpm install
+pnpm -r build
+```
+
+This compiles the CLI, server, and shared packages. **Do not skip this step** — the CLI, server, and desktop app will not run without it.
+
+---
+
+### Which path are you on?
+
+ScopeGuard has two usage modes. Pick the one that matches what you are trying to do.
+
+#### Path A: Source repo (you are contributing to ScopeGuard itself)
+
+You stay in the scopeguard checkout and run commands through pnpm or direct node paths:
+
+```powershell
+# Run CLI commands against the scopeguard repo itself
+pnpm --filter @scopeguard/cli dev -- doctor
+node apps\cli\bin\scopeguard.js smoke --json
+pnpm typecheck
+```
+
+Use this path if you are:
+
+- developing ScopeGuard itself
+- running the test suite
+- building the desktop app
+
+#### Path B: Target repo (you are using ScopeGuard to orchestrate work in another project)
+
+Define a helper pointing to your local ScopeGuard source, then run commands **inside the target project**:
+
+```powershell
+# Define a helper (Windows PowerShell)
+function scopeguard-dev {
+  node <path-to-scopeguard>\apps\cli\bin\scopeguard.js @args
+}
+
+# Inside your target project directory:
+cd my-project
+scopeguard-dev init
+scopeguard-dev scan
+scopeguard-dev doctor --json
+scopeguard-dev smoke --json
+```
+
+Use this path if you are:
+
+- running ScopeGuard against a real project
+- setting up task orchestration for your own codebase
+- connecting agents through MCP
+
+---
+
+### Desktop app
+
+After building from source:
+
+```powershell
 pnpm --filter @scopeguard/desktop build
 node .\apps\desktop\scripts\run-electron.mjs
 ```
@@ -230,11 +292,24 @@ node .\apps\desktop\scripts\run-electron.mjs
 4. Connect your agent or MCP host to the ScopeGuard bridge/API.
 5. Queue a task for a connected agent.
 
-### CLI / local tooling
+### First time using doctor / smoke?
+
+These commands check environment and repository health. They are most useful **after** you have run `init` and `scan` in a target project.
+
+If you run them in a fresh directory without a `.scopeguard` data directory, they will report missing configuration — **that is expected, not a bug**.
+
+Typical first-run sequence:
 
 ```powershell
-pnpm --filter @scopeguard/cli dev -- doctor
-pnpm --filter @scopeguard/cli dev -- smoke
+# 1. Initialize storage in your target project
+scopeguard-dev init
+
+# 2. Build project map
+scopeguard-dev scan
+
+# 3. Run health checks
+scopeguard-dev doctor
+scopeguard-dev smoke
 ```
 
 ## Repo Guide

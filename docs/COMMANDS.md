@@ -5,6 +5,17 @@ Compatibility note: `.scopeguard` is primary storage. `.agentboard` is legacy co
 
 When using commands through pnpm, expected failures may show `ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`. Read the ScopeGuard message above it for the real reason.
 
+## Before Using These Commands
+
+**If you are running ScopeGuard against a target project (not developing ScopeGuard itself):**
+
+1. You must first build the source: `pnpm install && pnpm -r build` in the scopeguard checkout.
+2. Define a helper: `function scopeguard-dev { node <path-to-scopeguard>\apps\cli\bin\scopeguard.js @args }`
+3. **Always run `init` first** in the target project directory. Without a `.scopeguard` data directory, commands like `doctor` and `smoke` will report missing configuration — that is expected, not a bug.
+4. Typical first-run sequence: `init → scan → doctor --json → smoke --json`.
+
+See `docs/QUICKSTART.md` for the full setup guide.
+
 ## Local Usage Forms
 
 Primary:
