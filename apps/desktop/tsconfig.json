@@ -2,7 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": [
+    "src/main.ts",
+    "src/agent-host.ts",
+    "src/main/**/*.ts"
+  ],
+  "exclude": [
+    "src/renderer"
+  ]
 }

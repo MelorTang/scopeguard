@@ -1,21 +1,17 @@
 node_modules/
 dist/
+dist-renderer/
 build/
 .next/
 coverage/
 .cache/
 .turbo/
 turbo/
+.playwright-cli/
+output/
 *.tsbuildinfo
 
-.agentboard/worktrees/
-
-# Local planner outputs
-plan.json
-invalid-plan.json
-warning-plan.json
-
-# ScopeGuard local runtime data
+# Legacy local runtime data is not imported by Desktop v2.
 .scopeguard/
 .agentboard/
 
@@ -23,9 +19,6 @@ warning-plan.json
 .env
 .env.*
 *.log
-
-# Temporary / debug files
-_temp_server_fn.js
 
 # Local Claude settings
 .claude/settings.local.json

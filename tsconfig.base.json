@@ -12,10 +12,6 @@
     "sourceMap": true,
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
-    "types": ["node"],
-    "baseUrl": ".",
-    "paths": {
-      "@scopeguard/shared": ["packages/shared/dist/index.d.ts"]
-    }
+    "types": ["node"]
   }
 }

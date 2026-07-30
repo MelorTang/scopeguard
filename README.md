@@ -1,333 +1,112 @@
 # ScopeGuard
 
-Task orchestration and delivery coordination for multi-agent software work.
+Desktop workspace for running multiple independent AI agents against the same
+local project.
 
-[Simplified Chinese](./README.zh-CN.md)
+[简体中文](./README.zh-CN.md)
 
-ScopeGuard helps you turn project goals into structured tasks, route those tasks to the right agent, and bring results back into a shared project state.
+ScopeGuard keeps each Agent Thread isolated while giving the user an explicit,
+versioned Project Context for decisions that should be shared. Model inference
+can use a directly reachable provider or a company relay by configuring its
+protocol, Base URL, API key, and model.
 
-It is not a coding model.
-It is not an IDE replacement.
-It works alongside Claude, Codex, OpenCode, and other MCP-compatible or connected agents.
+The production surface is Electron. The Web build is only a renderer preview
+and never receives filesystem, command, provider, or secret capabilities.
 
-## In One Sentence
+## Current MVP
 
-ScopeGuard is an orchestration layer for AI software work: `plan -> queue -> execute -> report -> review`.
+- Open a local folder as a Project.
+- Configure and test OpenAI-compatible or Anthropic-compatible endpoints.
+- Create multiple independent Agent Threads under one Project.
+- Keep 1-4 Threads open in tabs and split panes.
+- Stream multiple Runs concurrently and stop or retry them independently.
+- Read and write Project files with root confinement.
+- Require explicit approval before command execution by default.
+- Inspect tool activity and publish immutable Project Context revisions.
+- Restore Projects, Threads, messages, layout, drafts, and interrupted Runs.
+- Clear provider key input after save or close; saved keys are encrypted outside
+  SQLite and are never returned to the renderer.
+- Optionally run a local CLI Agent through a constrained process adapter.
 
-## Product Position
+ScopeGuard does not provide a VPN, model hosting, relay deployment, team
+accounts, cloud synchronization, or automatic cross-Thread memory.
 
-ScopeGuard is most useful when you are coordinating real project work across one or more agents.
+## Run From Source
 
-It is designed to provide:
+Prerequisites: Node.js 22 or newer and pnpm 10 or newer.
 
-- project-level planning and task breakdown
-- task routing through `assignedExecutor`
-- structured handoff contracts
-- connected agent queueing and status tracking
-- result, review, and project-state feedback loops
-
-ScopeGuard should be understood as:
-
-- an orchestration core
-- a connected / MCP-friendly integration layer
-- an optional automation layer on top
-
-It should not be understood as:
-
-- a universal local CLI runtime
-- a replacement for Claude or Codex
-- a tool whose main value is launching shell processes
-
-## Core Idea
-
-Most coding agents are good at doing one task.
-They are much less reliable at:
-
-- breaking a project into a clean task graph
-- coordinating multiple executors
-- preserving scope and review context
-- reporting completed work back into shared state
-
-ScopeGuard exists to solve that orchestration gap.
-
-## What ScopeGuard Owns
-
-ScopeGuard is responsible for:
-
-- project planning
-- task lifecycle
-- task handoff structure
-- assignment queueing
-- connected client visibility
-- review and approval state
-- project memory and coordination context
-
-Executors are responsible for:
-
-- editing code
-- running commands
-- returning results
-
-Humans are responsible for:
-
-- choosing goals
-- reviewing outcomes
-- approving next steps
-
-## Product Layers
-
-### 1. Orchestration Core
-
-This is the core product value.
-
-It includes:
-
-- project conversations
-- task schema
-- dependencies, priority, and parallelism
-- `assignedExecutor`
-- handoff generation
-- queue / claim / complete lifecycle
-- review and status reporting
-
-### 2. Standard Connected Interface
-
-This is the standard integration surface.
-
-It includes:
-
-- connected HTTP API
-- MCP bridge
-- token auth
-- connected client registry
-- pending assignment queue
-- claim / finish / complete actions
-
-This is the primary route for execution.
-
-### 3. Automation Enhancements
-
-These are optional layers on top of the connected core.
-
-They include:
-
-- skill / command workflows
-- MCP prompts
-- optional companion workers
-- experimental local CLI launch
-
-These are useful, but they do not define what ScopeGuard is.
-
-## Recommended Main Workflow
-
-1. Describe a goal in the project conversation.
-2. Use planning to turn that goal into tasks.
-3. Assign each task to an executor.
-4. Connect one or more agents through MCP / connected integration.
-5. Queue a task for a matching connected agent.
-6. Let the agent claim, execute, and report results.
-7. Review the result and decide the next step.
-
-```mermaid
-flowchart LR
-    A["Project Goal"] --> B["Plan Tasks"]
-    B --> C["Assign Executor"]
-    C --> D["Queue for Connected Agent"]
-    D --> E["Agent Claims Task"]
-    E --> F["Execute and Report"]
-    F --> G["Review and Update Project State"]
-```
-
-## Connected MCP Workflow
-
-ScopeGuard's connected MCP workflow enables agents to discover, claim, and report on tasks through a standard MCP interface:
-
-1. **Connect** — The agent connects to ScopeGuard's MCP bridge using a token.
-2. **Discover** — The agent calls `scopeguard_list_pending` to find queued assignments.
-3. **Claim** — The agent calls `scopeguard_claim_assignment` to lock a task, receiving a structured handoff with goal, allowed files, and acceptance criteria.
-4. **Execute** — The agent works within the handoff's constraints and reports completion via `scopeguard_finish_assignment`.
-5. **Review** — Results flow back into the project for human or automated review.
-
-This four-step cycle (`status → list_pending → claim → finish`) is the primary agent interaction pattern. The MCP bridge handles auth, queue ordering, and structured handoff serialization, so agents can focus on executing tasks rather than managing workflow state.
-
-## Current Execution Priority
-
-### Primary
-
-Connected / MCP-style execution.
-
-This is the direction we expect to harden:
-
-- connected agents
-- assignment queue
-- claim / finish / complete
-- MCP bridge
-- skill / prompt workflows
-
-### Secondary
-
-Skill or command workflows on top of MCP.
-
-This is the most host-friendly path for guided task execution without requiring a background worker.
-
-### Experimental / Fallback
-
-Local CLI launch from inside ScopeGuard.
-
-This remains available for debugging and fallback scenarios, but it is not the product's primary execution story.
-
-## Who It Is For
-
-ScopeGuard is a good fit if:
-
-- you use multiple coding agents on real projects
-- you want a stable task model instead of scattered chat transcripts
-- you want connected execution and structured result reporting
-- you need reviewable project state, not just "the model said it finished"
-
-It is probably overkill if:
-
-- you only do one-off edits
-- you do not need task state or review structure
-- you do not care which agent handled which task
-
-## What Is Working Today
-
-The current desktop product direction is centered on:
-
-- explicit project planning
-- task creation with executor semantics
-- connected client registration
-- queueing work for connected agents
-- pending / claim / finish lifecycle
-- MCP bridge as a generic host integration surface
-
-## What Is Deliberately Not the Main Story
-
-ScopeGuard is not currently trying to become:
-
-- a universal background worker platform for every IDE
-- a host-specific Claude-only integration
-- a local shell launcher for every agent runtime edge case
-
-Those may exist as adapters or optional enhancements, but they are not the core promise.
-
-## Quick Start
-
-### Before you begin: build from source
-
-If you just cloned this repository, install dependencies and build first:
-
-```powershell
-cd scopeguard
+```bash
 pnpm install
-pnpm -r build
+pnpm dev
 ```
 
-This compiles the CLI, server, and shared packages. **Do not skip this step** — the CLI, server, and desktop app will not run without it.
+`pnpm dev` builds the Electron main and Agent host processes, starts the Vite
+renderer, and opens the desktop application.
 
----
+For renderer-only UI work:
 
-### Which path are you on?
+```bash
+pnpm dev:web
+```
 
-ScopeGuard has two usage modes. Pick the one that matches what you are trying to do.
+The Web preview uses an in-memory mock bridge. It cannot access local files,
+run commands, persist secrets, or call a model provider.
 
-#### Path A: Source repo (you are contributing to ScopeGuard itself)
+## Verify
 
-You stay in the scopeguard checkout and run commands through pnpm or direct node paths:
-
-```powershell
-# Run CLI commands against the scopeguard repo itself
-pnpm --filter @scopeguard/cli dev -- doctor
-node apps\cli\bin\scopeguard.js smoke --json
+```bash
+pnpm test
 pnpm typecheck
+pnpm build
+pnpm start
 ```
 
-Use this path if you are:
+For deterministic provider testing:
 
-- developing ScopeGuard itself
-- running the test suite
-- building the desktop app
-
-#### Path B: Target repo (you are using ScopeGuard to orchestrate work in another project)
-
-Define a helper pointing to your local ScopeGuard source, then run commands **inside the target project**:
-
-```powershell
-# Define a helper (Windows PowerShell)
-function scopeguard-dev {
-  node <path-to-scopeguard>\apps\cli\bin\scopeguard.js @args
-}
-
-# Inside your target project directory:
-cd my-project
-scopeguard-dev init
-scopeguard-dev scan
-scopeguard-dev doctor --json
-scopeguard-dev smoke --json
+```bash
+pnpm smoke:provider
 ```
 
-Use this path if you are:
+Then configure `http://127.0.0.1:47821/v1` as an OpenAI-compatible endpoint
+with any non-empty test key and model.
 
-- running ScopeGuard against a real project
-- setting up task orchestration for your own codebase
-- connecting agents through MCP
+## Architecture
 
----
-
-### Desktop app
-
-After building from source:
-
-```powershell
-pnpm --filter @scopeguard/desktop build
-node .\apps\desktop\scripts\run-electron.mjs
+```text
+apps/desktop              Electron main, preload, renderer, Agent host
+packages/domain           Entities, policies, and state transitions
+packages/application      Use cases and runtime orchestration
+packages/agent-runtime    Native model and tool loop
+packages/provider-adapters
+packages/tool-runtime
+packages/storage-sqlite
+packages/cli-runtime      Optional local CLI process adapter
+packages/ipc-contracts
 ```
 
-### Connected / MCP path
+See [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md) and
+[V2_UI_SPEC.md](./docs/V2_UI_SPEC.md). The complete release gate is in
+[VERIFICATION.md](./docs/VERIFICATION.md).
 
-1. Open ScopeGuard desktop.
-2. Go to `Settings > Connected Agents / MCP`.
-3. Copy the token.
-4. Connect your agent or MCP host to the ScopeGuard bridge/API.
-5. Queue a task for a connected agent.
+## Security Boundary
 
-### First time using doctor / smoke?
+- Electron renderer sandboxing and context isolation are enabled.
+- Preload exposes an explicit typed API, not generic IPC.
+- IPC calls validate both sender and payload.
+- The Agent host is the only SQLite writer.
+- Provider secrets are encrypted through Electron `safeStorage` and referenced
+  by opaque IDs in SQLite.
+- File tools resolve real paths and reject access outside the Project root.
+- Command execution never uses shell string interpolation and follows each
+  Agent Profile's permission policy.
 
-These commands check environment and repository health. They are most useful **after** you have run `init` and `scan` in a target project.
+This is a local desktop security boundary, not a container sandbox. Only open
+Projects and approve commands that you trust.
 
-If you run them in a fresh directory without a `.scopeguard` data directory, they will report missing configuration — **that is expected, not a bug**.
+See [SECURITY.md](./docs/SECURITY.md) for the full trust model.
 
-Typical first-run sequence:
+## Migration
 
-```powershell
-# 1. Initialize storage in your target project
-scopeguard-dev init
-
-# 2. Build project map
-scopeguard-dev scan
-
-# 3. Run health checks
-scopeguard-dev doctor
-scopeguard-dev smoke
-```
-
-## Repo Guide
-
-- `docs/SCOPEGUARD_PRODUCT_STRATEGY.md` - current product positioning
-- `docs/SCOPEGUARD_DESKTOP_MVP.md` - desktop workflow scope
-- `docs/SCOPEGUARD_DESKTOP_ARCHITECTURE.md` - architecture notes
-- `docs/SCOPEGUARD_DESKTOP_ADAPTER_API.md` - connected / adapter API
-- `docs/QUICKSTART.md` - developer quick start
-- `docs/COMMANDS.md` - CLI commands
-
-## Status
-
-ScopeGuard is in active product-definition and developer-preview mode.
-
-The central question is no longer "can we launch a local CLI?".
-The central question is:
-
-"Can we give projects a stable orchestration layer that multiple agents can plug into?"
-
-That is the direction this repository now optimizes for.
+The v0.4 task queue, claim server, MCP bridge, and static Web UI were removed
+because they model a different product. See
+[V0.4_TO_DESKTOP_V2.md](./docs/V0.4_TO_DESKTOP_V2.md).

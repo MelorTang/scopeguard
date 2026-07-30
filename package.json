@@ -1,17 +1,16 @@
 {
   "name": "scopeguard",
   "private": true,
-  "version": "0.4.0-preview",
+  "version": "0.5.0-dev",
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck",
-    "dev": "pnpm --filter @scopeguard/cli dev",
-    "scopeguard": "scopeguard",
-    "agentboard": "agentboard"
-  },
-  "dependencies": {
-    "@scopeguard/cli": "workspace:*"
+    "build": "pnpm --filter @scopeguard/desktop build",
+    "typecheck": "pnpm --filter @scopeguard/desktop typecheck",
+    "test": "pnpm --filter @scopeguard/domain --filter @scopeguard/storage-sqlite --filter @scopeguard/agent-runtime --filter @scopeguard/provider-adapters --filter @scopeguard/tool-runtime --filter @scopeguard/cli-runtime --filter @scopeguard/application --filter @scopeguard/ipc-contracts --filter @scopeguard/desktop test",
+    "dev": "pnpm --filter @scopeguard/desktop dev",
+    "dev:web": "pnpm --filter @scopeguard/desktop dev:web",
+    "start": "pnpm --filter @scopeguard/desktop start",
+    "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

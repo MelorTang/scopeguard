@@ -1,19 +1,44 @@
 {
   "name": "@scopeguard/desktop",
-  "version": "0.4.0-preview",
+  "version": "0.5.0-dev",
   "private": true,
   "type": "module",
   "main": "dist/main.js",
   "types": "dist/main.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-preload.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "pnpm --filter @scopeguard/server build && pnpm run build && node scripts/run-electron.mjs"
+    "build:deps": "pnpm --filter @scopeguard/application build && pnpm --filter @scopeguard/cli-runtime build && pnpm --filter @scopeguard/provider-adapters build && pnpm --filter @scopeguard/tool-runtime build && pnpm --filter @scopeguard/ipc-contracts build",
+    "build:main": "pnpm run build:deps && tsc -p tsconfig.json && node scripts/copy-preload.mjs",
+    "build:renderer": "vite build",
+    "build": "pnpm run build:main && pnpm run build:renderer",
+    "typecheck": "pnpm run build:deps && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "pnpm run build:main && node --test dist/main/*.test.js",
+    "dev": "pnpm run build:main && concurrently -k -s first \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env SCOPEGUARD_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "smoke:provider": "node scripts/mock-provider.mjs",
+    "start": "electron ."
   },
   "dependencies": {
-    "@scopeguard/server": "workspace:*"
+    "@scopeguard/application": "workspace:*",
+    "@scopeguard/cli-runtime": "workspace:*",
+    "@scopeguard/domain": "workspace:*",
+    "@scopeguard/ipc-contracts": "workspace:*",
+    "@scopeguard/provider-adapters": "workspace:*",
+    "@scopeguard/storage-sqlite": "workspace:*",
+    "@scopeguard/tool-runtime": "workspace:*",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "electron": "^42.0.1"
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^42.0.1",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.1"
   }
 }
