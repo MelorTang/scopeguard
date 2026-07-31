@@ -1,56 +1,69 @@
 # ScopeGuard
 
-Desktop workspace for running multiple independent AI agents against the same
-local project.
+Desktop multi-agent workspace for personal knowledge work.
 
 [简体中文](./README.zh-CN.md)
 
-ScopeGuard keeps each Agent Thread isolated while giving the user an explicit,
-versioned Project Context for decisions that should be shared. Model inference
-can use a directly reachable provider or a company relay by configuring its
-protocol, Base URL, API key, and model.
+ScopeGuard lets one user run several persistent, role-specific Agents inside a
+Workspace. Agent conversations are isolated by default. Only an explicitly
+published `ContextRevision` or `Handoff` crosses Agent boundaries, with
+provenance back to the Agent, Task, Run, and Artifact.
 
-The production surface is Electron. The Web build is only a renderer preview
-and never receives filesystem, command, provider, or secret capabilities.
+![ScopeGuard multi-agent desktop workspace](./docs/assets/scopeguard-workspace.png)
 
-## Current MVP
+Electron is the product surface. The Web build is an in-memory renderer preview
+and has no filesystem, command, provider, remote-runtime, or secret capability.
 
-- Open a local folder as a Project.
-- Configure and test OpenAI-compatible or Anthropic-compatible endpoints.
-- Create multiple independent Agent Threads under one Project.
-- Keep 1-4 Threads open in tabs and split panes.
-- Stream multiple Runs concurrently and stop or retry them independently.
-- Read and write Project files with root confinement.
-- Require explicit approval before command execution by default.
-- Inspect tool activity and publish immutable Project Context revisions.
-- Restore Projects, Threads, messages, layout, drafts, and interrupted Runs.
-- Clear provider key input after save or close; saved keys are encrypted outside
-  SQLite and are never returned to the renderer.
-- Optionally run a local CLI Agent through a constrained process adapter.
+## First-stage MVP
+
+- Workspaces with an optional local folder.
+- OpenAI-compatible and Anthropic-compatible Provider configuration.
+- Local and authenticated persistent remote Runtime nodes.
+- Persistent Agent definitions and Workspace-bound Agent instances.
+- Task/Assignment work tracking, isolated Threads, and immutable Run snapshots.
+- Two or more concurrent Runs with independent stop and retry behavior.
+- Traceable text, Markdown, report, and written-file Artifacts with explicit
+  Context publishing and Agent Handoffs.
+- A unified Inbox for approvals, failures, completions, input, and offline Runtimes.
+- An Agent can pause its current local Run for required user input and resume
+  that same Run from the original conversation.
+- Root-confined local file tools and approval-gated writes and commands.
+- Remote Runs that continue after Desktop exits and reconcile on restart.
+- SQLite recovery for product state plus local layout and draft restoration.
 
 ScopeGuard does not provide a VPN, model hosting, relay deployment, team
-accounts, cloud synchronization, or automatic cross-Thread memory.
+accounts, cloud sync, or implicit cross-Agent memory. This milestone is
+single-user and team-ready, not a multi-user collaboration service.
 
-## Run From Source
+## Run from source
 
-Prerequisites: Node.js 22 or newer and pnpm 10 or newer.
+Requires Node.js 22+ and pnpm 10+.
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-`pnpm dev` builds the Electron main and Agent host processes, starts the Vite
-renderer, and opens the desktop application.
-
-For renderer-only UI work:
+Renderer-only preview:
 
 ```bash
 pnpm dev:web
 ```
 
-The Web preview uses an in-memory mock bridge. It cannot access local files,
-run commands, persist secrets, or call a model provider.
+## Remote Runtime
+
+```bash
+pnpm runtime:build
+SCOPEGUARD_RUNTIME_TOKEN='replace-with-a-long-random-token' \
+SCOPEGUARD_RUNTIME_HOST='127.0.0.1' \
+SCOPEGUARD_RUNTIME_PORT='8787' \
+SCOPEGUARD_RUNTIME_DB="$HOME/.scopeguard-runtime/runtime.sqlite" \
+pnpm runtime:start
+```
+
+Loopback HTTP is accepted for local testing. Non-loopback Runtime URLs must use
+HTTPS. See [VERIFICATION.md](./docs/VERIFICATION.md) for the full desktop and
+remote continuation gate.
 
 ## Verify
 
@@ -58,55 +71,27 @@ run commands, persist secrets, or call a model provider.
 pnpm test
 pnpm typecheck
 pnpm build
-pnpm start
+git diff --check
 ```
 
-For deterministic provider testing:
+Run `pnpm smoke:provider` for a deterministic local Provider at
+`http://127.0.0.1:47821/v1`.
 
-```bash
-pnpm smoke:provider
-```
-
-Then configure `http://127.0.0.1:47821/v1` as an OpenAI-compatible endpoint
-with any non-empty test key and model.
-
-## Architecture
+## Packages
 
 ```text
-apps/desktop              Electron main, preload, renderer, Agent host
-packages/domain           Entities, policies, and state transitions
-packages/application      Use cases and runtime orchestration
+apps/desktop              Electron main, preload, renderer, and Agent host
+packages/domain           Product entities and state transitions
+packages/application      Use cases and local/remote Run orchestration
 packages/agent-runtime    Native model and tool loop
 packages/provider-adapters
 packages/tool-runtime
-packages/storage-sqlite
+packages/storage-sqlite   SQLite schema v6 and forward migrations
 packages/cli-runtime      Optional local CLI process adapter
-packages/ipc-contracts
+packages/remote-runtime   Persistent remote job service and HTTP client
+packages/ipc-contracts    Runtime-validated desktop IPC contracts
 ```
 
-See [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md) and
-[V2_UI_SPEC.md](./docs/V2_UI_SPEC.md). The complete release gate is in
-[VERIFICATION.md](./docs/VERIFICATION.md).
-
-## Security Boundary
-
-- Electron renderer sandboxing and context isolation are enabled.
-- Preload exposes an explicit typed API, not generic IPC.
-- IPC calls validate both sender and payload.
-- The Agent host is the only SQLite writer.
-- Provider secrets are encrypted through Electron `safeStorage` and referenced
-  by opaque IDs in SQLite.
-- File tools resolve real paths and reject access outside the Project root.
-- Command execution never uses shell string interpolation and follows each
-  Agent Profile's permission policy.
-
-This is a local desktop security boundary, not a container sandbox. Only open
-Projects and approve commands that you trust.
-
-See [SECURITY.md](./docs/SECURITY.md) for the full trust model.
-
-## Migration
-
-The v0.4 task queue, claim server, MCP bridge, and static Web UI were removed
-because they model a different product. See
-[V0.4_TO_DESKTOP_V2.md](./docs/V0.4_TO_DESKTOP_V2.md).
+See [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md),
+[V2_UI_SPEC.md](./docs/V2_UI_SPEC.md), and
+[SECURITY.md](./docs/SECURITY.md).

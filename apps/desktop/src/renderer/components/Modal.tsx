@@ -131,8 +131,8 @@ export function Modal(props: {
             className="icon-button"
             type="button"
             onClick={() => onCloseRef.current()}
-            aria-label="Close"
-            title="Close"
+            aria-label="关闭"
+            title="关闭"
           >
             <X size={18} />
           </button>

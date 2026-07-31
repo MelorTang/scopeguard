@@ -1,24 +1,47 @@
 import {
   Bot,
+  Check,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   Folder,
   FolderPlus,
+  Inbox,
+  ListTodo,
+  LoaderCircle,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Settings,
+  Server,
+  Square,
 } from "lucide-react";
 
+import { countWorkspacePendingAttention } from "@scopeguard/domain";
+
 import type { WorkspaceController } from "../useWorkspace.js";
+import { formatRunStatus } from "../uiText.js";
 
 export function Sidebar(props: {
   workspace: WorkspaceController;
   onNewAgent: () => void;
+  onNewTask: () => void;
+  onNewWorkspace: () => void;
   onProviders: () => void;
+  onRuntimes: () => void;
 }): JSX.Element {
   const { workspace } = props;
   const snapshot = workspace.snapshot;
+  const pendingAttentionCount = countWorkspacePendingAttention({
+    workspaceId: workspace.selectedWorkspace?.id ?? null,
+    threads: snapshot?.threads ?? [],
+    runs: [
+      ...(snapshot?.activeRuns ?? []),
+      ...(snapshot?.recentRuns ?? []),
+    ],
+    approvals: snapshot?.pendingApprovals ?? [],
+    inboxItems: snapshot?.inboxItems ?? [],
+  });
 
   if (workspace.sidebarCollapsed) {
     return (
@@ -30,36 +53,45 @@ export function Sidebar(props: {
           className="icon-button"
           type="button"
           onClick={() => workspace.setSidebarCollapsed(false)}
-          title="Expand sidebar"
-          aria-label="Expand sidebar"
+          title="展开侧边栏"
+          aria-label="展开侧边栏"
         >
           <PanelLeftOpen size={18} />
         </button>
         <button
           className="icon-button"
           type="button"
-          onClick={() => void workspace.addProject()}
-          title="Open project"
-          aria-label="Open project"
+          onClick={props.onNewWorkspace}
+          title="新建工作区"
+          aria-label="新建工作区"
         >
           <FolderPlus size={18} />
         </button>
         <button
           className="icon-button"
           type="button"
-          onClick={props.onNewAgent}
-          title="New Agent"
-          aria-label="New Agent"
+          onClick={props.onNewTask}
+          title="新建任务"
+          aria-label="新建任务"
         >
-          <Plus size={18} />
+          <ListTodo size={18} />
         </button>
         <div className="sidebar-spacer" />
         <button
           className="icon-button"
           type="button"
+          onClick={props.onRuntimes}
+          title="运行节点设置"
+          aria-label="运行节点设置"
+        >
+          <Server size={18} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
           onClick={props.onProviders}
-          title="Provider settings"
-          aria-label="Provider settings"
+          title="模型服务设置"
+          aria-label="模型服务设置"
         >
           <Settings size={18} />
         </button>
@@ -72,37 +104,37 @@ export function Sidebar(props: {
       <header className="sidebar-brand">
         <div>
           <strong>ScopeGuard</strong>
-          <span>Agent workspace</span>
+          <span>Agent 控制台</span>
         </div>
         <button
           className="icon-button"
           type="button"
           onClick={() => workspace.setSidebarCollapsed(true)}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
+          title="收起侧边栏"
+          aria-label="收起侧边栏"
         >
           <PanelLeftClose size={18} />
         </button>
       </header>
 
       <div className="sidebar-section-heading">
-        <span>Projects</span>
+        <span>工作区</span>
         <button
           className="icon-button icon-button--small"
           type="button"
-          onClick={() => void workspace.addProject()}
-          title="Open project"
-          aria-label="Open project"
+          onClick={props.onNewWorkspace}
+          title="新建工作区"
+          aria-label="新建工作区"
         >
           <FolderPlus size={16} />
         </button>
       </div>
 
-      <nav className="project-tree" aria-label="Projects and Agent Threads">
-        {snapshot?.projects.map((project) => {
-          const selected = workspace.selectedProject?.id === project.id;
-          const threads = snapshot.threads.filter(
-            (thread) => thread.projectId === project.id,
+      <nav className="project-tree" aria-label="工作区和任务">
+        {snapshot?.workspaces.map((project) => {
+          const selected = workspace.selectedWorkspace?.id === project.id;
+          const tasks = snapshot.tasks.filter(
+            (task) => task.workspaceId === project.id,
           );
           return (
             <section className="project-node" key={project.id}>
@@ -117,34 +149,71 @@ export function Sidebar(props: {
               </button>
               {selected && (
                 <div className="thread-tree">
-                  {threads.map((thread) => {
-                    const agent = snapshot.agentProfiles.find(
-                      (profile) => profile.id === thread.agentProfileId,
+                  <div className="tree-group-label">
+                    <span>任务</span>
+                    <button
+                      type="button"
+                      className="icon-button icon-button--small"
+                      onClick={props.onNewTask}
+                      title="新建任务"
+                      aria-label="新建任务"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {tasks.map((task) => {
+                    const assignment = snapshot.assignments.find(
+                      (item) => item.taskId === task.id,
                     );
-                    const run = workspace.getRunForThread(thread.id);
+                    const thread = assignment?.threadId
+                      ? snapshot.threads.find(
+                          (item) => item.id === assignment.threadId,
+                        )
+                      : null;
+                    const instance = snapshot.agentInstances.find(
+                      (item) => item.id === assignment?.agentInstanceId,
+                    );
+                    const agent = snapshot.agentDefinitions.find(
+                      (definition) => definition.id === instance?.agentDefinitionId,
+                    );
+                    const run = thread
+                      ? workspace.getRunForThread(thread.id)
+                      : null;
                     const approvalCount = snapshot.pendingApprovals.filter(
                       (item) => item.approval.runId === run?.id,
                     ).length;
+                    const visible = Boolean(thread && workspace.visibleThreads.some(
+                      (item) => item.id === thread.id,
+                    ));
+                    const active = Boolean(
+                      thread && workspace.activeThread?.id === thread.id,
+                    );
                     return (
                       <button
                         type="button"
-                        key={thread.id}
+                        key={task.id}
                         className={`thread-row ${
-                          workspace.activeThread?.id === thread.id
-                            ? "is-selected"
-                            : ""
+                          visible ? "is-visible" : ""
+                        } ${
+                          active ? "is-selected" : ""
                         }`}
-                        onClick={() => workspace.openThread(thread.id)}
+                        aria-current={active ? "page" : undefined}
+                        disabled={!thread}
+                        onClick={() => {
+                          if (thread) {
+                            workspace.openThread(thread.id);
+                          }
+                        }}
                       >
-                        <Bot size={15} />
+                        <ListTodo size={15} />
                         <span className="thread-row__content">
-                          <span className="thread-row__title">{thread.title}</span>
+                          <span className="thread-row__title">{task.title}</span>
                           <span className="thread-row__agent">
                             {agent?.name ?? "Agent"}
                           </span>
                         </span>
-                        <ThreadStatus
-                          status={run?.status ?? null}
+                        <TaskStatus
+                          status={run?.status ?? task.status}
                           approvalCount={approvalCount}
                         />
                       </button>
@@ -153,10 +222,18 @@ export function Sidebar(props: {
                   <button
                     type="button"
                     className="thread-row thread-row--new"
+                    onClick={props.onNewTask}
+                  >
+                    <ListTodo size={15} />
+                    <span>新建任务</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="thread-row thread-row--new"
                     onClick={props.onNewAgent}
                   >
-                    <Plus size={15} />
-                    <span>New Agent</span>
+                    <Bot size={15} />
+                    <span>新建 Agent</span>
                   </button>
                 </div>
               )}
@@ -167,11 +244,25 @@ export function Sidebar(props: {
 
       <div className="sidebar-spacer" />
       <footer className="sidebar-footer">
+        <div className="sidebar-summary" aria-label="工作区摘要">
+          <span>
+            <Inbox size={14} />
+            待处理
+          </span>
+          <strong>{pendingAttentionCount}</strong>
+        </div>
         <button type="button" className="sidebar-command" onClick={props.onProviders}>
           <Settings size={16} />
-          <span>Providers</span>
+          <span>模型服务</span>
           <span className="sidebar-count">
             {snapshot?.providerProfiles.length ?? 0}
+          </span>
+        </button>
+        <button type="button" className="sidebar-command" onClick={props.onRuntimes}>
+          <Server size={16} />
+          <span>运行节点</span>
+          <span className="sidebar-count">
+            {snapshot?.runtimeNodes.length ?? 0}
           </span>
         </button>
       </footer>
@@ -179,25 +270,68 @@ export function Sidebar(props: {
   );
 }
 
-function ThreadStatus(props: {
+function TaskStatus(props: {
   status: string | null;
   approvalCount: number;
 }): JSX.Element | null {
   if (props.approvalCount > 0) {
+    const label = `${props.approvalCount} 项待审批`;
     return (
-      <span className="status-badge status-badge--approval">
-        {props.approvalCount}
+      <span
+        className="status-badge status-badge--approval"
+        aria-label={label}
+        title={label}
+      >
+        <CircleAlert size={12} aria-hidden="true" />
+        <span>{props.approvalCount}</span>
       </span>
     );
   }
   if (!props.status) {
     return null;
   }
+  if (props.status === "ready" || props.status === "draft") {
+    return null;
+  }
+  if (props.status === "completed") {
+    return (
+      <span className="thread-status-icon thread-status-icon--completed" title="已完成">
+        <Check size={13} aria-hidden="true" />
+      </span>
+    );
+  }
+  if (props.status === "failed" || props.status === "blocked") {
+    return (
+      <span className="thread-status-icon thread-status-icon--failed" title="需要处理">
+        <CircleAlert size={13} aria-hidden="true" />
+      </span>
+    );
+  }
+  if (
+    props.status === "cancelled" ||
+    props.status === "archived"
+  ) {
+    return null;
+  }
+  const stopping = props.status === "cancelling";
+  const label = formatRunStatus(props.status);
   return (
     <span
-      className={`thread-status-dot thread-status-dot--${props.status}`}
-      aria-label={props.status}
-      title={props.status}
-    />
+      className={`thread-status-icon thread-status-icon--${props.status}`}
+      aria-label={label}
+      title={label}
+    >
+      {props.status === "waiting-approval" || props.status === "waiting-input"
+        ? <CircleAlert size={13} aria-hidden="true" />
+        : stopping
+          ? <Square size={11} fill="currentColor" aria-hidden="true" />
+          : (
+            <LoaderCircle
+              size={13}
+              className="spin"
+              aria-hidden="true"
+            />
+          )}
+    </span>
   );
 }

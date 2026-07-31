@@ -75,6 +75,28 @@ test("persists the first multi-agent workspace slice", () => {
       "Provider adapters are explicit and independently tested.",
       thread.id,
     );
+    const followUp = store.appendMessage({
+      threadId: thread.id,
+      runId: null,
+      role: "user",
+      status: "committed",
+      content: [{ type: "text", text: "Use the approved context." }],
+      metadata: {},
+    });
+    const contextualRun = store.createRun(thread.id, followUp.id, context.id, {
+      agentProfileId: agent.id,
+      runtimeKind: "native",
+      providerProfileId: provider.id,
+      providerProtocol: provider.protocol,
+      providerBaseUrl: provider.baseUrl,
+      model: provider.defaultModel,
+      instructions: agent.instructions,
+      toolPolicy: agent.toolPolicy,
+      cliConfig: null,
+    });
+    store.updateRunStatus(contextualRun.id, "preparing");
+    store.updateRunStatus(contextualRun.id, "running");
+    store.updateRunStatus(contextualRun.id, "completed");
 
     const snapshot = store.getWorkspaceSnapshot();
     assert.equal(snapshot.projects.length, 1);
@@ -85,10 +107,15 @@ test("persists the first multi-agent workspace slice", () => {
     assert.equal(snapshot.recentRuns[0]?.status, "completed");
     assert.deepEqual(
       store.listThreadMessages(thread.id).map((message) => message.role),
-      ["user", "assistant"],
+      ["user", "assistant", "user"],
     );
     assert.equal(context.version, 1);
     assert.equal(store.getProjectContext(project.id)?.content, context.content);
+    assert.deepEqual(store.listContextRevisionUses(context.id), [{
+      contextRevisionId: context.id,
+      runId: contextualRun.id,
+      usedAt: contextualRun.createdAt,
+    }]);
   } finally {
     store.close();
   }
@@ -105,6 +132,122 @@ test("keeps projects idempotent by root path", () => {
 
     assert.equal(second.id, first.id);
     assert.equal(store.listProjects().length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("persists the first-stage workspace control-plane entities", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const workspace = store.createWorkspace({ name: "Personal operations" });
+    assert.equal(workspace.localRootPath, null);
+    assert.equal(store.getProject(workspace.id)?.name, workspace.name);
+    assert.match(
+      store.getProject(workspace.id)?.rootPath ?? "",
+      /^scopeguard:\/\/workspace\//,
+    );
+    const runtime = store.listRuntimeNodes().find((node) => node.kind === "local");
+    assert.ok(runtime);
+
+    const researcher = store.createAgentDefinition({
+      name: "Researcher",
+      description: "Collects evidence.",
+      instructions: "Collect primary sources and report evidence.",
+    });
+    const reviewer = store.createAgentDefinition({
+      name: "Reviewer",
+      instructions: "Check claims and provenance.",
+    });
+    const researcherInstance = store.createAgentInstance({
+      workspaceId: workspace.id,
+      agentDefinitionId: researcher.id,
+      runtimeNodeId: runtime.id,
+    });
+    const reviewerInstance = store.createAgentInstance({
+      workspaceId: workspace.id,
+      agentDefinitionId: reviewer.id,
+      runtimeNodeId: runtime.id,
+    });
+    const task = store.createTask({
+      workspaceId: workspace.id,
+      title: "Prepare a market brief",
+      description: "Research, verify, and write a Markdown brief.",
+      priority: "high",
+    });
+    store.updateTaskStatus(task.id, "ready");
+    store.updateTaskStatus(task.id, "running");
+    const assignment = store.createTaskAssignment({
+      taskId: task.id,
+      agentInstanceId: researcherInstance.id,
+      role: "research",
+      position: 0,
+    });
+    const artifact = store.createArtifact({
+      workspaceId: workspace.id,
+      taskId: task.id,
+      assignmentId: assignment.id,
+      agentInstanceId: researcherInstance.id,
+      kind: "markdown",
+      title: "Research notes",
+      mimeType: "text/markdown",
+      content: "# Evidence\n\nSource-backed notes.",
+    });
+    const context = store.updateWorkspaceContext({
+      workspaceId: workspace.id,
+      scope: "task",
+      taskId: task.id,
+      title: "Verified research input",
+      content: "Only the cited findings are approved for the report.",
+      sourceAgentInstanceId: researcherInstance.id,
+      sourceArtifactId: artifact.id,
+      publishedBy: "agent",
+    });
+    const handoff = store.createHandoff({
+      workspaceId: workspace.id,
+      taskId: task.id,
+      fromAgentInstanceId: researcherInstance.id,
+      toAgentInstanceId: reviewerInstance.id,
+      contextRevisionId: context.id,
+      summary: "Review the approved findings before writing.",
+    });
+    store.createSchedule({
+      workspaceId: workspace.id,
+      agentInstanceId: researcherInstance.id,
+      title: "Weekly refresh",
+      prompt: "Refresh the market brief.",
+      cronExpression: "0 9 * * 1",
+      timeZone: "Asia/Shanghai",
+    });
+    const inbox = store.createInboxItem({
+      workspaceId: workspace.id,
+      kind: "input-required",
+      title: "Review scope",
+      summary: "Choose whether competitor pricing is in scope.",
+      taskId: task.id,
+      assignmentId: assignment.id,
+      runId: null,
+      approvalId: null,
+      agentInstanceId: reviewerInstance.id,
+    });
+
+    const snapshot = store.getWorkspaceSnapshot();
+    assert.equal(snapshot.workspaces.length, 1);
+    assert.equal(snapshot.agentDefinitions.length, 2);
+    assert.equal(snapshot.agentInstances.length, 2);
+    assert.equal(snapshot.tasks[0]?.status, "running");
+    assert.equal(snapshot.assignments[0]?.role, "research");
+    assert.equal(snapshot.artifacts[0]?.content, artifact.content);
+    assert.equal(snapshot.handoffs[0]?.id, handoff.id);
+    assert.equal(store.resolveHandoff(handoff.id, "accepted").status, "accepted");
+    assert.ok(store.listHandoffs(workspace.id)[0]?.resolvedAt);
+    assert.equal(snapshot.schedules[0]?.enabled, true);
+    assert.equal(snapshot.inboxItems[0]?.status, "unread");
+    assert.equal(store.resolveInboxItem(inbox.id).status, "resolved");
+    assert.throws(
+      () => store.updateTaskStatus(task.id, "archived"),
+      /Invalid task status transition/,
+    );
   } finally {
     store.close();
   }
@@ -159,6 +302,105 @@ test("rejects invalid run transitions", () => {
     );
   } finally {
     store.close();
+  }
+});
+
+test("treats waiting-input as an active Run in storage constraints", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const project = store.addProject({ rootPath: "/tmp/waiting-input-project" });
+    const provider = store.saveProviderProfile(
+      {
+        name: "Direct",
+        protocol: "openai-compatible",
+        baseUrl: "https://provider.example.com/v1",
+        defaultModel: "model",
+      },
+      null,
+    );
+    const agent = store.createAgentProfile({
+      projectId: project.id,
+      name: "General",
+      instructions: "",
+      providerProfileId: provider.id,
+    });
+    const thread = store.createThread({
+      projectId: project.id,
+      agentProfileId: agent.id,
+    });
+    const firstTrigger = store.appendMessage({
+      threadId: thread.id,
+      runId: null,
+      role: "user",
+      status: "committed",
+      content: [{ type: "text", text: "First" }],
+      metadata: {},
+    });
+    const config = {
+      agentProfileId: agent.id,
+      runtimeKind: "native" as const,
+      providerProfileId: provider.id,
+      providerProtocol: provider.protocol,
+      providerBaseUrl: provider.baseUrl,
+      model: provider.defaultModel,
+      instructions: agent.instructions,
+      toolPolicy: agent.toolPolicy,
+      cliConfig: null,
+    };
+    const firstRun = store.createRun(thread.id, firstTrigger.id, null, config);
+    store.updateRunStatus(firstRun.id, "preparing");
+    store.updateRunStatus(firstRun.id, "running");
+    store.updateRunStatus(firstRun.id, "waiting-input");
+    assert.equal(store.listActiveRuns()[0]?.status, "waiting-input");
+
+    const secondTrigger = store.appendMessage({
+      threadId: thread.id,
+      runId: null,
+      role: "user",
+      status: "committed",
+      content: [{ type: "text", text: "Second" }],
+      metadata: {},
+    });
+    assert.throws(
+      () => store.createRun(thread.id, secondTrigger.id, null, config),
+      /UNIQUE constraint failed/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("v6 migration adds waiting-input to the active Run index", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-v6-migration-"));
+  const databasePath = join(directory, "scopeguard.db");
+  try {
+    new ScopeGuardStore(databasePath).close();
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      DROP INDEX idx_one_active_run_per_thread;
+      CREATE UNIQUE INDEX idx_one_active_run_per_thread
+        ON agent_runs(thread_id)
+        WHERE status IN (
+          'queued', 'preparing', 'running', 'waiting-approval', 'cancelling'
+        );
+      UPDATE schema_metadata SET value = '5' WHERE key = 'schema_version';
+    `);
+    legacy.close();
+
+    new ScopeGuardStore(databasePath).close();
+    const migrated = new DatabaseSync(databasePath, { readOnly: true });
+    const version = migrated.prepare(
+      "SELECT value FROM schema_metadata WHERE key = 'schema_version'",
+    ).get() as { value: string };
+    const index = migrated.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+    ).get("idx_one_active_run_per_thread") as { sql: string };
+    migrated.close();
+
+    assert.equal(version.value, "6");
+    assert.match(index.sql, /waiting-input/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -272,6 +514,98 @@ test("v2 migration removes plaintext provider headers and CLI environment", asyn
   }
 });
 
+test("v4 migration preserves legacy work as workspaces, instances, tasks, and context", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-v4-migration-"));
+  const databasePath = join(directory, "scopeguard.db");
+  let projectId = "";
+  let agentId = "";
+  let threadId = "";
+  let contextId = "";
+  try {
+    const initial = new ScopeGuardStore(databasePath);
+    const project = initial.addProject({
+      name: "Legacy workspace",
+      rootPath: directory,
+    });
+    const provider = initial.saveProviderProfile(
+      {
+        name: "Direct",
+        protocol: "openai-compatible",
+        baseUrl: "https://provider.example.com/v1",
+        defaultModel: "model",
+      },
+      null,
+    );
+    const agent = initial.createAgentProfile({
+      projectId: project.id,
+      name: "Legacy researcher",
+      instructions: "Research.",
+      providerProfileId: provider.id,
+    });
+    const thread = initial.createThread({
+      projectId: project.id,
+      agentProfileId: agent.id,
+      title: "Legacy research",
+    });
+    const context = initial.updateProjectContext(
+      project.id,
+      "A retained decision.",
+      thread.id,
+    );
+    projectId = project.id;
+    agentId = agent.id;
+    threadId = thread.id;
+    contextId = context.id;
+    initial.close();
+
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+      INSERT OR REPLACE INTO project_context_versions (
+        id, project_id, version, parent_id, content,
+        source_thread_id, source_run_id, created_at
+      )
+      SELECT id, workspace_id, version, parent_id, content,
+             source_thread_id, source_run_id, created_at
+      FROM context_revisions;
+      DROP TABLE inbox_items;
+      DROP TABLE workspace_schedules;
+      DROP TABLE agent_handoffs;
+      DROP TABLE context_revision_uses;
+      DROP TABLE context_revisions;
+      DROP TABLE artifacts;
+      DROP TABLE task_assignments;
+      DROP TABLE workspace_tasks;
+      DROP TABLE agent_instances;
+      DROP TABLE agent_definitions;
+      DROP TABLE runtime_nodes;
+      DROP TABLE workspaces;
+      UPDATE schema_metadata SET value = '3' WHERE key = 'schema_version';
+    `);
+    database.close();
+
+    const migrated = new ScopeGuardStore(databasePath);
+    const workspace = migrated.getWorkspace(projectId);
+    assert.equal(workspace?.localRootPath, directory);
+    assert.equal(
+      migrated.listAgentDefinitions().find((item) => item.id === agentId)?.name,
+      "Legacy researcher",
+    );
+    const instance = migrated.listAgentInstances(projectId).find(
+      (item) => item.agentDefinitionId === agentId,
+    );
+    assert.ok(instance);
+    assert.equal(migrated.getTask(threadId)?.status, "ready");
+    assert.equal(
+      migrated.listTaskAssignments(threadId)[0]?.agentInstanceId,
+      instance.id,
+    );
+    assert.equal(migrated.getWorkspaceContext(projectId)?.id, contextId);
+    migrated.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("expires approvals that belong to interrupted Runs", () => {
   const store = new ScopeGuardStore(":memory:");
   try {
@@ -338,6 +672,43 @@ test("expires approvals that belong to interrupted Runs", () => {
     assert.equal(store.listPendingApprovals().length, 0);
   } finally {
     store.close();
+  }
+});
+
+test("preserves active Runs that are bound to a remote Runtime across restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-remote-run-"));
+  const databasePath = join(directory, "scopeguard.db");
+  let runId = "";
+  let runtimeId = "";
+  try {
+    const initial = new ScopeGuardStore(databasePath);
+    const workspace = createRunningWorkspace(initial, directory);
+    runId = workspace.run.id;
+    const runtime = initial.saveRuntimeNode({
+      name: "Remote Runtime",
+      kind: "remote",
+      baseUrl: "https://runtime.example.com",
+      credentialRef: "runtime-secret:test",
+      status: "online",
+    });
+    runtimeId = runtime.id;
+    initial.createRemoteRunBinding({
+      runId,
+      runtimeNodeId: runtime.id,
+      remoteRunId: "remote-job-1",
+    });
+    initial.saveRunPartial(runId, "Remote partial output");
+    initial.close();
+
+    const recovered = new ScopeGuardStore(databasePath);
+    assert.equal(recovered.interruptNonTerminalRuns(), 0);
+    assert.equal(recovered.getRun(runId)?.status, "running");
+    assert.equal(recovered.listActiveRemoteRunBindings().length, 1);
+    assert.equal(recovered.getRemoteRunBinding(runId)?.runtimeNodeId, runtimeId);
+    assert.equal(recovered.getRunPartial(runId), "Remote partial output");
+    recovered.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

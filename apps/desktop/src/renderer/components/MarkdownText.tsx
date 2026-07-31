@@ -18,7 +18,7 @@ export function MarkdownText(props: { text: string }): JSX.Element {
           ),
           img: ({ alt }) => (
             <span className="message-image-placeholder">
-              {alt ? `[Image: ${alt}]` : "[Image]"}
+              {alt ? `[图片：${alt}]` : "[图片]"}
             </span>
           ),
         }}

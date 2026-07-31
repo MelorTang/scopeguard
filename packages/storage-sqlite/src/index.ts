@@ -6,31 +6,64 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import {
   SCOPEGUARD_SCHEMA_VERSION,
   assertRunTransition,
+  assertTaskTransition,
   mergeToolPolicy,
   type ApprovalDecision,
+  type AgentDefinition,
+  type AgentHandoff,
+  type AgentInstance,
   type AgentProfile,
   type AgentRun,
   type AgentThread,
+  type AssignmentStatus,
+  type Artifact,
   type ContextRevision,
+  type ContextRevisionUse,
+  type CreateAgentDefinitionInput,
+  type CreateAgentInstanceInput,
   type CreateAgentProfileInput,
+  type CreateArtifactInput,
+  type CreateHandoffInput,
+  type CreateInboxItemInput,
   type CreateProjectInput,
+  type CreateScheduleInput,
+  type CreateTaskAssignmentInput,
+  type CreateTaskInput,
   type CreateThreadInput,
+  type CreateWorkspaceInput,
   type Id,
+  type InboxItem,
   type Project,
   type ProviderProfile,
   type ProviderProfileInput,
+  type RuntimeCapabilities,
+  type RuntimeNode,
+  type RemoteRunBinding,
   type RunConfigSnapshot,
   type RunEvent,
   type RunStatus,
+  type TaskAssignment,
+  type TaskStatus,
   type ThreadMessage,
   type ToolApproval,
   type ToolCallRecord,
   type ToolCallStatus,
+  type Workspace,
+  type WorkspaceSchedule,
   type WorkspaceSnapshot,
+  type WorkspaceTask,
 } from "@scopeguard/domain";
 
 type UnknownRow = Record<string, unknown>;
 const MAX_RUN_PARTIAL_CHARACTERS = 1_000_000;
+const LOCAL_RUNTIME_NODE_ID = "local-runtime";
+const LOCAL_RUNTIME_CAPABILITIES: RuntimeCapabilities = {
+  nativeAgents: true,
+  cliAgents: true,
+  fileTools: true,
+  commandTools: true,
+  persistentRuns: false,
+};
 
 export class ScopeGuardStore {
   readonly #database: DatabaseSync;
@@ -64,6 +97,16 @@ export class ScopeGuardStore {
 
   getWorkspaceSnapshot(): WorkspaceSnapshot {
     return {
+      workspaces: this.listWorkspaces(),
+      runtimeNodes: this.listRuntimeNodes(),
+      agentDefinitions: this.listAgentDefinitions(),
+      agentInstances: this.listAgentInstances(),
+      tasks: this.listTasks(),
+      assignments: this.listTaskAssignments(),
+      artifacts: this.listArtifacts(),
+      handoffs: this.listHandoffs(),
+      schedules: this.listSchedules(),
+      inboxItems: this.listInboxItems(),
       projects: this.listProjects(),
       providerProfiles: this.listProviderProfiles(),
       agentProfiles: this.listAgentProfiles(),
@@ -75,6 +118,55 @@ export class ScopeGuardStore {
         return toolCall ? [{ approval, toolCall }] : [];
       }),
     };
+  }
+
+  listWorkspaces(): Workspace[] {
+    return this.#all(
+      "SELECT * FROM workspaces ORDER BY last_opened_at DESC",
+    ).map(mapWorkspace);
+  }
+
+  getWorkspace(workspaceId: Id): Workspace | null {
+    const row = this.#get("SELECT * FROM workspaces WHERE id = ?", workspaceId);
+    return row ? mapWorkspace(row) : null;
+  }
+
+  createWorkspace(input: CreateWorkspaceInput): Workspace {
+    const now = new Date().toISOString();
+    const localRootPath = input.localRootPath?.trim() || null;
+    if (localRootPath) {
+      const existing = this.#get(
+        "SELECT * FROM workspaces WHERE local_root_path = ?",
+        localRootPath,
+      );
+      if (existing) {
+        this.#run(
+          "UPDATE workspaces SET last_opened_at = ?, updated_at = ? WHERE id = ?",
+          now,
+          now,
+          asString(existing.id),
+        );
+        const workspace = mapWorkspace({
+          ...existing,
+          last_opened_at: now,
+          updated_at: now,
+        });
+        this.#ensureLegacyProjectForWorkspace(workspace);
+        return workspace;
+      }
+    }
+    const workspace: Workspace = {
+      id: randomUUID(),
+      name: input.name.trim(),
+      localRootPath,
+      currentContextRevisionId: null,
+      createdAt: now,
+      updatedAt: now,
+      lastOpenedAt: now,
+    };
+    this.#insertWorkspace(workspace);
+    this.#ensureLegacyProjectForWorkspace(workspace);
+    return workspace;
   }
 
   listProjects(): Project[] {
@@ -130,6 +222,16 @@ export class ScopeGuardStore {
       project.updatedAt,
       project.lastOpenedAt,
     );
+
+    this.#insertWorkspace({
+      id: project.id,
+      name: project.name,
+      localRootPath: project.rootPath,
+      currentContextRevisionId: project.currentContextRevisionId,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      lastOpenedAt: project.lastOpenedAt,
+    });
 
     return project;
   }
@@ -197,6 +299,569 @@ export class ScopeGuardStore {
     this.#run("DELETE FROM provider_profiles WHERE id = ?", providerProfileId);
   }
 
+  listRuntimeNodes(): RuntimeNode[] {
+    return this.#all(
+      "SELECT * FROM runtime_nodes ORDER BY kind, name COLLATE NOCASE",
+    ).map(mapRuntimeNode);
+  }
+
+  getRuntimeNode(runtimeNodeId: Id): RuntimeNode | null {
+    const row = this.#get("SELECT * FROM runtime_nodes WHERE id = ?", runtimeNodeId);
+    return row ? mapRuntimeNode(row) : null;
+  }
+
+  getRuntimeCredentialRef(runtimeNodeId: Id): string | null {
+    const row = this.#get(
+      "SELECT credential_ref FROM runtime_nodes WHERE id = ?",
+      runtimeNodeId,
+    );
+    return row ? asNullableString(row.credential_ref) : null;
+  }
+
+  saveRuntimeNode(input: {
+    id?: Id;
+    name: string;
+    kind: RuntimeNode["kind"];
+    baseUrl: string | null;
+    credentialRef: string | null;
+    status?: RuntimeNode["status"];
+    capabilities?: RuntimeCapabilities;
+    lastSeenAt?: string | null;
+  }): RuntimeNode {
+    const existing = input.id ? this.getRuntimeNode(input.id) : null;
+    const now = new Date().toISOString();
+    const node: RuntimeNode = {
+      id: existing?.id ?? input.id ?? randomUUID(),
+      name: input.name.trim(),
+      kind: input.kind,
+      baseUrl: input.baseUrl,
+      hasCredential: Boolean(input.credentialRef),
+      status: input.status ?? existing?.status ?? "unknown",
+      capabilities: input.capabilities ?? existing?.capabilities ?? {
+        nativeAgents: true,
+        cliAgents: false,
+        fileTools: false,
+        commandTools: false,
+        persistentRuns: input.kind === "remote",
+      },
+      lastSeenAt: input.lastSeenAt ?? existing?.lastSeenAt ?? null,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.#run(
+      `INSERT INTO runtime_nodes (
+        id, name, kind, base_url, credential_ref, status,
+        capabilities_json, last_seen_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        kind = excluded.kind,
+        base_url = excluded.base_url,
+        credential_ref = excluded.credential_ref,
+        status = excluded.status,
+        capabilities_json = excluded.capabilities_json,
+        last_seen_at = excluded.last_seen_at,
+        updated_at = excluded.updated_at`,
+      node.id,
+      node.name,
+      node.kind,
+      node.baseUrl,
+      input.credentialRef,
+      node.status,
+      JSON.stringify(node.capabilities),
+      node.lastSeenAt,
+      node.createdAt,
+      node.updatedAt,
+    );
+    return node;
+  }
+
+  listAgentDefinitions(): AgentDefinition[] {
+    return this.#all(
+      "SELECT * FROM agent_definitions ORDER BY name COLLATE NOCASE",
+    ).map(mapAgentDefinition);
+  }
+
+  getAgentDefinition(agentDefinitionId: Id): AgentDefinition | null {
+    const row = this.#get(
+      "SELECT * FROM agent_definitions WHERE id = ?",
+      agentDefinitionId,
+    );
+    return row ? mapAgentDefinition(row) : null;
+  }
+
+  createAgentDefinition(input: CreateAgentDefinitionInput): AgentDefinition {
+    const now = new Date().toISOString();
+    const definition: AgentDefinition = {
+      id: randomUUID(),
+      name: input.name.trim(),
+      description: input.description?.trim() ?? "",
+      instructions: input.instructions.trim(),
+      providerProfileId: input.providerProfileId ?? null,
+      modelOverride: input.modelOverride?.trim() || null,
+      toolPolicy: mergeToolPolicy(input.toolPolicy),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#run(
+      `INSERT INTO agent_definitions (
+        id, name, description, instructions, provider_profile_id,
+        model_override, tool_policy_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      definition.id,
+      definition.name,
+      definition.description,
+      definition.instructions,
+      definition.providerProfileId,
+      definition.modelOverride,
+      JSON.stringify(definition.toolPolicy),
+      definition.createdAt,
+      definition.updatedAt,
+    );
+    return definition;
+  }
+
+  listAgentInstances(workspaceId?: Id): AgentInstance[] {
+    const rows = workspaceId
+      ? this.#all(
+          `SELECT * FROM agent_instances
+           WHERE workspace_id = ? ORDER BY created_at`,
+          workspaceId,
+        )
+      : this.#all("SELECT * FROM agent_instances ORDER BY created_at");
+    return rows.map(mapAgentInstance);
+  }
+
+  getAgentInstance(agentInstanceId: Id): AgentInstance | null {
+    const row = this.#get(
+      "SELECT * FROM agent_instances WHERE id = ?",
+      agentInstanceId,
+    );
+    return row ? mapAgentInstance(row) : null;
+  }
+
+  createAgentInstance(input: CreateAgentInstanceInput): AgentInstance {
+    const now = new Date().toISOString();
+    const instance: AgentInstance = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      agentDefinitionId: input.agentDefinitionId,
+      runtimeNodeId: input.runtimeNodeId,
+      nameOverride: input.nameOverride?.trim() || null,
+      status: "idle",
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#run(
+      `INSERT INTO agent_instances (
+        id, workspace_id, agent_definition_id, runtime_node_id,
+        name_override, status, legacy_agent_profile_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+      instance.id,
+      instance.workspaceId,
+      instance.agentDefinitionId,
+      instance.runtimeNodeId,
+      instance.nameOverride,
+      instance.status,
+      instance.createdAt,
+      instance.updatedAt,
+    );
+    return instance;
+  }
+
+  updateAgentInstanceRuntime(
+    agentInstanceId: Id,
+    runtimeNodeId: Id,
+  ): AgentInstance {
+    const current = this.getAgentInstance(agentInstanceId);
+    if (!current) {
+      throw new Error(`Agent instance not found: ${agentInstanceId}`);
+    }
+    const now = new Date().toISOString();
+    this.#run(
+      `UPDATE agent_instances
+       SET runtime_node_id = ?, status = 'idle', updated_at = ?
+       WHERE id = ?`,
+      runtimeNodeId,
+      now,
+      agentInstanceId,
+    );
+    return {
+      ...current,
+      runtimeNodeId,
+      status: "idle",
+      updatedAt: now,
+    };
+  }
+
+  listTasks(workspaceId?: Id): WorkspaceTask[] {
+    const rows = workspaceId
+      ? this.#all(
+          `SELECT * FROM workspace_tasks
+           WHERE workspace_id = ? ORDER BY updated_at DESC`,
+          workspaceId,
+        )
+      : this.#all("SELECT * FROM workspace_tasks ORDER BY updated_at DESC");
+    return rows.map(mapWorkspaceTask);
+  }
+
+  getTask(taskId: Id): WorkspaceTask | null {
+    const row = this.#get("SELECT * FROM workspace_tasks WHERE id = ?", taskId);
+    return row ? mapWorkspaceTask(row) : null;
+  }
+
+  createTask(input: CreateTaskInput): WorkspaceTask {
+    const now = new Date().toISOString();
+    const task: WorkspaceTask = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      title: input.title.trim(),
+      description: input.description?.trim() ?? "",
+      status: "draft",
+      priority: input.priority ?? "normal",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+    };
+    this.#run(
+      `INSERT INTO workspace_tasks (
+        id, workspace_id, title, description, status, priority,
+        legacy_thread_id, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+      task.id,
+      task.workspaceId,
+      task.title,
+      task.description,
+      task.status,
+      task.priority,
+      task.createdAt,
+      task.updatedAt,
+      task.completedAt,
+    );
+    return task;
+  }
+
+  updateTaskStatus(taskId: Id, status: TaskStatus): WorkspaceTask {
+    const current = this.getTask(taskId);
+    if (!current) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+    assertTaskTransition(current.status, status);
+    const now = new Date().toISOString();
+    const completedAt = status === "completed" ? now : current.completedAt;
+    this.#run(
+      `UPDATE workspace_tasks
+       SET status = ?, updated_at = ?, completed_at = ? WHERE id = ?`,
+      status,
+      now,
+      completedAt,
+      taskId,
+    );
+    return { ...current, status, updatedAt: now, completedAt };
+  }
+
+  listTaskAssignments(taskId?: Id): TaskAssignment[] {
+    const rows = taskId
+      ? this.#all(
+          `SELECT * FROM task_assignments
+           WHERE task_id = ? ORDER BY position, created_at`,
+          taskId,
+        )
+      : this.#all(
+          "SELECT * FROM task_assignments ORDER BY task_id, position, created_at",
+        );
+    return rows.map(mapTaskAssignment);
+  }
+
+  createTaskAssignment(input: CreateTaskAssignmentInput): TaskAssignment {
+    const now = new Date().toISOString();
+    const assignment: TaskAssignment = {
+      id: randomUUID(),
+      taskId: input.taskId,
+      agentInstanceId: input.agentInstanceId,
+      threadId: input.threadId ?? null,
+      role: input.role?.trim() ?? "",
+      position: input.position ?? 0,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#run(
+      `INSERT INTO task_assignments (
+        id, task_id, agent_instance_id, thread_id, role, position,
+        status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      assignment.id,
+      assignment.taskId,
+      assignment.agentInstanceId,
+      assignment.threadId,
+      assignment.role,
+      assignment.position,
+      assignment.status,
+      assignment.createdAt,
+      assignment.updatedAt,
+    );
+    return assignment;
+  }
+
+  updateTaskAssignmentStatus(
+    assignmentId: Id,
+    status: AssignmentStatus,
+  ): TaskAssignment {
+    const row = this.#get(
+      "SELECT * FROM task_assignments WHERE id = ?",
+      assignmentId,
+    );
+    if (!row) {
+      throw new Error(`Task assignment not found: ${assignmentId}`);
+    }
+    const current = mapTaskAssignment(row);
+    const updatedAt = new Date().toISOString();
+    this.#run(
+      `UPDATE task_assignments SET status = ?, updated_at = ? WHERE id = ?`,
+      status,
+      updatedAt,
+      assignmentId,
+    );
+    return { ...current, status, updatedAt };
+  }
+
+  listArtifacts(workspaceId?: Id): Artifact[] {
+    const rows = workspaceId
+      ? this.#all(
+          `SELECT * FROM artifacts
+           WHERE workspace_id = ? ORDER BY created_at DESC`,
+          workspaceId,
+        )
+      : this.#all("SELECT * FROM artifacts ORDER BY created_at DESC");
+    return rows.map(mapArtifact);
+  }
+
+  createArtifact(input: CreateArtifactInput): Artifact {
+    const row = this.#get(
+      `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+       FROM artifacts WHERE task_id = ? AND title = ?`,
+      input.taskId,
+      input.title.trim(),
+    );
+    const artifact: Artifact = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      taskId: input.taskId,
+      assignmentId: input.assignmentId ?? null,
+      runId: input.runId ?? null,
+      agentInstanceId: input.agentInstanceId,
+      kind: input.kind,
+      title: input.title.trim(),
+      mimeType: input.mimeType.trim(),
+      content: input.content ?? null,
+      filePath: input.filePath ?? null,
+      version: asNumber(row?.next_version ?? 1),
+      createdAt: new Date().toISOString(),
+    };
+    this.#run(
+      `INSERT INTO artifacts (
+        id, workspace_id, task_id, assignment_id, run_id,
+        agent_instance_id, kind, title, mime_type, content, file_path,
+        version, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      artifact.id,
+      artifact.workspaceId,
+      artifact.taskId,
+      artifact.assignmentId,
+      artifact.runId,
+      artifact.agentInstanceId,
+      artifact.kind,
+      artifact.title,
+      artifact.mimeType,
+      artifact.content,
+      artifact.filePath,
+      artifact.version,
+      artifact.createdAt,
+    );
+    return artifact;
+  }
+
+  listHandoffs(workspaceId?: Id): AgentHandoff[] {
+    const rows = workspaceId
+      ? this.#all(
+          `SELECT * FROM agent_handoffs
+           WHERE workspace_id = ? ORDER BY created_at DESC`,
+          workspaceId,
+        )
+      : this.#all("SELECT * FROM agent_handoffs ORDER BY created_at DESC");
+    return rows.map(mapAgentHandoff);
+  }
+
+  createHandoff(input: CreateHandoffInput): AgentHandoff {
+    const handoff: AgentHandoff = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      taskId: input.taskId,
+      fromAgentInstanceId: input.fromAgentInstanceId,
+      toAgentInstanceId: input.toAgentInstanceId,
+      sourceRunId: input.sourceRunId ?? null,
+      contextRevisionId: input.contextRevisionId,
+      summary: input.summary.trim(),
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      resolvedAt: null,
+    };
+    this.#run(
+      `INSERT INTO agent_handoffs (
+        id, workspace_id, task_id, from_agent_instance_id,
+        to_agent_instance_id, source_run_id, context_revision_id,
+        summary, status, created_at, resolved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      handoff.id,
+      handoff.workspaceId,
+      handoff.taskId,
+      handoff.fromAgentInstanceId,
+      handoff.toAgentInstanceId,
+      handoff.sourceRunId,
+      handoff.contextRevisionId,
+      handoff.summary,
+      handoff.status,
+      handoff.createdAt,
+      handoff.resolvedAt,
+    );
+    return handoff;
+  }
+
+  resolveHandoff(
+    handoffId: Id,
+    status: "accepted" | "rejected",
+  ): AgentHandoff {
+    const current = this.#get(
+      "SELECT * FROM agent_handoffs WHERE id = ?",
+      handoffId,
+    );
+    if (!current) {
+      throw new Error(`Handoff not found: ${handoffId}`);
+    }
+    const handoff = mapAgentHandoff(current);
+    if (handoff.status !== "pending") {
+      if (handoff.status === status) {
+        return handoff;
+      }
+      throw new Error(`Handoff is already ${handoff.status}.`);
+    }
+    const resolvedAt = new Date().toISOString();
+    this.#run(
+      `UPDATE agent_handoffs SET status = ?, resolved_at = ? WHERE id = ?`,
+      status,
+      resolvedAt,
+      handoff.id,
+    );
+    return { ...handoff, status, resolvedAt };
+  }
+
+  listSchedules(workspaceId?: Id): WorkspaceSchedule[] {
+    const rows = workspaceId
+      ? this.#all(
+          `SELECT * FROM workspace_schedules
+           WHERE workspace_id = ? ORDER BY created_at`,
+          workspaceId,
+        )
+      : this.#all("SELECT * FROM workspace_schedules ORDER BY created_at");
+    return rows.map(mapWorkspaceSchedule);
+  }
+
+  createSchedule(input: CreateScheduleInput): WorkspaceSchedule {
+    const now = new Date().toISOString();
+    const schedule: WorkspaceSchedule = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      agentInstanceId: input.agentInstanceId,
+      title: input.title.trim(),
+      prompt: input.prompt.trim(),
+      cronExpression: input.cronExpression.trim(),
+      timeZone: input.timeZone.trim(),
+      enabled: input.enabled ?? true,
+      nextRunAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#run(
+      `INSERT INTO workspace_schedules (
+        id, workspace_id, agent_instance_id, title, prompt,
+        cron_expression, time_zone, enabled, next_run_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      schedule.id,
+      schedule.workspaceId,
+      schedule.agentInstanceId,
+      schedule.title,
+      schedule.prompt,
+      schedule.cronExpression,
+      schedule.timeZone,
+      schedule.enabled ? 1 : 0,
+      schedule.nextRunAt,
+      schedule.createdAt,
+      schedule.updatedAt,
+    );
+    return schedule;
+  }
+
+  listInboxItems(workspaceId?: Id): InboxItem[] {
+    const rows = workspaceId
+      ? this.#all(
+          `SELECT * FROM inbox_items
+           WHERE workspace_id = ? ORDER BY created_at DESC`,
+          workspaceId,
+        )
+      : this.#all("SELECT * FROM inbox_items ORDER BY created_at DESC");
+    return rows.map(mapInboxItem);
+  }
+
+  createInboxItem(input: CreateInboxItemInput): InboxItem {
+    const item: InboxItem = {
+      ...input,
+      id: randomUUID(),
+      status: "unread",
+      createdAt: new Date().toISOString(),
+      resolvedAt: null,
+    };
+    this.#run(
+      `INSERT INTO inbox_items (
+        id, workspace_id, kind, status, title, summary, task_id,
+        assignment_id, run_id, approval_id, agent_instance_id,
+        created_at, resolved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      item.id,
+      item.workspaceId,
+      item.kind,
+      item.status,
+      item.title,
+      item.summary,
+      item.taskId,
+      item.assignmentId,
+      item.runId,
+      item.approvalId,
+      item.agentInstanceId,
+      item.createdAt,
+      item.resolvedAt,
+    );
+    return item;
+  }
+
+  resolveInboxItem(inboxItemId: Id): InboxItem {
+    const row = this.#get("SELECT * FROM inbox_items WHERE id = ?", inboxItemId);
+    if (!row) {
+      throw new Error(`Inbox item not found: ${inboxItemId}`);
+    }
+    const current = mapInboxItem(row);
+    if (current.status === "resolved") {
+      return current;
+    }
+    const resolvedAt = new Date().toISOString();
+    this.#run(
+      `UPDATE inbox_items SET status = 'resolved', resolved_at = ? WHERE id = ?`,
+      resolvedAt,
+      inboxItemId,
+    );
+    return { ...current, status: "resolved", resolvedAt };
+  }
+
   listAgentProfiles(projectId?: Id): AgentProfile[] {
     const rows = projectId
       ? this.#all(
@@ -246,6 +911,41 @@ export class ScopeGuardStore {
       profile.updatedAt,
     );
 
+    this.#run(
+      `INSERT OR IGNORE INTO agent_definitions (
+        id, name, description, instructions, provider_profile_id,
+        model_override, tool_policy_json, created_at, updated_at
+      ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`,
+      profile.id,
+      profile.name,
+      profile.instructions,
+      profile.providerProfileId,
+      profile.modelOverride,
+      JSON.stringify(profile.toolPolicy),
+      profile.createdAt,
+      profile.updatedAt,
+    );
+    const existingInstance = this.#get(
+      "SELECT id FROM agent_instances WHERE legacy_agent_profile_id = ?",
+      profile.id,
+    );
+    if (!existingInstance) {
+      this.#run(
+        `INSERT INTO agent_instances (
+          id, workspace_id, agent_definition_id, runtime_node_id,
+          name_override, status, legacy_agent_profile_id,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?)`,
+        randomUUID(),
+        profile.projectId,
+        profile.id,
+        input.runtimeNodeId ?? LOCAL_RUNTIME_NODE_ID,
+        profile.id,
+        profile.createdAt,
+        profile.updatedAt,
+      );
+    }
+
     return profile;
   }
 
@@ -290,6 +990,42 @@ export class ScopeGuardStore {
       thread.updatedAt,
     );
 
+    this.#run(
+      `INSERT OR IGNORE INTO workspace_tasks (
+        id, workspace_id, title, description, status, priority,
+        legacy_thread_id, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, '', 'ready', 'normal', ?, ?, ?, NULL)`,
+      thread.id,
+      thread.projectId,
+      thread.title,
+      thread.id,
+      thread.createdAt,
+      thread.updatedAt,
+    );
+    const instance = this.#get(
+      `SELECT id FROM agent_instances
+       WHERE legacy_agent_profile_id = ?`,
+      thread.agentProfileId,
+    );
+    const existingAssignment = this.#get(
+      "SELECT id FROM task_assignments WHERE thread_id = ?",
+      thread.id,
+    );
+    if (instance && !existingAssignment) {
+      this.#run(
+        `INSERT INTO task_assignments (
+          id, task_id, agent_instance_id, thread_id, role, position,
+          status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, '', 0, 'pending', ?, ?)`,
+        randomUUID(),
+        thread.id,
+        asString(instance.id),
+        thread.id,
+        thread.createdAt,
+        thread.updatedAt,
+      );
+    }
+
     return thread;
   }
 
@@ -326,6 +1062,14 @@ export class ScopeGuardStore {
       content,
       new Date().toISOString(),
     );
+  }
+
+  getRunPartial(runId: Id): string | null {
+    const row = this.#get(
+      "SELECT content FROM run_partials WHERE run_id = ?",
+      runId,
+    );
+    return row ? asString(row.content) : null;
   }
 
   clearRunPartial(runId: Id): void {
@@ -366,6 +1110,16 @@ export class ScopeGuardStore {
       run.error,
       run.createdAt,
     );
+    if (run.contextRevisionId) {
+      this.#run(
+        `INSERT INTO context_revision_uses (
+          context_revision_id, run_id, used_at
+        ) VALUES (?, ?, ?)`,
+        run.contextRevisionId,
+        run.id,
+        run.createdAt,
+      );
+    }
     return run;
   }
 
@@ -378,7 +1132,8 @@ export class ScopeGuardStore {
     return this.#all(
       `SELECT * FROM agent_runs
        WHERE status IN (
-         'queued', 'preparing', 'running', 'waiting-approval', 'cancelling'
+         'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
+         'cancelling'
        )
        ORDER BY created_at ASC`,
     ).map(mapAgentRun);
@@ -430,8 +1185,9 @@ export class ScopeGuardStore {
       const activeRuns = this.#all(
         `SELECT id, thread_id FROM agent_runs
          WHERE status IN (
-           'queued', 'preparing', 'running', 'waiting-approval', 'cancelling'
-         )`,
+           'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
+           'cancelling'
+         ) AND id NOT IN (SELECT run_id FROM remote_run_bindings)`,
       );
       for (const activeRun of activeRuns) {
         const runId = asString(activeRun.id);
@@ -470,13 +1226,93 @@ export class ScopeGuardStore {
            SET status = 'interrupted', completed_at = ?,
                error = COALESCE(error, 'The agent host stopped before this run completed.')
            WHERE status IN (
-             'queued', 'preparing', 'running', 'waiting-approval', 'cancelling'
-           )`,
+             'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
+             'cancelling'
+           ) AND id NOT IN (SELECT run_id FROM remote_run_bindings)`,
         )
         .run(new Date().toISOString());
-      this.#run("DELETE FROM run_partials");
+      this.#run(
+        `DELETE FROM run_partials
+         WHERE run_id NOT IN (SELECT run_id FROM remote_run_bindings)`,
+      );
       return Number(result.changes);
     });
+  }
+
+  createRemoteRunBinding(input: {
+    runId: Id;
+    runtimeNodeId: Id;
+    remoteRunId: Id;
+  }): RemoteRunBinding {
+    const now = new Date().toISOString();
+    this.#run(
+      `INSERT INTO remote_run_bindings (
+        run_id, runtime_node_id, remote_run_id, last_sequence,
+        result_imported_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 0, NULL, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        runtime_node_id = excluded.runtime_node_id,
+        remote_run_id = excluded.remote_run_id,
+        updated_at = excluded.updated_at`,
+      input.runId,
+      input.runtimeNodeId,
+      input.remoteRunId,
+      now,
+      now,
+    );
+    return this.requireRemoteRunBinding(input.runId);
+  }
+
+  getRemoteRunBinding(runId: Id): RemoteRunBinding | null {
+    const row = this.#get(
+      "SELECT * FROM remote_run_bindings WHERE run_id = ?",
+      runId,
+    );
+    return row ? mapRemoteRunBinding(row) : null;
+  }
+
+  listActiveRemoteRunBindings(): RemoteRunBinding[] {
+    return this.#all(
+      `SELECT binding.* FROM remote_run_bindings binding
+       INNER JOIN agent_runs run ON run.id = binding.run_id
+       WHERE run.status IN (
+         'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
+         'cancelling'
+       ) ORDER BY binding.created_at`,
+    ).map(mapRemoteRunBinding);
+  }
+
+  updateRemoteRunCursor(runId: Id, lastSequence: number): RemoteRunBinding {
+    this.#run(
+      `UPDATE remote_run_bindings
+       SET last_sequence = MAX(last_sequence, ?), updated_at = ?
+       WHERE run_id = ?`,
+      lastSequence,
+      new Date().toISOString(),
+      runId,
+    );
+    return this.requireRemoteRunBinding(runId);
+  }
+
+  markRemoteRunResultImported(runId: Id): RemoteRunBinding {
+    const now = new Date().toISOString();
+    this.#run(
+      `UPDATE remote_run_bindings
+       SET result_imported_at = COALESCE(result_imported_at, ?), updated_at = ?
+       WHERE run_id = ?`,
+      now,
+      now,
+      runId,
+    );
+    return this.requireRemoteRunBinding(runId);
+  }
+
+  requireRemoteRunBinding(runId: Id): RemoteRunBinding {
+    const binding = this.getRemoteRunBinding(runId);
+    if (!binding) {
+      throw new Error(`Remote Run binding not found: ${runId}`);
+    }
+    return binding;
   }
 
   appendRunEvent(event: RunEvent): void {
@@ -698,12 +1534,24 @@ export class ScopeGuardStore {
   }
 
   getProjectContext(projectId: Id): ContextRevision | null {
+    return this.getWorkspaceContext(projectId);
+  }
+
+  getWorkspaceContext(workspaceId: Id): ContextRevision | null {
     const row = this.#get(
-      `SELECT * FROM project_context_versions
-       WHERE project_id = ?
+      `SELECT * FROM context_revisions
+       WHERE workspace_id = ? AND scope = 'workspace'
        ORDER BY version DESC
        LIMIT 1`,
-      projectId,
+      workspaceId,
+    );
+    return row ? mapContextRevision(row) : null;
+  }
+
+  getContextRevision(contextRevisionId: Id): ContextRevision | null {
+    const row = this.#get(
+      "SELECT * FROM context_revisions WHERE id = ?",
+      contextRevisionId,
     );
     return row ? mapContextRevision(row) : null;
   }
@@ -714,36 +1562,96 @@ export class ScopeGuardStore {
     sourceThreadId: Id | null = null,
     sourceRunId: Id | null = null,
   ): ContextRevision {
+    return this.updateWorkspaceContext({
+      workspaceId: projectId,
+      content,
+      sourceThreadId,
+      sourceRunId,
+      publishedBy: "user",
+    });
+  }
+
+  updateWorkspaceContext(input: {
+    workspaceId: Id;
+    content: string;
+    title?: string;
+    scope?: ContextRevision["scope"];
+    taskId?: Id | null;
+    sourceThreadId?: Id | null;
+    sourceRunId?: Id | null;
+    sourceAgentInstanceId?: Id | null;
+    sourceArtifactId?: Id | null;
+    publishedBy: ContextRevision["publishedBy"];
+  }): ContextRevision {
     return this.#transaction(() => {
-      const parent = this.getProjectContext(projectId);
+      const scope = input.scope ?? "workspace";
+      const taskId = input.taskId ?? null;
+      const parentRow = this.#get(
+        `SELECT * FROM context_revisions
+         WHERE workspace_id = ? AND scope = ?
+           AND ((task_id IS NULL AND ? IS NULL) OR task_id = ?)
+         ORDER BY version DESC LIMIT 1`,
+        input.workspaceId,
+        scope,
+        taskId,
+        taskId,
+      );
+      const parent = parentRow ? mapContextRevision(parentRow) : null;
       const row = this.#get(
         `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-         FROM project_context_versions WHERE project_id = ?`,
-        projectId,
+         FROM context_revisions
+         WHERE workspace_id = ? AND scope = ?
+           AND ((task_id IS NULL AND ? IS NULL) OR task_id = ?)`,
+        input.workspaceId,
+        scope,
+        taskId,
+        taskId,
       );
       const version: ContextRevision = {
         id: randomUUID(),
-        projectId,
+        workspaceId: input.workspaceId,
+        projectId: input.workspaceId,
         version: asNumber(row?.next_version ?? 1),
         parentId: parent?.id ?? null,
-        content,
-        sourceThreadId,
-        sourceRunId,
+        scope,
+        taskId,
+        title: input.title?.trim() || `Context v${asNumber(row?.next_version ?? 1)}`,
+        content: input.content,
+        sourceThreadId: input.sourceThreadId ?? null,
+        sourceRunId: input.sourceRunId ?? null,
+        sourceAgentInstanceId: input.sourceAgentInstanceId ?? null,
+        sourceArtifactId: input.sourceArtifactId ?? null,
+        publishedBy: input.publishedBy,
         createdAt: new Date().toISOString(),
       };
       this.#run(
-        `INSERT INTO project_context_versions (
-          id, project_id, version, parent_id, content, source_thread_id,
-          source_run_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO context_revisions (
+          id, workspace_id, version, parent_id, scope, task_id, title,
+          content, source_thread_id, source_run_id,
+          source_agent_instance_id, source_artifact_id, published_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         version.id,
-        version.projectId,
+        version.workspaceId,
         version.version,
         version.parentId,
+        version.scope,
+        version.taskId,
+        version.title,
         version.content,
         version.sourceThreadId,
         version.sourceRunId,
+        version.sourceAgentInstanceId,
+        version.sourceArtifactId,
+        version.publishedBy,
         version.createdAt,
+      );
+      this.#run(
+        `UPDATE workspaces
+         SET current_context_revision_id = ?, updated_at = ?
+         WHERE id = ?`,
+        version.id,
+        version.createdAt,
+        input.workspaceId,
       );
       this.#run(
         `UPDATE projects
@@ -751,10 +1659,18 @@ export class ScopeGuardStore {
          WHERE id = ?`,
         version.id,
         version.createdAt,
-        projectId,
+        input.workspaceId,
       );
       return version;
     });
+  }
+
+  listContextRevisionUses(contextRevisionId: Id): ContextRevisionUse[] {
+    return this.#all(
+      `SELECT * FROM context_revision_uses
+       WHERE context_revision_id = ? ORDER BY used_at`,
+      contextRevisionId,
+    ).map(mapContextRevisionUse);
   }
 
   #migrate(): void {
@@ -917,7 +1833,8 @@ export class ScopeGuardStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_run_per_thread
         ON agent_runs(thread_id)
         WHERE status IN (
-          'queued', 'preparing', 'running', 'waiting-approval', 'cancelling'
+          'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
+          'cancelling'
         );
       CREATE INDEX IF NOT EXISTS idx_context_project_version
         ON project_context_versions(project_id, version DESC);
@@ -985,10 +1902,406 @@ export class ScopeGuardStore {
         );
         this.#run(
           `UPDATE schema_metadata SET value = '3'
+          WHERE key = 'schema_version'`,
+        );
+      });
+      currentVersion = 3;
+    }
+
+    if (currentVersion < 4) {
+      this.#transaction(() => {
+        this.#database.exec(`
+          CREATE TABLE IF NOT EXISTS workspaces (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            local_root_path TEXT UNIQUE,
+            current_context_revision_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_opened_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS runtime_nodes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            base_url TEXT,
+            credential_ref TEXT,
+            status TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL,
+            last_seen_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS agent_definitions (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            instructions TEXT NOT NULL,
+            provider_profile_id TEXT REFERENCES provider_profiles(id),
+            model_override TEXT,
+            tool_policy_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS agent_instances (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            agent_definition_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+            runtime_node_id TEXT NOT NULL REFERENCES runtime_nodes(id),
+            name_override TEXT,
+            status TEXT NOT NULL,
+            legacy_agent_profile_id TEXT UNIQUE REFERENCES agent_profiles(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS workspace_tasks (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            legacy_thread_id TEXT UNIQUE REFERENCES agent_threads(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+          );
+
+          CREATE TABLE IF NOT EXISTS task_assignments (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL REFERENCES workspace_tasks(id) ON DELETE CASCADE,
+            agent_instance_id TEXT NOT NULL REFERENCES agent_instances(id),
+            thread_id TEXT REFERENCES agent_threads(id) ON DELETE SET NULL,
+            role TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS artifacts (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL REFERENCES workspace_tasks(id) ON DELETE CASCADE,
+            assignment_id TEXT REFERENCES task_assignments(id) ON DELETE SET NULL,
+            run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+            agent_instance_id TEXT NOT NULL REFERENCES agent_instances(id),
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            content TEXT,
+            file_path TEXT,
+            version INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(task_id, title, version)
+          );
+
+          CREATE TABLE IF NOT EXISTS context_revisions (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            version INTEGER NOT NULL,
+            parent_id TEXT REFERENCES context_revisions(id),
+            scope TEXT NOT NULL,
+            task_id TEXT REFERENCES workspace_tasks(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_thread_id TEXT REFERENCES agent_threads(id) ON DELETE SET NULL,
+            source_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+            source_agent_instance_id TEXT REFERENCES agent_instances(id) ON DELETE SET NULL,
+            source_artifact_id TEXT REFERENCES artifacts(id) ON DELETE SET NULL,
+            published_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(workspace_id, scope, task_id, version)
+          );
+
+          CREATE TABLE IF NOT EXISTS context_revision_uses (
+            context_revision_id TEXT NOT NULL REFERENCES context_revisions(id) ON DELETE CASCADE,
+            run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+            used_at TEXT NOT NULL,
+            PRIMARY KEY(context_revision_id, run_id)
+          );
+
+          CREATE TABLE IF NOT EXISTS agent_handoffs (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL REFERENCES workspace_tasks(id) ON DELETE CASCADE,
+            from_agent_instance_id TEXT NOT NULL REFERENCES agent_instances(id),
+            to_agent_instance_id TEXT NOT NULL REFERENCES agent_instances(id),
+            source_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+            context_revision_id TEXT NOT NULL REFERENCES context_revisions(id),
+            summary TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+          );
+
+          CREATE TABLE IF NOT EXISTS workspace_schedules (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            agent_instance_id TEXT NOT NULL REFERENCES agent_instances(id),
+            title TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            cron_expression TEXT NOT NULL,
+            time_zone TEXT NOT NULL,
+            enabled INTEGER NOT NULL,
+            next_run_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+
+          CREATE TABLE IF NOT EXISTS inbox_items (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            task_id TEXT REFERENCES workspace_tasks(id) ON DELETE CASCADE,
+            assignment_id TEXT REFERENCES task_assignments(id) ON DELETE SET NULL,
+            run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+            approval_id TEXT REFERENCES tool_approvals(id) ON DELETE SET NULL,
+            agent_instance_id TEXT REFERENCES agent_instances(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_instances_workspace
+            ON agent_instances(workspace_id, created_at);
+          CREATE INDEX IF NOT EXISTS idx_tasks_workspace_updated
+            ON workspace_tasks(workspace_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_assignments_task_position
+            ON task_assignments(task_id, position, created_at);
+          CREATE INDEX IF NOT EXISTS idx_artifacts_workspace_created
+            ON artifacts(workspace_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_context_workspace_scope_version
+            ON context_revisions(workspace_id, scope, task_id, version DESC);
+          CREATE INDEX IF NOT EXISTS idx_handoffs_workspace_created
+            ON agent_handoffs(workspace_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_inbox_workspace_status_created
+            ON inbox_items(workspace_id, status, created_at DESC);
+        `);
+
+        const now = new Date().toISOString();
+        this.#run(
+          `INSERT OR IGNORE INTO workspaces (
+            id, name, local_root_path, current_context_revision_id,
+            created_at, updated_at, last_opened_at
+          )
+          SELECT id, name, root_path, current_context_revision_id,
+                 created_at, updated_at, last_opened_at
+          FROM projects`,
+        );
+        this.#run(
+          `INSERT OR IGNORE INTO runtime_nodes (
+            id, name, kind, base_url, credential_ref, status,
+            capabilities_json, last_seen_at, created_at, updated_at
+          ) VALUES (?, ?, 'local', NULL, NULL, 'online', ?, ?, ?, ?)`,
+          LOCAL_RUNTIME_NODE_ID,
+          "This device",
+          JSON.stringify(LOCAL_RUNTIME_CAPABILITIES),
+          now,
+          now,
+          now,
+        );
+        this.#run(
+          `INSERT OR IGNORE INTO agent_definitions (
+            id, name, description, instructions, provider_profile_id,
+            model_override, tool_policy_json, created_at, updated_at
+          )
+          SELECT id, name, '', instructions, provider_profile_id,
+                 model_override, tool_policy_json, created_at, updated_at
+          FROM agent_profiles`,
+        );
+
+        const legacyProfiles = this.#all(
+          `SELECT id, project_id, name, created_at, updated_at
+           FROM agent_profiles ORDER BY created_at`,
+        );
+        for (const row of legacyProfiles) {
+          const profileId = asString(row.id);
+          const existing = this.#get(
+            "SELECT id FROM agent_instances WHERE legacy_agent_profile_id = ?",
+            profileId,
+          );
+          if (existing) {
+            continue;
+          }
+          this.#run(
+            `INSERT INTO agent_instances (
+              id, workspace_id, agent_definition_id, runtime_node_id,
+              name_override, status, legacy_agent_profile_id,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?)`,
+            randomUUID(),
+            asString(row.project_id),
+            profileId,
+            LOCAL_RUNTIME_NODE_ID,
+            profileId,
+            asString(row.created_at),
+            asString(row.updated_at),
+          );
+        }
+
+        const legacyThreads = this.#all(
+          `SELECT id, project_id, agent_profile_id, title, status,
+                  created_at, updated_at
+           FROM agent_threads ORDER BY created_at`,
+        );
+        for (const row of legacyThreads) {
+          const threadId = asString(row.id);
+          this.#run(
+            `INSERT OR IGNORE INTO workspace_tasks (
+              id, workspace_id, title, description, status, priority,
+              legacy_thread_id, created_at, updated_at, completed_at
+            ) VALUES (?, ?, ?, '', ?, 'normal', ?, ?, ?, NULL)`,
+            threadId,
+            asString(row.project_id),
+            asString(row.title),
+            asString(row.status) === "archived" ? "archived" : "ready",
+            threadId,
+            asString(row.created_at),
+            asString(row.updated_at),
+          );
+          const instance = this.#get(
+            `SELECT id FROM agent_instances
+             WHERE legacy_agent_profile_id = ?`,
+            asString(row.agent_profile_id),
+          );
+          const existingAssignment = this.#get(
+            "SELECT id FROM task_assignments WHERE thread_id = ?",
+            threadId,
+          );
+          if (instance && !existingAssignment) {
+            this.#run(
+              `INSERT INTO task_assignments (
+                id, task_id, agent_instance_id, thread_id, role, position,
+                status, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, '', 0, 'pending', ?, ?)`,
+              randomUUID(),
+              threadId,
+              asString(instance.id),
+              threadId,
+              asString(row.created_at),
+              asString(row.updated_at),
+            );
+          }
+        }
+
+        this.#run(
+          `INSERT OR IGNORE INTO context_revisions (
+            id, workspace_id, version, parent_id, scope, task_id, title,
+            content, source_thread_id, source_run_id,
+            source_agent_instance_id, source_artifact_id,
+            published_by, created_at
+          )
+          SELECT id, project_id, version, parent_id, 'workspace', NULL,
+                 'Context v' || version, content, source_thread_id,
+                 source_run_id, NULL, NULL, 'user', created_at
+          FROM project_context_versions`,
+        );
+        this.#run(
+          `INSERT OR IGNORE INTO context_revision_uses (
+            context_revision_id, run_id, used_at
+          )
+          SELECT context_revision_id, id, created_at
+          FROM agent_runs
+          WHERE context_revision_id IS NOT NULL`,
+        );
+        this.#run(
+          `UPDATE schema_metadata SET value = '4'
+           WHERE key = 'schema_version'`,
+        );
+      });
+      currentVersion = 4;
+    }
+
+    if (currentVersion < 5) {
+      this.#transaction(() => {
+        this.#database.exec(`
+          CREATE TABLE IF NOT EXISTS remote_run_bindings (
+            run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+            runtime_node_id TEXT NOT NULL REFERENCES runtime_nodes(id),
+            remote_run_id TEXT NOT NULL UNIQUE,
+            last_sequence INTEGER NOT NULL DEFAULT 0,
+            result_imported_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_remote_bindings_runtime
+            ON remote_run_bindings(runtime_node_id, updated_at DESC);
+        `);
+        this.#run(
+          `UPDATE schema_metadata SET value = '5'
+           WHERE key = 'schema_version'`,
+        );
+      });
+      currentVersion = 5;
+    }
+
+    if (currentVersion < 6) {
+      this.#transaction(() => {
+        this.#database.exec(`
+          DROP INDEX IF EXISTS idx_one_active_run_per_thread;
+          CREATE UNIQUE INDEX idx_one_active_run_per_thread
+            ON agent_runs(thread_id)
+            WHERE status IN (
+              'queued', 'preparing', 'running', 'waiting-approval',
+              'waiting-input', 'cancelling'
+            );
+        `);
+        this.#run(
+          `UPDATE schema_metadata SET value = '6'
            WHERE key = 'schema_version'`,
         );
       });
     }
+  }
+
+  #insertWorkspace(workspace: Workspace): void {
+    this.#run(
+      `INSERT INTO workspaces (
+        id, name, local_root_path, current_context_revision_id,
+        created_at, updated_at, last_opened_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        local_root_path = excluded.local_root_path,
+        current_context_revision_id = excluded.current_context_revision_id,
+        updated_at = excluded.updated_at,
+        last_opened_at = excluded.last_opened_at`,
+      workspace.id,
+      workspace.name,
+      workspace.localRootPath,
+      workspace.currentContextRevisionId,
+      workspace.createdAt,
+      workspace.updatedAt,
+      workspace.lastOpenedAt,
+    );
+  }
+
+  #ensureLegacyProjectForWorkspace(workspace: Workspace): void {
+    this.#run(
+      `INSERT INTO projects (
+        id, name, root_path, current_context_revision_id,
+        created_at, updated_at, last_opened_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        current_context_revision_id = excluded.current_context_revision_id,
+        updated_at = excluded.updated_at,
+        last_opened_at = excluded.last_opened_at`,
+      workspace.id,
+      workspace.name,
+      workspace.localRootPath ?? `scopeguard://workspace/${workspace.id}`,
+      workspace.currentContextRevisionId,
+      workspace.createdAt,
+      workspace.updatedAt,
+      workspace.lastOpenedAt,
+    );
   }
 
   #appendMessage(
@@ -1090,6 +2403,18 @@ export class ScopeGuardStore {
   }
 }
 
+function mapWorkspace(row: UnknownRow): Workspace {
+  return {
+    id: asString(row.id),
+    name: asString(row.name),
+    localRootPath: asNullableString(row.local_root_path),
+    currentContextRevisionId: asNullableString(row.current_context_revision_id),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+    lastOpenedAt: asString(row.last_opened_at),
+  };
+}
+
 function mapProject(row: UnknownRow): Project {
   return {
     id: asString(row.id),
@@ -1113,6 +2438,154 @@ function mapProviderProfile(row: UnknownRow): ProviderProfile {
     customHeaders: parseJsonStringRecord(row.custom_headers_json),
     createdAt: asString(row.created_at),
     updatedAt: asString(row.updated_at),
+  };
+}
+
+function mapRuntimeNode(row: UnknownRow): RuntimeNode {
+  return {
+    id: asString(row.id),
+    name: asString(row.name),
+    kind: asString(row.kind) as RuntimeNode["kind"],
+    baseUrl: asNullableString(row.base_url),
+    hasCredential: row.credential_ref !== null && row.credential_ref !== undefined,
+    status: asString(row.status) as RuntimeNode["status"],
+    capabilities: {
+      nativeAgents: false,
+      cliAgents: false,
+      fileTools: false,
+      commandTools: false,
+      persistentRuns: false,
+      ...parseJsonObject(row.capabilities_json),
+    } as RuntimeCapabilities,
+    lastSeenAt: asNullableString(row.last_seen_at),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function mapAgentDefinition(row: UnknownRow): AgentDefinition {
+  return {
+    id: asString(row.id),
+    name: asString(row.name),
+    description: asString(row.description),
+    instructions: asString(row.instructions),
+    providerProfileId: asNullableString(row.provider_profile_id),
+    modelOverride: asNullableString(row.model_override),
+    toolPolicy: {
+      ...mergeToolPolicy(undefined),
+      ...parseJsonObject(row.tool_policy_json),
+    } as AgentDefinition["toolPolicy"],
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function mapAgentInstance(row: UnknownRow): AgentInstance {
+  return {
+    id: asString(row.id),
+    workspaceId: asString(row.workspace_id),
+    agentDefinitionId: asString(row.agent_definition_id),
+    runtimeNodeId: asString(row.runtime_node_id),
+    nameOverride: asNullableString(row.name_override),
+    status: asString(row.status) as AgentInstance["status"],
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function mapWorkspaceTask(row: UnknownRow): WorkspaceTask {
+  return {
+    id: asString(row.id),
+    workspaceId: asString(row.workspace_id),
+    title: asString(row.title),
+    description: asString(row.description),
+    status: asString(row.status) as WorkspaceTask["status"],
+    priority: asString(row.priority) as WorkspaceTask["priority"],
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+    completedAt: asNullableString(row.completed_at),
+  };
+}
+
+function mapTaskAssignment(row: UnknownRow): TaskAssignment {
+  return {
+    id: asString(row.id),
+    taskId: asString(row.task_id),
+    agentInstanceId: asString(row.agent_instance_id),
+    threadId: asNullableString(row.thread_id),
+    role: asString(row.role),
+    position: asNumber(row.position),
+    status: asString(row.status) as TaskAssignment["status"],
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function mapArtifact(row: UnknownRow): Artifact {
+  return {
+    id: asString(row.id),
+    workspaceId: asString(row.workspace_id),
+    taskId: asString(row.task_id),
+    assignmentId: asNullableString(row.assignment_id),
+    runId: asNullableString(row.run_id),
+    agentInstanceId: asString(row.agent_instance_id),
+    kind: asString(row.kind) as Artifact["kind"],
+    title: asString(row.title),
+    mimeType: asString(row.mime_type),
+    content: asNullableString(row.content),
+    filePath: asNullableString(row.file_path),
+    version: asNumber(row.version),
+    createdAt: asString(row.created_at),
+  };
+}
+
+function mapAgentHandoff(row: UnknownRow): AgentHandoff {
+  return {
+    id: asString(row.id),
+    workspaceId: asString(row.workspace_id),
+    taskId: asString(row.task_id),
+    fromAgentInstanceId: asString(row.from_agent_instance_id),
+    toAgentInstanceId: asString(row.to_agent_instance_id),
+    sourceRunId: asNullableString(row.source_run_id),
+    contextRevisionId: asString(row.context_revision_id),
+    summary: asString(row.summary),
+    status: asString(row.status) as AgentHandoff["status"],
+    createdAt: asString(row.created_at),
+    resolvedAt: asNullableString(row.resolved_at),
+  };
+}
+
+function mapWorkspaceSchedule(row: UnknownRow): WorkspaceSchedule {
+  return {
+    id: asString(row.id),
+    workspaceId: asString(row.workspace_id),
+    agentInstanceId: asString(row.agent_instance_id),
+    title: asString(row.title),
+    prompt: asString(row.prompt),
+    cronExpression: asString(row.cron_expression),
+    timeZone: asString(row.time_zone),
+    enabled: asNumber(row.enabled) === 1,
+    nextRunAt: asNullableString(row.next_run_at),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
+function mapInboxItem(row: UnknownRow): InboxItem {
+  return {
+    id: asString(row.id),
+    workspaceId: asString(row.workspace_id),
+    kind: asString(row.kind) as InboxItem["kind"],
+    status: asString(row.status) as InboxItem["status"],
+    title: asString(row.title),
+    summary: asString(row.summary),
+    taskId: asNullableString(row.task_id),
+    assignmentId: asNullableString(row.assignment_id),
+    runId: asNullableString(row.run_id),
+    approvalId: asNullableString(row.approval_id),
+    agentInstanceId: asNullableString(row.agent_instance_id),
+    createdAt: asString(row.created_at),
+    resolvedAt: asNullableString(row.resolved_at),
   };
 }
 
@@ -1176,16 +2649,43 @@ function mapAgentRun(row: UnknownRow): AgentRun {
   };
 }
 
+function mapRemoteRunBinding(row: UnknownRow): RemoteRunBinding {
+  return {
+    runId: asString(row.run_id),
+    runtimeNodeId: asString(row.runtime_node_id),
+    remoteRunId: asString(row.remote_run_id),
+    lastSequence: asNumber(row.last_sequence),
+    resultImportedAt: asNullableString(row.result_imported_at),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at),
+  };
+}
+
 function mapContextRevision(row: UnknownRow): ContextRevision {
   return {
     id: asString(row.id),
-    projectId: asString(row.project_id),
+    workspaceId: asString(row.workspace_id),
+    projectId: asString(row.workspace_id),
     version: asNumber(row.version),
     parentId: asNullableString(row.parent_id),
+    scope: asString(row.scope) as ContextRevision["scope"],
+    taskId: asNullableString(row.task_id),
+    title: asString(row.title),
     content: asString(row.content),
     sourceThreadId: asNullableString(row.source_thread_id),
     sourceRunId: asNullableString(row.source_run_id),
+    sourceAgentInstanceId: asNullableString(row.source_agent_instance_id),
+    sourceArtifactId: asNullableString(row.source_artifact_id),
+    publishedBy: asString(row.published_by) as ContextRevision["publishedBy"],
     createdAt: asString(row.created_at),
+  };
+}
+
+function mapContextRevisionUse(row: UnknownRow): ContextRevisionUse {
+  return {
+    contextRevisionId: asString(row.context_revision_id),
+    runId: asString(row.run_id),
+    usedAt: asString(row.used_at),
   };
 }
 

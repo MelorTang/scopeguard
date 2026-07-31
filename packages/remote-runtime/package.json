@@ -1,0 +1,31 @@
+{
+  "name": "@scopeguard/remote-runtime",
+  "version": "0.5.0-dev",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "scopeguard-runtime": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @scopeguard/provider-adapters build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @scopeguard/provider-adapters build && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test dist/*.test.js",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@scopeguard/agent-runtime": "workspace:*",
+    "@scopeguard/domain": "workspace:*",
+    "@scopeguard/provider-adapters": "workspace:*"
+  }
+}

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
+  AgentDefinition,
+  AgentHandoff,
+  AgentInstance,
   AgentProfile,
   AgentRun,
   AgentThread,
@@ -9,12 +12,17 @@ import type {
   CreateAgentProfileInput,
   Project,
   ProviderConnectionResult,
-  ProviderProfile,
+  RuntimeConnectionResult,
+  RuntimeNode,
+  SaveRuntimeNodeInput,
   RunEvent,
   ThreadMessage,
-  WorkspaceSnapshot,
+  Workspace,
+  WorkspaceTask,
 } from "@scopeguard/domain";
 import type {
+  DesktopWorkspaceSnapshot,
+  ProviderProfileView,
   SaveProviderProfileRequest,
 } from "@scopeguard/ipc-contracts";
 
@@ -61,14 +69,17 @@ const DEFAULT_UI_STATE: PersistedUiState = {
 };
 
 export type WorkspaceController = {
-  snapshot: WorkspaceSnapshot | null;
+  snapshot: DesktopWorkspaceSnapshot | null;
   loading: boolean;
   error: string | null;
   selectedProject: Project | null;
+  selectedWorkspace: Workspace | null;
   activeThread: AgentThread | null;
   activeAgent: AgentProfile | null;
+  activeTask: WorkspaceTask | null;
+  activeAgentInstance: AgentInstance | null;
+  activeAgentDefinition: AgentDefinition | null;
   activeContext: ContextRevision | null;
-  openThreads: AgentThread[];
   visibleThreads: AgentThread[];
   messagesByThread: Record<string, ThreadMessage[]>;
   streamingByThread: Record<string, string>;
@@ -83,38 +94,51 @@ export type WorkspaceController = {
   selectProject: (projectId: string) => void;
   openThread: (threadId: string) => void;
   focusApproval: (threadId: string, approvalId: string) => void;
-  closeThread: (threadId: string) => void;
   selectPane: (paneIndex: number) => void;
   setRequestedSplitCount: (count: number) => void;
   setSidebarCollapsed: (value: boolean) => void;
   setInspectorOpen: (value: boolean) => void;
   setProfessionalMode: (value: boolean) => void;
   refresh: () => Promise<void>;
+  createWorkspace: (name: string) => Promise<Workspace>;
   addProject: () => Promise<Project | null>;
   saveProvider: (
     input: SaveProviderProfileRequest,
-  ) => Promise<ProviderProfile>;
+  ) => Promise<ProviderProfileView>;
   testProvider: (
     input: SaveProviderProfileRequest,
   ) => Promise<ProviderConnectionResult>;
+  saveRuntime: (input: SaveRuntimeNodeInput) => Promise<RuntimeNode>;
+  testRuntime: (runtimeNodeId: string) => Promise<RuntimeConnectionResult>;
+  updateAgentRuntime: (
+    agentInstanceId: string,
+    runtimeNodeId: string,
+  ) => Promise<AgentInstance>;
   createAgentThread: (
     profileInput: Omit<CreateAgentProfileInput, "projectId">,
     title: string,
   ) => Promise<AgentThread>;
+  createTaskThread: (agentInstanceId: string, title: string) => Promise<AgentThread>;
   sendMessage: (threadId: string, prompt: string) => Promise<AgentRun>;
   cancelRun: (runId: string) => Promise<void>;
   resolveApproval: (
     approvalId: string,
     decision: ApprovalDecision,
   ) => Promise<void>;
+  resolveInboxItem: (inboxItemId: string) => Promise<void>;
   updateContext: (content: string) => Promise<ContextRevision>;
+  publishArtifactToContext: (artifactId: string) => Promise<ContextRevision>;
+  createHandoff: (
+    toAgentInstanceId: string,
+    summary: string,
+  ) => Promise<AgentHandoff>;
   getRunForThread: (threadId: string) => AgentRun | null;
   getLatestRunForThread: (threadId: string) => AgentRun | null;
   retryThread: (threadId: string) => Promise<AgentRun>;
 };
 
 export function useWorkspace(): WorkspaceController {
-  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
+  const [snapshot, setSnapshot] = useState<DesktopWorkspaceSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ui, setUi] = useState<PersistedUiState>(readUiState);
@@ -158,7 +182,13 @@ export function useWorkspace(): WorkspaceController {
       );
       if (
         event.type === "run-status" &&
-        ["completed", "failed", "cancelled", "interrupted"].includes(event.status)
+        [
+          "waiting-input",
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted",
+        ].includes(event.status)
       ) {
         void refresh();
       }
@@ -188,6 +218,15 @@ export function useWorkspace(): WorkspaceController {
       ?? null,
     [snapshot, ui.selectedProjectId],
   );
+  const selectedWorkspace = useMemo(
+    () =>
+      snapshot?.workspaces.find(
+        (workspace) => workspace.id === (ui.selectedProjectId ?? selectedProject?.id),
+      )
+      ?? snapshot?.workspaces[0]
+      ?? null,
+    [selectedProject?.id, snapshot?.workspaces, ui.selectedProjectId],
+  );
   const activeThread = useMemo(
     () =>
       snapshot?.threads.find((thread) => thread.id === ui.activeThreadId) ?? null,
@@ -199,6 +238,30 @@ export function useWorkspace(): WorkspaceController {
         (profile) => profile.id === activeThread?.agentProfileId,
       ) ?? null,
     [snapshot, activeThread],
+  );
+  const activeAssignment = useMemo(
+    () => snapshot?.assignments.find(
+      (assignment) => assignment.threadId === activeThread?.id,
+    ) ?? null,
+    [activeThread?.id, snapshot?.assignments],
+  );
+  const activeTask = useMemo(
+    () => snapshot?.tasks.find(
+      (task) => task.id === (activeAssignment?.taskId ?? activeThread?.id),
+    ) ?? null,
+    [activeAssignment?.taskId, activeThread?.id, snapshot?.tasks],
+  );
+  const activeAgentInstance = useMemo(
+    () => snapshot?.agentInstances.find(
+      (instance) => instance.id === activeAssignment?.agentInstanceId,
+    ) ?? null,
+    [activeAssignment?.agentInstanceId, snapshot?.agentInstances],
+  );
+  const activeAgentDefinition = useMemo(
+    () => snapshot?.agentDefinitions.find(
+      (definition) => definition.id === activeAgentInstance?.agentDefinitionId,
+    ) ?? null,
+    [activeAgentInstance?.agentDefinitionId, snapshot?.agentDefinitions],
   );
   const openThreads = useMemo(
     () =>
@@ -252,8 +315,8 @@ export function useWorkspace(): WorkspaceController {
   const activePaneIndex = visibleActivePaneIndex >= 0
     ? visibleActivePaneIndex
     : 0;
-  const activeContext = selectedProject
-    ? contextsByProject[selectedProject.id] ?? null
+  const activeContext = selectedWorkspace
+    ? contextsByProject[selectedWorkspace.id] ?? null
     : null;
 
   useEffect(() => {
@@ -276,18 +339,18 @@ export function useWorkspace(): WorkspaceController {
   }, [messagesByThread, openThreads]);
 
   useEffect(() => {
-    if (!selectedProject || selectedProject.id in contextsByProject) {
+    if (!selectedWorkspace || selectedWorkspace.id in contextsByProject) {
       return;
     }
-    void desktopApi.getProjectContext(selectedProject.id)
+    void desktopApi.getWorkspaceContext(selectedWorkspace.id)
       .then((context) => {
         setContextsByProject((current) => ({
           ...current,
-          [selectedProject.id]: context,
+          [selectedWorkspace.id]: context,
         }));
       })
       .catch((loadError: unknown) => setError(messageFromError(loadError)));
-  }, [contextsByProject, selectedProject]);
+  }, [contextsByProject, selectedWorkspace]);
 
   const selectProject = useCallback((projectId: string) => {
     setUi((current) => {
@@ -366,31 +429,6 @@ export function useWorkspace(): WorkspaceController {
     });
   }, [openThread]);
 
-  const closeThread = useCallback((threadId: string) => {
-    setUi((current) => {
-      const nextOpen = current.openThreadIds.filter((id) => id !== threadId);
-      const paneThreadIds = normalizePaneThreadIds(
-        current.paneThreadIds.filter((id) => id !== threadId),
-        nextOpen,
-        Math.min(current.requestedSplitCount, Math.max(1, nextOpen.length)),
-      );
-      const activePaneIndex = Math.min(
-        current.activePaneIndex,
-        Math.max(0, paneThreadIds.length - 1),
-      );
-      const activeThreadId = current.activeThreadId === threadId
-        ? paneThreadIds[activePaneIndex] ?? nextOpen.at(-1) ?? null
-        : current.activeThreadId;
-      return {
-        ...current,
-        activeThreadId,
-        openThreadIds: nextOpen,
-        paneThreadIds,
-        activePaneIndex,
-      };
-    });
-  }, []);
-
   const selectPane = useCallback((paneIndex: number) => {
     setUi((current) => {
       const effectiveCount = Math.min(
@@ -458,6 +496,27 @@ export function useWorkspace(): WorkspaceController {
     }
   }, [refresh]);
 
+  const createWorkspace = useCallback(async (name: string) => {
+    try {
+      const created = await desktopApi.createWorkspace({ name: name.trim() });
+      await refresh();
+      setUi((current) => ({
+        ...current,
+        projectLayouts: rememberCurrentProjectLayout(current),
+        selectedProjectId: created.id,
+        activeThreadId: null,
+        openThreadIds: [],
+        paneThreadIds: [],
+        activePaneIndex: 0,
+        requestedSplitCount: 1,
+      }));
+      return created;
+    } catch (workspaceError) {
+      setError(messageFromError(workspaceError));
+      throw workspaceError;
+    }
+  }, [refresh]);
+
   const saveProvider = useCallback(
     async (input: SaveProviderProfileRequest) => {
       const provider = await desktopApi.saveProviderProfile(input);
@@ -473,13 +532,37 @@ export function useWorkspace(): WorkspaceController {
     [],
   );
 
+  const saveRuntime = useCallback(async (input: SaveRuntimeNodeInput) => {
+    const runtime = await desktopApi.saveRuntimeNode(input);
+    await refresh();
+    return runtime;
+  }, [refresh]);
+
+  const testRuntime = useCallback(async (runtimeNodeId: string) => {
+    const result = await desktopApi.testRuntimeConnection(runtimeNodeId);
+    await refresh();
+    return result;
+  }, [refresh]);
+
+  const updateAgentRuntime = useCallback(async (
+    agentInstanceId: string,
+    runtimeNodeId: string,
+  ) => {
+    const instance = await desktopApi.updateAgentInstanceRuntime({
+      agentInstanceId,
+      runtimeNodeId,
+    });
+    await refresh();
+    return instance;
+  }, [refresh]);
+
   const createAgentThread = useCallback(
     async (
       profileInput: Omit<CreateAgentProfileInput, "projectId">,
       title: string,
     ) => {
       if (!selectedProject) {
-        throw new Error("Open a Project before creating an Agent.");
+        throw new Error("请先创建工作区，再创建 Agent。");
       }
       const profile = await desktopApi.createAgentProfile({
         ...profileInput,
@@ -496,6 +579,35 @@ export function useWorkspace(): WorkspaceController {
     },
     [openThread, refresh, selectedProject],
   );
+
+  const createTaskThread = useCallback(async (
+    agentInstanceId: string,
+    title: string,
+  ) => {
+    if (!selectedProject || !selectedWorkspace) {
+      throw new Error("请先创建工作区。");
+    }
+    const instance = snapshot?.agentInstances.find(
+      (item) => item.id === agentInstanceId,
+    );
+    const definition = snapshot?.agentDefinitions.find(
+      (item) => item.id === instance?.agentDefinitionId,
+    );
+    const legacyProfile = snapshot?.agentProfiles.find(
+      (item) => item.id === definition?.id && item.projectId === selectedProject.id,
+    );
+    if (!instance || instance.workspaceId !== selectedWorkspace.id || !legacyProfile) {
+      throw new Error("这个 Agent 尚未接入当前可执行 Runtime。");
+    }
+    const thread = await desktopApi.createThread({
+      projectId: selectedProject.id,
+      agentProfileId: legacyProfile.id,
+      title: title.trim(),
+    });
+    await refresh();
+    openThread(thread.id);
+    return thread;
+  }, [openThread, refresh, selectedProject, selectedWorkspace, snapshot]);
 
   const sendMessage = useCallback(async (threadId: string, prompt: string) => {
     setStreamingByThread((current) => ({ ...current, [threadId]: "" }));
@@ -517,27 +629,121 @@ export function useWorkspace(): WorkspaceController {
     await refresh();
   }, [refresh]);
 
+  const resolveInboxItem = useCallback(async (inboxItemId: string) => {
+    await desktopApi.resolveInboxItem(inboxItemId);
+    await refresh();
+  }, [refresh]);
+
   const updateContext = useCallback(async (content: string) => {
-    if (!selectedProject) {
-      throw new Error("No Project is selected.");
+    if (!selectedWorkspace) {
+      throw new Error("当前没有选中的工作区。");
     }
-    const revision = await desktopApi.updateProjectContext({
-      projectId: selectedProject.id,
+    const activeRun = activeThread
+      ? snapshot?.activeRuns.find((run) => run.threadId === activeThread.id)
+      : null;
+    const revision = await desktopApi.publishWorkspaceContext({
+      workspaceId: selectedWorkspace.id,
+      title: "共享工作区上下文",
       content,
-      sourceThreadId: activeThread?.projectId === selectedProject.id
+      scope: "workspace",
+      sourceThreadId: activeThread?.projectId === selectedWorkspace.id
         ? activeThread.id
         : undefined,
-      sourceRunId: activeThread?.projectId === selectedProject.id
-        ? snapshot?.activeRuns.find((run) => run.threadId === activeThread.id)?.id
+      sourceRunId: activeThread?.projectId === selectedWorkspace.id
+        ? activeRun?.id
         : undefined,
+      sourceAgentInstanceId: activeAgentInstance?.id,
+      publishedBy: "user",
     });
     setContextsByProject((current) => ({
       ...current,
-      [selectedProject.id]: revision,
+      [selectedWorkspace.id]: revision,
     }));
     await refresh();
     return revision;
-  }, [activeThread, refresh, selectedProject, snapshot?.activeRuns]);
+  }, [
+    activeAgentInstance?.id,
+    activeThread,
+    refresh,
+    selectedWorkspace,
+    snapshot?.activeRuns,
+  ]);
+
+  const publishArtifactToContext = useCallback(async (artifactId: string) => {
+    if (!selectedWorkspace || !snapshot) {
+      throw new Error("当前没有选中的工作区。");
+    }
+    const artifact = snapshot.artifacts.find((item) => item.id === artifactId);
+    if (!artifact || artifact.workspaceId !== selectedWorkspace.id) {
+      throw new Error("找不到当前工作区中的成果。");
+    }
+    if (!artifact.content?.trim()) {
+      throw new Error("这个文件成果没有可发布的文本内容。");
+    }
+    const assignment = artifact.assignmentId
+      ? snapshot.assignments.find((item) => item.id === artifact.assignmentId)
+      : snapshot.assignments.find(
+          (item) =>
+            item.taskId === artifact.taskId &&
+            item.agentInstanceId === artifact.agentInstanceId,
+        );
+    const revision = await desktopApi.publishWorkspaceContext({
+      workspaceId: selectedWorkspace.id,
+      title: artifact.title,
+      content: artifact.content,
+      scope: "workspace",
+      sourceThreadId: assignment?.threadId ?? undefined,
+      sourceRunId: artifact.runId ?? undefined,
+      sourceAgentInstanceId: artifact.agentInstanceId,
+      sourceArtifactId: artifact.id,
+      publishedBy: "user",
+    });
+    setContextsByProject((current) => ({
+      ...current,
+      [selectedWorkspace.id]: revision,
+    }));
+    await refresh();
+    return revision;
+  }, [refresh, selectedWorkspace, snapshot]);
+
+  const createHandoff = useCallback(async (
+    toAgentInstanceId: string,
+    summary: string,
+  ) => {
+    if (!selectedWorkspace || !snapshot || !activeContext) {
+      throw new Error("请先发布共享上下文。");
+    }
+    const sourceArtifact = activeContext.sourceArtifactId
+      ? snapshot.artifacts.find(
+          (item) => item.id === activeContext.sourceArtifactId,
+        )
+      : null;
+    const fromAgentInstanceId = activeContext.sourceAgentInstanceId
+      ?? sourceArtifact?.agentInstanceId
+      ?? activeAgentInstance?.id;
+    const taskId = activeContext.taskId ?? sourceArtifact?.taskId ?? activeTask?.id;
+    if (!fromAgentInstanceId || !taskId) {
+      throw new Error("当前上下文缺少可交接的 Agent 或任务来源。");
+    }
+    const handoff = await desktopApi.createHandoff({
+      workspaceId: selectedWorkspace.id,
+      taskId,
+      fromAgentInstanceId,
+      toAgentInstanceId,
+      sourceRunId: activeContext.sourceRunId ?? sourceArtifact?.runId ?? undefined,
+      contextRevisionId: activeContext.id,
+      summary: summary.trim(),
+    });
+    await refresh();
+    return handoff;
+  }, [
+    activeAgentInstance?.id,
+    activeContext,
+    activeTask?.id,
+    refresh,
+    selectedWorkspace,
+    snapshot,
+  ]);
 
   const getRunForThread = useCallback(
     (threadId: string) =>
@@ -563,7 +769,7 @@ export function useWorkspace(): WorkspaceController {
       .join("")
       .trim();
     if (!prompt) {
-      throw new Error("The original task is unavailable for retry.");
+      throw new Error("原始任务不可用，无法重试。");
     }
     return sendMessage(threadId, prompt);
   }, [messagesByThread, sendMessage]);
@@ -573,10 +779,13 @@ export function useWorkspace(): WorkspaceController {
     loading,
     error,
     selectedProject,
+    selectedWorkspace,
     activeThread,
     activeAgent,
+    activeTask,
+    activeAgentInstance,
+    activeAgentDefinition,
     activeContext,
-    openThreads,
     visibleThreads,
     messagesByThread,
     streamingByThread,
@@ -591,7 +800,6 @@ export function useWorkspace(): WorkspaceController {
     selectProject,
     openThread,
     focusApproval,
-    closeThread,
     selectPane,
     setRequestedSplitCount: (requestedSplitCount) =>
       setUi((current) => {
@@ -633,14 +841,22 @@ export function useWorkspace(): WorkspaceController {
     setProfessionalMode: (professionalMode) =>
       setUi((current) => ({ ...current, professionalMode })),
     refresh,
+    createWorkspace,
     addProject,
     saveProvider,
     testProvider,
+    saveRuntime,
+    testRuntime,
+    updateAgentRuntime,
     createAgentThread,
+    createTaskThread,
     sendMessage,
     cancelRun,
     resolveApproval,
+    resolveInboxItem,
     updateContext,
+    publishArtifactToContext,
+    createHandoff,
     getRunForThread,
     getLatestRunForThread,
     retryThread,
@@ -649,7 +865,9 @@ export function useWorkspace(): WorkspaceController {
 
 function applyRunEvent(
   event: RunEvent,
-  setSnapshot: React.Dispatch<React.SetStateAction<WorkspaceSnapshot | null>>,
+  setSnapshot: React.Dispatch<
+    React.SetStateAction<DesktopWorkspaceSnapshot | null>
+  >,
   setMessages: React.Dispatch<
     React.SetStateAction<Record<string, ThreadMessage[]>>
   >,
@@ -724,14 +942,14 @@ function applyRunEvent(
 
 function normalizeUiState(
   current: PersistedUiState,
-  snapshot: WorkspaceSnapshot,
+  snapshot: DesktopWorkspaceSnapshot,
 ): PersistedUiState {
-  const projectIds = new Set(snapshot.projects.map((project) => project.id));
+  const projectIds = new Set(snapshot.workspaces.map((workspace) => workspace.id));
   const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
   const selectedProjectId = current.selectedProjectId &&
     projectIds.has(current.selectedProjectId)
     ? current.selectedProjectId
-    : snapshot.projects[0]?.id ?? null;
+    : snapshot.workspaces[0]?.id ?? null;
   const savedLayout = selectedProjectId
     ? current.projectLayouts[selectedProjectId]
     : undefined;
@@ -781,7 +999,7 @@ function normalizeUiState(
 }
 
 function threadSelectionForProject(
-  snapshot: WorkspaceSnapshot | null,
+  snapshot: DesktopWorkspaceSnapshot | null,
   projectId: string,
   savedLayout?: ProjectLayout,
 ): ProjectLayout {

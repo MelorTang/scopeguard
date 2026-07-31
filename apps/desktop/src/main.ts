@@ -15,13 +15,25 @@ import {
 
 import {
   IPC_CHANNELS,
+  parseCreateAgentDefinitionInput,
+  parseCreateAgentInstanceInput,
   parseCreateAgentProfileInput,
+  parseCreateArtifactInput,
+  parseCreateHandoffInput,
   parseCreateProjectInput,
+  parseCreateScheduleInput,
+  parseCreateTaskAssignmentInput,
+  parseCreateTaskInput,
   parseCreateThreadInput,
+  parseCreateWorkspaceInput,
   parseId,
+  parsePublishWorkspaceContextRequest,
   parseResolveApprovalRequest,
+  parseSaveRuntimeNodeInput,
   parseSaveProviderProfileRequest,
   parseStartRunInput,
+  parseUpdateTaskStatusRequest,
+  parseUpdateAgentInstanceRuntimeRequest,
   parseUpdateProjectContextRequest,
 } from "@scopeguard/ipc-contracts";
 import type { RunEvent } from "@scopeguard/domain";
@@ -193,6 +205,106 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
   ipcMain.handle(IPC_CHANNELS.getWorkspaceSnapshot, (event) => {
     assertTrustedSender(event);
     return agentHost.request("getWorkspaceSnapshot");
+  });
+  ipcMain.handle(IPC_CHANNELS.createWorkspace, async (event, value: unknown) => {
+    assertTrustedSender(event);
+    const input = parseCreateWorkspaceInput(value);
+    const localRootPath = input.localRootPath
+      ? await projectDirectoryAuthorizer.consume(
+        event.sender.id,
+        input.localRootPath,
+      )
+      : input.localRootPath;
+    return agentHost.request("createWorkspace", {
+      ...input,
+      localRootPath,
+    });
+  });
+  ipcMain.handle(IPC_CHANNELS.saveRuntimeNode, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("saveRuntimeNode", parseSaveRuntimeNodeInput(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.testRuntimeConnection, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "testRuntimeConnection",
+      parseId(value, "runtimeNodeId"),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.createAgentDefinition, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "createAgentDefinition",
+      parseCreateAgentDefinitionInput(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.createAgentInstance, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "createAgentInstance",
+      parseCreateAgentInstanceInput(value),
+    );
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.updateAgentInstanceRuntime,
+    (event, value: unknown) => {
+      assertTrustedSender(event);
+      return agentHost.request(
+        "updateAgentInstanceRuntime",
+        parseUpdateAgentInstanceRuntimeRequest(value),
+      );
+    },
+  );
+  ipcMain.handle(IPC_CHANNELS.createTask, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("createTask", parseCreateTaskInput(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.updateTaskStatus, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "updateTaskStatus",
+      parseUpdateTaskStatusRequest(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.assignAgentToTask, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "assignAgentToTask",
+      parseCreateTaskAssignmentInput(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.createArtifact, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("createArtifact", parseCreateArtifactInput(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.getWorkspaceContext, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "getWorkspaceContext",
+      parseId(value, "workspaceId"),
+    );
+  });
+  ipcMain.handle(
+    IPC_CHANNELS.publishWorkspaceContext,
+    (event, value: unknown) => {
+      assertTrustedSender(event);
+      return agentHost.request(
+        "publishWorkspaceContext",
+        parsePublishWorkspaceContextRequest(value),
+      );
+    },
+  );
+  ipcMain.handle(IPC_CHANNELS.createHandoff, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("createHandoff", parseCreateHandoffInput(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.createSchedule, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("createSchedule", parseCreateScheduleInput(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.resolveInboxItem, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("resolveInboxItem", parseId(value, "inboxItemId"));
   });
   ipcMain.handle(IPC_CHANNELS.chooseProjectDirectory, async (event) => {
     assertTrustedSender(event);

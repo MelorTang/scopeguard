@@ -87,6 +87,15 @@ async function streamTurn(response, body) {
     });
     return;
   }
+  if (prompt.includes("[tool:input]")) {
+    await streamToolCall(response, "request_user_input", {
+      question: "这份报告应覆盖哪个时间范围？",
+    });
+    return;
+  }
+  if (prompt.includes("[slow]")) {
+    await delay(5_000);
+  }
 
   await streamText(
     response,

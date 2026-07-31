@@ -1,7 +1,22 @@
-export const SCOPEGUARD_SCHEMA_VERSION = 3;
+export const SCOPEGUARD_SCHEMA_VERSION = 6;
 
 export type Id = string;
 export type IsoDateTime = string;
+
+export type Workspace = {
+  id: Id;
+  name: string;
+  localRootPath: string | null;
+  currentContextRevisionId: Id | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+  lastOpenedAt: IsoDateTime;
+};
+
+export type CreateWorkspaceInput = {
+  name: string;
+  localRootPath?: string | null;
+};
 
 export type ProviderProtocol = "openai-compatible" | "anthropic-compatible";
 
@@ -80,6 +95,264 @@ export type AgentProfile = {
   updatedAt: IsoDateTime;
 };
 
+export type AgentDefinition = {
+  id: Id;
+  name: string;
+  description: string;
+  instructions: string;
+  providerProfileId: Id | null;
+  modelOverride: string | null;
+  toolPolicy: AgentToolPolicy;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type CreateAgentDefinitionInput = {
+  name: string;
+  description?: string;
+  instructions: string;
+  providerProfileId?: Id | null;
+  modelOverride?: string | null;
+  toolPolicy?: Partial<AgentToolPolicy>;
+};
+
+export type AgentInstanceStatus =
+  | "idle"
+  | "running"
+  | "waiting"
+  | "offline"
+  | "disabled";
+
+export type AgentInstance = {
+  id: Id;
+  workspaceId: Id;
+  agentDefinitionId: Id;
+  runtimeNodeId: Id;
+  nameOverride: string | null;
+  status: AgentInstanceStatus;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type CreateAgentInstanceInput = {
+  workspaceId: Id;
+  agentDefinitionId: Id;
+  runtimeNodeId: Id;
+  nameOverride?: string | null;
+};
+
+export type RuntimeNodeKind = "local" | "remote";
+export type RuntimeNodeStatus = "online" | "offline" | "unknown";
+
+export type RuntimeCapabilities = {
+  nativeAgents: boolean;
+  cliAgents: boolean;
+  fileTools: boolean;
+  commandTools: boolean;
+  persistentRuns: boolean;
+};
+
+export type RuntimeNode = {
+  id: Id;
+  name: string;
+  kind: RuntimeNodeKind;
+  baseUrl: string | null;
+  hasCredential: boolean;
+  status: RuntimeNodeStatus;
+  capabilities: RuntimeCapabilities;
+  lastSeenAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type SaveRuntimeNodeInput = {
+  id?: Id;
+  name: string;
+  kind: RuntimeNodeKind;
+  baseUrl?: string | null;
+  credential?: string;
+  clearCredential?: boolean;
+};
+
+export type RuntimeConnectionResult = {
+  ok: true;
+  latencyMs: number;
+  status: "online";
+  capabilities: RuntimeCapabilities;
+  message: string;
+};
+
+export type TaskStatus =
+  | "draft"
+  | "ready"
+  | "running"
+  | "waiting-input"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "archived";
+
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
+
+export type WorkspaceTask = {
+  id: Id;
+  workspaceId: Id;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+  completedAt: IsoDateTime | null;
+};
+
+export type CreateTaskInput = {
+  workspaceId: Id;
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+};
+
+export type AssignmentStatus =
+  | "pending"
+  | "running"
+  | "waiting-input"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type TaskAssignment = {
+  id: Id;
+  taskId: Id;
+  agentInstanceId: Id;
+  threadId: Id | null;
+  role: string;
+  position: number;
+  status: AssignmentStatus;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type CreateTaskAssignmentInput = {
+  taskId: Id;
+  agentInstanceId: Id;
+  threadId?: Id | null;
+  role?: string;
+  position?: number;
+};
+
+export type ArtifactKind = "text" | "markdown" | "report" | "file";
+
+export type Artifact = {
+  id: Id;
+  workspaceId: Id;
+  taskId: Id;
+  assignmentId: Id | null;
+  runId: Id | null;
+  agentInstanceId: Id;
+  kind: ArtifactKind;
+  title: string;
+  mimeType: string;
+  content: string | null;
+  filePath: string | null;
+  version: number;
+  createdAt: IsoDateTime;
+};
+
+export type CreateArtifactInput = {
+  workspaceId: Id;
+  taskId: Id;
+  assignmentId?: Id | null;
+  runId?: Id | null;
+  agentInstanceId: Id;
+  kind: ArtifactKind;
+  title: string;
+  mimeType: string;
+  content?: string | null;
+  filePath?: string | null;
+};
+
+export type HandoffStatus = "pending" | "accepted" | "rejected";
+
+export type AgentHandoff = {
+  id: Id;
+  workspaceId: Id;
+  taskId: Id;
+  fromAgentInstanceId: Id;
+  toAgentInstanceId: Id;
+  sourceRunId: Id | null;
+  contextRevisionId: Id;
+  summary: string;
+  status: HandoffStatus;
+  createdAt: IsoDateTime;
+  resolvedAt: IsoDateTime | null;
+};
+
+export type CreateHandoffInput = {
+  workspaceId: Id;
+  taskId: Id;
+  fromAgentInstanceId: Id;
+  toAgentInstanceId: Id;
+  sourceRunId?: Id | null;
+  contextRevisionId: Id;
+  summary: string;
+};
+
+export type WorkspaceSchedule = {
+  id: Id;
+  workspaceId: Id;
+  agentInstanceId: Id;
+  title: string;
+  prompt: string;
+  cronExpression: string;
+  timeZone: string;
+  enabled: boolean;
+  nextRunAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type CreateScheduleInput = {
+  workspaceId: Id;
+  agentInstanceId: Id;
+  title: string;
+  prompt: string;
+  cronExpression: string;
+  timeZone: string;
+  enabled?: boolean;
+};
+
+export type InboxItemKind =
+  | "approval"
+  | "task-failed"
+  | "task-completed"
+  | "input-required"
+  | "runtime-offline";
+
+export type InboxItemStatus = "unread" | "read" | "resolved";
+
+export type InboxItem = {
+  id: Id;
+  workspaceId: Id;
+  kind: InboxItemKind;
+  status: InboxItemStatus;
+  title: string;
+  summary: string;
+  taskId: Id | null;
+  assignmentId: Id | null;
+  runId: Id | null;
+  approvalId: Id | null;
+  agentInstanceId: Id | null;
+  createdAt: IsoDateTime;
+  resolvedAt: IsoDateTime | null;
+};
+
+export type CreateInboxItemInput = Omit<
+  InboxItem,
+  "id" | "status" | "createdAt" | "resolvedAt"
+>;
+
 export type AgentThread = {
   id: Id;
   projectId: Id;
@@ -130,6 +403,7 @@ export type RunStatus =
   | "preparing"
   | "running"
   | "waiting-approval"
+  | "waiting-input"
   | "cancelling"
   | "completed"
   | "failed"
@@ -159,6 +433,16 @@ export type AgentRun = {
   completedAt: IsoDateTime | null;
   error: string | null;
   createdAt: IsoDateTime;
+};
+
+export type RemoteRunBinding = {
+  runId: Id;
+  runtimeNodeId: Id;
+  remoteRunId: Id;
+  lastSequence: number;
+  resultImportedAt: IsoDateTime | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
 };
 
 export type ToolCallStatus =
@@ -204,13 +488,27 @@ export type PendingApprovalItem = {
 
 export type ContextRevision = {
   id: Id;
+  workspaceId: Id;
+  /** Temporary v2 compatibility alias. */
   projectId: Id;
   version: number;
   parentId: Id | null;
+  scope: "workspace" | "task";
+  taskId: Id | null;
+  title: string;
   content: string;
   sourceThreadId: Id | null;
   sourceRunId: Id | null;
+  sourceAgentInstanceId: Id | null;
+  sourceArtifactId: Id | null;
+  publishedBy: "user" | "agent";
   createdAt: IsoDateTime;
+};
+
+export type ContextRevisionUse = {
+  contextRevisionId: Id;
+  runId: Id;
+  usedAt: IsoDateTime;
 };
 
 export type RunEvent =
@@ -253,6 +551,17 @@ export type RunEvent =
     };
 
 export type WorkspaceSnapshot = {
+  workspaces: Workspace[];
+  runtimeNodes: RuntimeNode[];
+  agentDefinitions: AgentDefinition[];
+  agentInstances: AgentInstance[];
+  tasks: WorkspaceTask[];
+  assignments: TaskAssignment[];
+  artifacts: Artifact[];
+  handoffs: AgentHandoff[];
+  schedules: WorkspaceSchedule[];
+  inboxItems: InboxItem[];
+  /** Temporary v2 compatibility collections used by the current renderer. */
   projects: Project[];
   providerProfiles: ProviderProfile[];
   agentProfiles: AgentProfile[];
@@ -261,6 +570,42 @@ export type WorkspaceSnapshot = {
   recentRuns: AgentRun[];
   pendingApprovals: PendingApprovalItem[];
 };
+
+export function countWorkspacePendingAttention(input: {
+  workspaceId: Id | null;
+  threads: ReadonlyArray<Pick<AgentThread, "id" | "projectId">>;
+  runs: ReadonlyArray<Pick<AgentRun, "id" | "threadId">>;
+  approvals: ReadonlyArray<{
+    approval: Pick<ToolApproval, "runId">;
+  }>;
+  inboxItems: ReadonlyArray<
+    Pick<InboxItem, "workspaceId" | "status" | "kind">
+  >;
+}): number {
+  if (!input.workspaceId) {
+    return 0;
+  }
+  const threadIds = new Set(
+    input.threads
+      .filter((thread) => thread.projectId === input.workspaceId)
+      .map((thread) => thread.id),
+  );
+  const runIds = new Set(
+    input.runs
+      .filter((run) => threadIds.has(run.threadId))
+      .map((run) => run.id),
+  );
+  const approvals = input.approvals.filter(
+    (item) => runIds.has(item.approval.runId),
+  ).length;
+  const inboxItems = input.inboxItems.filter(
+    (item) =>
+      item.workspaceId === input.workspaceId &&
+      item.status !== "resolved" &&
+      item.kind !== "approval",
+  ).length;
+  return approvals + inboxItems;
+}
 
 export type CreateProjectInput = {
   name?: string;
@@ -271,6 +616,7 @@ export type CreateAgentProfileInput = {
   projectId: Id;
   name: string;
   runtimeKind?: AgentRuntimeKind;
+  runtimeNodeId?: Id;
   instructions: string;
   providerProfileId?: Id | null;
   modelOverride?: string | null;
@@ -289,18 +635,48 @@ export type StartRunInput = {
   prompt: string;
 };
 
+const TASK_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
+  draft: new Set(["ready", "cancelled", "archived"]),
+  ready: new Set(["running", "cancelled", "archived"]),
+  running: new Set([
+    "waiting-input",
+    "blocked",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  "waiting-input": new Set(["running", "blocked", "cancelled"]),
+  blocked: new Set(["ready", "running", "cancelled", "archived"]),
+  completed: new Set(["ready", "archived"]),
+  failed: new Set(["ready", "archived"]),
+  cancelled: new Set(["ready", "archived"]),
+  archived: new Set(),
+};
+
+export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
+  return TASK_TRANSITIONS[from].has(to);
+}
+
+export function assertTaskTransition(from: TaskStatus, to: TaskStatus): void {
+  if (!canTransitionTask(from, to)) {
+    throw new Error(`Invalid task status transition: ${from} -> ${to}`);
+  }
+}
+
 const RUN_TRANSITIONS: Record<RunStatus, ReadonlySet<RunStatus>> = {
   queued: new Set(["preparing", "cancelling", "cancelled", "failed", "interrupted"]),
   preparing: new Set(["running", "cancelling", "failed", "interrupted"]),
   running: new Set([
     "waiting-approval",
+    "waiting-input",
     "cancelling",
     "completed",
     "failed",
     "interrupted",
   ]),
   "waiting-approval": new Set(["running", "cancelling", "failed", "interrupted"]),
-  cancelling: new Set(["cancelled", "failed", "interrupted"]),
+  "waiting-input": new Set(["running", "cancelling", "failed", "interrupted"]),
+  cancelling: new Set(["completed", "cancelled", "failed", "interrupted"]),
   completed: new Set(),
   failed: new Set(),
   cancelled: new Set(),

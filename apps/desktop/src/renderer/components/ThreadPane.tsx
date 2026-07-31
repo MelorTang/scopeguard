@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleAlert,
   FileText,
+  ListTodo,
   Play,
   RotateCcw,
   Send,
@@ -27,6 +28,7 @@ import type {
 } from "@scopeguard/domain";
 
 import type { WorkspaceController } from "../useWorkspace.js";
+import { formatRunStatus, formatToolName } from "../uiText.js";
 import { MarkdownText } from "./MarkdownText.js";
 
 export function ThreadPane(props: {
@@ -44,7 +46,23 @@ export function ThreadPane(props: {
   const provider = snapshot?.providerProfiles.find(
     (profile) => profile.id === agent?.providerProfileId,
   );
+  const assignment = snapshot?.assignments.find(
+    (item) => item.threadId === thread.id,
+  );
+  const task = snapshot?.tasks.find(
+    (item) => item.id === (assignment?.taskId ?? thread.id),
+  );
+  const agentInstance = snapshot?.agentInstances.find(
+    (item) => item.id === assignment?.agentInstanceId,
+  );
+  const agentDefinition = snapshot?.agentDefinitions.find(
+    (item) => item.id === agentInstance?.agentDefinitionId,
+  );
+  const runtimeNode = snapshot?.runtimeNodes.find(
+    (item) => item.id === agentInstance?.runtimeNodeId,
+  );
   const run = workspace.getRunForThread(thread.id);
+  const waitingForInput = run?.status === "waiting-input";
   const latestRun = workspace.getLatestRunForThread(thread.id);
   const messages = workspace.messagesByThread[thread.id] ?? [];
   const stream = workspace.streamingByThread[thread.id] ?? "";
@@ -114,7 +132,7 @@ export function ThreadPane(props: {
 
   const send = async () => {
     const prompt = draft.trim();
-    if (!prompt || run || sending) {
+    if (!prompt || (run && !waitingForInput) || sending) {
       return;
     }
     setSending(true);
@@ -134,22 +152,21 @@ export function ThreadPane(props: {
     <section
       id={`thread-panel-${thread.id}`}
       className={`thread-pane ${props.active ? "is-active" : ""}`}
-      role="tabpanel"
-      aria-labelledby={`thread-tab-${thread.id}`}
-      aria-label={`${thread.title}, pane ${props.paneIndex + 1}`}
+      role="region"
+      aria-label={`${task?.title ?? thread.title}，第 ${props.paneIndex + 1} 个窗格`}
       onPointerDownCapture={props.onActivate}
       onFocusCapture={props.onActivate}
     >
       <header className="thread-pane-header">
         <div className="agent-avatar" aria-hidden="true">
-          <Bot size={16} />
+          <ListTodo size={16} />
         </div>
         <div className="thread-pane-heading">
-          <strong>{thread.title}</strong>
+          <strong>{task?.title ?? thread.title}</strong>
           <span>
-            {agent?.name ?? "Agent"}
+            {agentDefinition?.name ?? agent?.name ?? "Agent"}
             {workspace.professionalMode && provider
-              ? ` · ${agent?.modelOverride ?? provider.defaultModel}`
+              ? ` · ${runtimeNode?.name ?? "本机"} · ${agent?.modelOverride ?? provider.defaultModel}`
               : ""}
           </span>
         </div>
@@ -159,8 +176,8 @@ export function ThreadPane(props: {
             className="icon-button"
             type="button"
             onClick={() => void workspace.cancelRun(run.id)}
-            title="Stop Run"
-            aria-label="Stop Run"
+            title="停止运行"
+            aria-label="停止运行"
           >
             <Square size={15} fill="currentColor" />
           </button>
@@ -171,8 +188,8 @@ export function ThreadPane(props: {
         {messages.length === 0 && !stream ? (
           <div className="thread-empty">
             <Bot size={22} />
-            <strong>{agent?.name ?? "Agent"}</strong>
-            <span>Start a conversation in this Project.</span>
+            <strong>{agentDefinition?.name ?? agent?.name ?? "Agent"}</strong>
+            <span>输入任务要求，Agent 的工作只进入当前上下文。</span>
           </div>
         ) : (
           messages.map((message) => (
@@ -200,7 +217,7 @@ export function ThreadPane(props: {
           />
         ))}
         <div className="sr-only" aria-live="polite">
-          {run ? `Agent Run ${run.status}` : "Agent idle"}
+          {run ? `Agent 状态：${formatRunStatus(run.status)}` : "Agent 空闲"}
         </div>
       </div>
 
@@ -213,10 +230,10 @@ export function ThreadPane(props: {
             <span>
               <strong>
                 {latestRun.status === "interrupted"
-                  ? "Run interrupted"
-                  : "Run failed"}
+                  ? "运行已中断"
+                  : "运行失败"}
               </strong>
-              {latestRun.error ?? "The Run did not complete."}
+              {latestRun.error ?? "本次运行未能完成。"}
             </span>
             <button
               type="button"
@@ -233,7 +250,7 @@ export function ThreadPane(props: {
               }}
             >
               <RotateCcw size={14} />
-              Retry
+              重试
             </button>
           </div>
         )}
@@ -245,19 +262,27 @@ export function ThreadPane(props: {
               type="button"
               className="icon-button icon-button--small"
               onClick={() => setError(null)}
-              aria-label="Dismiss error"
+              aria-label="关闭错误提示"
             >
               <X size={14} />
             </button>
           </div>
         )}
-        <div className={`composer ${run ? "composer--disabled" : ""}`}>
+        <div
+          className={`composer ${run && !waitingForInput ? "composer--disabled" : ""}`}
+        >
           <textarea
             value={draft}
             rows={2}
             maxLength={100_000}
-            placeholder={run ? "Agent is working…" : `Message ${agent?.name ?? "Agent"}`}
-            disabled={Boolean(run)}
+            placeholder={
+              waitingForInput
+                ? "补充 Agent 继续任务所需的信息"
+                : run
+                ? "Agent 正在处理…"
+                : `向 ${agentDefinition?.name ?? agent?.name ?? "Agent"} 补充任务要求`
+            }
+            disabled={Boolean(run && !waitingForInput)}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -265,15 +290,15 @@ export function ThreadPane(props: {
                 void send();
               }
             }}
-            aria-label={`Message ${agent?.name ?? "Agent"}`}
+            aria-label={`发送消息给 ${agentDefinition?.name ?? agent?.name ?? "Agent"}`}
           />
           <button
             type="button"
             className="composer-send"
-            disabled={!draft.trim() || Boolean(run) || sending}
+            disabled={!draft.trim() || Boolean(run && !waitingForInput) || sending}
             onClick={() => void send()}
-            aria-label="Send message"
-            title="Send"
+            aria-label="发送消息"
+            title="发送"
           >
             <Send size={17} />
           </button>
@@ -288,10 +313,10 @@ function Message(props: {
   showTechnicalDetails: boolean;
 }): JSX.Element {
   const label = props.message.role === "user"
-    ? "You"
+    ? "你"
     : props.message.role === "assistant"
       ? "Agent"
-      : "Tool";
+      : "工具";
   return (
     <article className={`message message--${props.message.role}`}>
       <div className="message-role">{label}</div>
@@ -325,7 +350,7 @@ function MessageBlock(props: {
             : <FileText size={15} />}
         </span>
         <span>
-          <strong>{humanizeToolName(block.name)}</strong>
+          <strong>{formatToolName(block.name)}</strong>
           {props.showTechnicalDetails && (
             <code>{summarizeArguments(block.arguments)}</code>
           )}
@@ -339,7 +364,7 @@ function MessageBlock(props: {
       <span>{block.isError ? <CircleAlert size={15} /> : <Check size={15} />}</span>
       {props.showTechnicalDetails || block.isError
         ? <pre>{block.output}</pre>
-        : <span className="tool-result__summary">Completed</span>}
+        : <span className="tool-result__summary">已完成</span>}
     </div>
   );
 }
@@ -375,7 +400,7 @@ function ApprovalCard(props: {
     <section
       id={`approval-${props.item.approval.id}`}
       className="approval-card"
-      aria-label="Tool approval required"
+      aria-label="需要工具审批"
     >
       <header>
         <span className="approval-card__icon">
@@ -384,8 +409,8 @@ function ApprovalCard(props: {
             : <FileText size={16} />}
         </span>
         <div>
-          <strong>Approval required</strong>
-          <span>{humanizeToolName(props.item.toolCall.name)}</span>
+          <strong>需要审批</strong>
+          <span>{formatToolName(props.item.toolCall.name)}</span>
         </div>
       </header>
       <p>{props.item.approval.reason}</p>
@@ -399,7 +424,7 @@ function ApprovalCard(props: {
           onClick={() => void decide("denied")}
         >
           <X size={15} />
-          Deny
+          拒绝
         </button>
         <button
           type="button"
@@ -408,7 +433,7 @@ function ApprovalCard(props: {
           onClick={() => void decide("approved-once")}
         >
           <Play size={15} />
-          Allow once
+          仅本次允许
         </button>
       </footer>
     </section>
@@ -422,23 +447,9 @@ function RunState(props: { status: string | null }): JSX.Element | null {
   return (
     <span className={`run-state run-state--${props.status}`}>
       <span />
-      {formatStatus(props.status)}
+      {formatRunStatus(props.status)}
     </span>
   );
-}
-
-function formatStatus(value: string): string {
-  return value
-    .split("-")
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
-
-function humanizeToolName(name: string): string {
-  return name
-    .split("_")
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
 }
 
 function summarizeArguments(value: Record<string, unknown>): string {

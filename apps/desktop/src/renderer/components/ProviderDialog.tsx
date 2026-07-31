@@ -9,8 +9,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { ProviderProfile } from "@scopeguard/domain";
-import type { SaveProviderProfileRequest } from "@scopeguard/ipc-contracts";
+import type {
+  ProviderProfileView,
+  SaveProviderProfileRequest,
+} from "@scopeguard/ipc-contracts";
 
 import type { WorkspaceController } from "../useWorkspace.js";
 import { Modal } from "./Modal.js";
@@ -83,7 +85,7 @@ export function ProviderDialog(props: {
 
   const testConnection = async () => {
     if (!request.value) {
-      setStatus({ kind: "error", message: request.error ?? "Invalid settings." });
+      setStatus({ kind: "error", message: request.error ?? "配置无效。" });
       return;
     }
     setTesting(true);
@@ -94,7 +96,7 @@ export function ProviderDialog(props: {
       if (testedRevision === formRevision.current) {
         setStatus({
           kind: "success",
-          message: `${result.message} ${result.latencyMs} ms`,
+          message: `连接成功，延迟 ${result.latencyMs} 毫秒。`,
         });
       }
     } catch (error) {
@@ -111,7 +113,7 @@ export function ProviderDialog(props: {
 
   const save = async () => {
     if (!request.value) {
-      setStatus({ kind: "error", message: request.error ?? "Invalid settings." });
+      setStatus({ kind: "error", message: request.error ?? "配置无效。" });
       return;
     }
     setSaving(true);
@@ -120,7 +122,7 @@ export function ProviderDialog(props: {
       const saved = await props.workspace.saveProvider(request.value);
       setCreatingNew(false);
       setForm(fromProvider(saved));
-      setStatus({ kind: "success", message: "Provider saved." });
+      setStatus({ kind: "success", message: "模型服务已保存。" });
     } catch (error) {
       setStatus({
         kind: "error",
@@ -141,7 +143,7 @@ export function ProviderDialog(props: {
   return (
     <Modal
       open={props.open}
-      title="Providers"
+      title="模型服务"
       width="large"
       onClose={close}
     >
@@ -158,7 +160,7 @@ export function ProviderDialog(props: {
             }}
           >
             <Plus size={15} />
-            Add provider
+            添加模型服务
           </button>
           <div className="provider-list-items">
             {providers.map((provider) => (
@@ -180,7 +182,7 @@ export function ProviderDialog(props: {
                   <strong>{provider.name}</strong>
                   <small>{provider.defaultModel}</small>
                 </span>
-                {provider.apiKeyRef && <KeyRound size={13} />}
+                {provider.hasApiKey && <KeyRound size={13} />}
               </button>
             ))}
           </div>
@@ -195,7 +197,7 @@ export function ProviderDialog(props: {
         >
           <div className="form-grid form-grid--two">
             <label>
-              <span>Name</span>
+              <span>服务名称</span>
               <input
                 value={form.name}
                 maxLength={200}
@@ -205,12 +207,12 @@ export function ProviderDialog(props: {
                     name: event.target.value,
                   }))
                 }
-                placeholder="Company relay"
+                placeholder="公司中转服务"
                 required
               />
             </label>
             <fieldset className="form-fieldset">
-              <legend>Protocol</legend>
+              <legend>接口协议</legend>
               <div className="segmented-control">
                 <button
                   type="button"
@@ -224,7 +226,7 @@ export function ProviderDialog(props: {
                     }))
                   }
                 >
-                  OpenAI-compatible
+                  OpenAI 兼容
                 </button>
                 <button
                   type="button"
@@ -238,13 +240,13 @@ export function ProviderDialog(props: {
                     }))
                   }
                 >
-                  Anthropic-compatible
+                  Anthropic 兼容
                 </button>
               </div>
             </fieldset>
           </div>
           <label>
-            <span>Base URL</span>
+            <span>接口地址</span>
             <input
               type="url"
               value={form.baseUrl}
@@ -261,7 +263,7 @@ export function ProviderDialog(props: {
           </label>
           <div className="form-grid form-grid--two">
             <label>
-              <span>Model</span>
+              <span>模型</span>
               <input
                 value={form.defaultModel}
                 maxLength={512}
@@ -288,12 +290,14 @@ export function ProviderDialog(props: {
                     clearApiKey: false,
                   }))
                 }
-                placeholder={form.id ? "Keep existing key" : "Optional for local endpoints"}
+                placeholder={
+                  form.id ? "留空则保留现有 Key" : "本地接口可以留空"
+                }
                 autoComplete="off"
               />
             </label>
           </div>
-          {form.id && providers.find((provider) => provider.id === form.id)?.apiKeyRef && (
+          {form.id && providers.find((provider) => provider.id === form.id)?.hasApiKey && (
             <label className="checkbox-field">
               <input
                 type="checkbox"
@@ -306,7 +310,7 @@ export function ProviderDialog(props: {
                   }))
                 }
               />
-              <span>Remove saved API key when saving</span>
+              <span>保存时删除现有 API Key</span>
             </label>
           )}
 
@@ -320,7 +324,7 @@ export function ProviderDialog(props: {
                 onClick={() => void testConnection()}
               >
                 <TestTube2 size={15} />
-                {testing ? "Testing…" : "Test connection"}
+                {testing ? "正在测试…" : "测试连接"}
               </button>
               <button
                 type="submit"
@@ -328,7 +332,7 @@ export function ProviderDialog(props: {
                 disabled={saving || testing}
               >
                 <Save size={15} />
-                {saving ? "Saving…" : "Save provider"}
+                {saving ? "正在保存…" : "保存模型服务"}
               </button>
             </div>
           </div>
@@ -354,7 +358,7 @@ function StatusNotice(props: {
   );
 }
 
-function fromProvider(provider: ProviderProfile): ProviderForm {
+function fromProvider(provider: ProviderProfileView): ProviderForm {
   return {
     id: provider.id,
     name: provider.name,

@@ -1,28 +1,64 @@
 import type {
+  AgentDefinition,
+  AgentHandoff,
+  AgentInstance,
   AgentProfile,
   AgentRun,
   AgentThread,
   AgentToolPolicy,
   ApprovalDecision,
+  Artifact,
   CliAgentConfig,
   ContextRevision,
+  CreateAgentDefinitionInput,
+  CreateAgentInstanceInput,
   CreateAgentProfileInput,
+  CreateArtifactInput,
+  CreateHandoffInput,
   CreateProjectInput,
+  CreateScheduleInput,
+  CreateTaskAssignmentInput,
+  CreateTaskInput,
   CreateThreadInput,
+  CreateWorkspaceInput,
   Id,
+  InboxItem,
   Project,
   ProviderConnectionResult,
   ProviderProfile,
   ProviderProfileInput,
   ProviderProtocol,
+  RuntimeConnectionResult,
+  RuntimeNode,
+  SaveRuntimeNodeInput,
   RunEvent,
   StartRunInput,
+  TaskAssignment,
+  TaskStatus,
   ThreadMessage,
+  Workspace,
+  WorkspaceSchedule,
   WorkspaceSnapshot,
+  WorkspaceTask,
 } from "@scopeguard/domain";
 
 export const IPC_CHANNELS = {
   getWorkspaceSnapshot: "scopeguard:workspace:get-snapshot",
+  createWorkspace: "scopeguard:workspace:create",
+  saveRuntimeNode: "scopeguard:runtime:save",
+  testRuntimeConnection: "scopeguard:runtime:test",
+  createAgentDefinition: "scopeguard:agent-definition:create",
+  createAgentInstance: "scopeguard:agent-instance:create",
+  updateAgentInstanceRuntime: "scopeguard:agent-instance:update-runtime",
+  createTask: "scopeguard:task:create",
+  updateTaskStatus: "scopeguard:task:update-status",
+  assignAgentToTask: "scopeguard:task:assign-agent",
+  createArtifact: "scopeguard:artifact:create",
+  getWorkspaceContext: "scopeguard:workspace-context:get",
+  publishWorkspaceContext: "scopeguard:workspace-context:publish",
+  createHandoff: "scopeguard:handoff:create",
+  createSchedule: "scopeguard:schedule:create",
+  resolveInboxItem: "scopeguard:inbox:resolve",
   chooseProjectDirectory: "scopeguard:project:choose-directory",
   addProject: "scopeguard:project:add",
   saveProviderProfile: "scopeguard:provider:save",
@@ -41,6 +77,21 @@ export const IPC_CHANNELS = {
 
 export type AgentHostMethod =
   | "getWorkspaceSnapshot"
+  | "createWorkspace"
+  | "saveRuntimeNode"
+  | "testRuntimeConnection"
+  | "createAgentDefinition"
+  | "createAgentInstance"
+  | "updateAgentInstanceRuntime"
+  | "createTask"
+  | "updateTaskStatus"
+  | "assignAgentToTask"
+  | "createArtifact"
+  | "getWorkspaceContext"
+  | "publishWorkspaceContext"
+  | "createHandoff"
+  | "createSchedule"
+  | "resolveInboxItem"
   | "addProject"
   | "saveProviderProfile"
   | "deleteProviderProfile"
@@ -119,6 +170,29 @@ export type SaveProviderProfileRequest = ProviderProfileInput & {
   clearApiKey?: boolean;
 };
 
+export type UpdateTaskStatusRequest = {
+  taskId: Id;
+  status: TaskStatus;
+};
+
+export type UpdateAgentInstanceRuntimeRequest = {
+  agentInstanceId: Id;
+  runtimeNodeId: Id;
+};
+
+export type PublishWorkspaceContextRequest = {
+  workspaceId: Id;
+  title: string;
+  content: string;
+  scope?: ContextRevision["scope"];
+  taskId?: Id | null;
+  sourceThreadId?: Id | null;
+  sourceRunId?: Id | null;
+  sourceAgentInstanceId?: Id | null;
+  sourceArtifactId?: Id | null;
+  publishedBy: ContextRevision["publishedBy"];
+};
+
 export type UpdateProjectContextRequest = {
   projectId: Id;
   content: string;
@@ -131,13 +205,72 @@ export type ResolveApprovalRequest = {
   decision: ApprovalDecision;
 };
 
+export type ProviderProfileView = Omit<ProviderProfile, "apiKeyRef"> & {
+  hasApiKey: boolean;
+};
+
+export type DesktopWorkspaceSnapshot = Omit<
+  WorkspaceSnapshot,
+  "providerProfiles"
+> & {
+  providerProfiles: ProviderProfileView[];
+};
+
+export function toProviderProfileView(
+  profile: ProviderProfile,
+): ProviderProfileView {
+  const { apiKeyRef, ...view } = profile;
+  return {
+    ...view,
+    hasApiKey: Boolean(apiKeyRef),
+  };
+}
+
+export function toDesktopWorkspaceSnapshot(
+  snapshot: WorkspaceSnapshot,
+): DesktopWorkspaceSnapshot {
+  return {
+    ...snapshot,
+    providerProfiles: snapshot.providerProfiles.map(toProviderProfileView),
+  };
+}
+
 export type ScopeGuardDesktopApi = {
-  getWorkspaceSnapshot: () => Promise<WorkspaceSnapshot>;
+  getWorkspaceSnapshot: () => Promise<DesktopWorkspaceSnapshot>;
+  createWorkspace: (input: CreateWorkspaceInput) => Promise<Workspace>;
+  saveRuntimeNode: (input: SaveRuntimeNodeInput) => Promise<RuntimeNode>;
+  testRuntimeConnection: (
+    runtimeNodeId: Id,
+  ) => Promise<RuntimeConnectionResult>;
+  createAgentDefinition: (
+    input: CreateAgentDefinitionInput,
+  ) => Promise<AgentDefinition>;
+  createAgentInstance: (
+    input: CreateAgentInstanceInput,
+  ) => Promise<AgentInstance>;
+  updateAgentInstanceRuntime: (
+    input: UpdateAgentInstanceRuntimeRequest,
+  ) => Promise<AgentInstance>;
+  createTask: (input: CreateTaskInput) => Promise<WorkspaceTask>;
+  updateTaskStatus: (
+    request: UpdateTaskStatusRequest,
+  ) => Promise<WorkspaceTask>;
+  assignAgentToTask: (
+    input: CreateTaskAssignmentInput,
+  ) => Promise<TaskAssignment>;
+  createArtifact: (input: CreateArtifactInput) => Promise<Artifact>;
+  getWorkspaceContext: (workspaceId: Id) => Promise<ContextRevision | null>;
+  publishWorkspaceContext: (
+    input: PublishWorkspaceContextRequest,
+  ) => Promise<ContextRevision>;
+  createHandoff: (input: CreateHandoffInput) => Promise<AgentHandoff>;
+  createSchedule: (input: CreateScheduleInput) => Promise<WorkspaceSchedule>;
+  resolveInboxItem: (inboxItemId: Id) => Promise<InboxItem>;
   chooseProjectDirectory: () => Promise<{ canceled: boolean; rootPath?: string }>;
   addProject: (input: CreateProjectInput) => Promise<Project>;
   saveProviderProfile: (
     input: SaveProviderProfileRequest,
-  ) => Promise<ProviderProfile>;
+  ) => Promise<ProviderProfileView>;
   deleteProviderProfile: (providerProfileId: Id) => Promise<void>;
   testProviderConnection: (
     input: SaveProviderProfileRequest,
@@ -157,6 +290,217 @@ export type ScopeGuardDesktopApi = {
   ) => Promise<ContextRevision>;
   subscribeRunEvents: (listener: (event: RunEvent) => void) => () => void;
 };
+
+export function parseCreateWorkspaceInput(value: unknown): CreateWorkspaceInput {
+  const record = requireRecord(value, "Workspace input");
+  return {
+    name: requireString(record.name, "name"),
+    localRootPath: optionalNullableString(
+      record.localRootPath,
+      "localRootPath",
+    ),
+  };
+}
+
+export function parseSaveRuntimeNodeInput(value: unknown): SaveRuntimeNodeInput {
+  const record = requireRecord(value, "Runtime input");
+  const kind = record.kind;
+  if (kind !== "local" && kind !== "remote") {
+    throw new Error("kind must be local or remote.");
+  }
+  return {
+    id: optionalString(record.id, "id"),
+    name: requireString(record.name, "name"),
+    kind,
+    baseUrl: optionalNullableString(record.baseUrl, "baseUrl"),
+    credential: optionalString(record.credential, "credential"),
+    clearCredential: optionalBoolean(record.clearCredential, "clearCredential"),
+  };
+}
+
+export function parseCreateAgentDefinitionInput(
+  value: unknown,
+): CreateAgentDefinitionInput {
+  const record = requireRecord(value, "Agent definition input");
+  return {
+    name: requireString(record.name, "name"),
+    description: optionalString(record.description, "description"),
+    instructions: requireString(record.instructions, "instructions"),
+    providerProfileId: optionalNullableString(
+      record.providerProfileId,
+      "providerProfileId",
+    ),
+    modelOverride: optionalNullableString(record.modelOverride, "modelOverride"),
+    toolPolicy: parsePartialToolPolicy(record.toolPolicy),
+  };
+}
+
+export function parseCreateAgentInstanceInput(
+  value: unknown,
+): CreateAgentInstanceInput {
+  const record = requireRecord(value, "Agent instance input");
+  return {
+    workspaceId: requireString(record.workspaceId, "workspaceId"),
+    agentDefinitionId: requireString(
+      record.agentDefinitionId,
+      "agentDefinitionId",
+    ),
+    runtimeNodeId: requireString(record.runtimeNodeId, "runtimeNodeId"),
+    nameOverride: optionalNullableString(record.nameOverride, "nameOverride"),
+  };
+}
+
+export function parseUpdateAgentInstanceRuntimeRequest(
+  value: unknown,
+): UpdateAgentInstanceRuntimeRequest {
+  const record = requireRecord(value, "Agent Runtime input");
+  return {
+    agentInstanceId: requireNonEmptyString(
+      record.agentInstanceId,
+      "agentInstanceId",
+    ),
+    runtimeNodeId: requireNonEmptyString(record.runtimeNodeId, "runtimeNodeId"),
+  };
+}
+
+export function parseCreateTaskInput(value: unknown): CreateTaskInput {
+  const record = requireRecord(value, "Task input");
+  const priority = record.priority;
+  if (
+    priority !== undefined &&
+    priority !== "low" &&
+    priority !== "normal" &&
+    priority !== "high" &&
+    priority !== "urgent"
+  ) {
+    throw new Error("priority must be low, normal, high, or urgent.");
+  }
+  return {
+    workspaceId: requireString(record.workspaceId, "workspaceId"),
+    title: requireString(record.title, "title"),
+    description: optionalString(record.description, "description"),
+    priority,
+  };
+}
+
+export function parseUpdateTaskStatusRequest(
+  value: unknown,
+): UpdateTaskStatusRequest {
+  const record = requireRecord(value, "Task status input");
+  return {
+    taskId: requireString(record.taskId, "taskId"),
+    status: parseTaskStatus(record.status),
+  };
+}
+
+export function parseCreateTaskAssignmentInput(
+  value: unknown,
+): CreateTaskAssignmentInput {
+  const record = requireRecord(value, "Task assignment input");
+  const position = optionalInteger(record.position, "position");
+  if (position !== undefined && position < 0) {
+    throw new Error("position must not be negative.");
+  }
+  return {
+    taskId: requireString(record.taskId, "taskId"),
+    agentInstanceId: requireString(record.agentInstanceId, "agentInstanceId"),
+    threadId: optionalNullableString(record.threadId, "threadId"),
+    role: optionalString(record.role, "role"),
+    position,
+  };
+}
+
+export function parseCreateArtifactInput(value: unknown): CreateArtifactInput {
+  const record = requireRecord(value, "Artifact input");
+  const kind = record.kind;
+  if (
+    kind !== "text" &&
+    kind !== "markdown" &&
+    kind !== "report" &&
+    kind !== "file"
+  ) {
+    throw new Error("kind must be text, markdown, report, or file.");
+  }
+  return {
+    workspaceId: requireString(record.workspaceId, "workspaceId"),
+    taskId: requireString(record.taskId, "taskId"),
+    assignmentId: optionalNullableString(record.assignmentId, "assignmentId"),
+    runId: optionalNullableString(record.runId, "runId"),
+    agentInstanceId: requireString(record.agentInstanceId, "agentInstanceId"),
+    kind,
+    title: requireString(record.title, "title"),
+    mimeType: requireString(record.mimeType, "mimeType"),
+    content: optionalNullableString(record.content, "content"),
+    filePath: optionalNullableString(record.filePath, "filePath"),
+  };
+}
+
+export function parsePublishWorkspaceContextRequest(
+  value: unknown,
+): PublishWorkspaceContextRequest {
+  const record = requireRecord(value, "Workspace Context input");
+  const scope = record.scope;
+  if (scope !== undefined && scope !== "workspace" && scope !== "task") {
+    throw new Error("scope must be workspace or task.");
+  }
+  const publishedBy = record.publishedBy;
+  if (publishedBy !== "user" && publishedBy !== "agent") {
+    throw new Error("publishedBy must be user or agent.");
+  }
+  return {
+    workspaceId: requireString(record.workspaceId, "workspaceId"),
+    title: requireString(record.title, "title"),
+    content: requireString(record.content, "content"),
+    scope,
+    taskId: optionalNullableString(record.taskId, "taskId"),
+    sourceThreadId: optionalNullableString(record.sourceThreadId, "sourceThreadId"),
+    sourceRunId: optionalNullableString(record.sourceRunId, "sourceRunId"),
+    sourceAgentInstanceId: optionalNullableString(
+      record.sourceAgentInstanceId,
+      "sourceAgentInstanceId",
+    ),
+    sourceArtifactId: optionalNullableString(
+      record.sourceArtifactId,
+      "sourceArtifactId",
+    ),
+    publishedBy,
+  };
+}
+
+export function parseCreateHandoffInput(value: unknown): CreateHandoffInput {
+  const record = requireRecord(value, "Handoff input");
+  return {
+    workspaceId: requireString(record.workspaceId, "workspaceId"),
+    taskId: requireString(record.taskId, "taskId"),
+    fromAgentInstanceId: requireString(
+      record.fromAgentInstanceId,
+      "fromAgentInstanceId",
+    ),
+    toAgentInstanceId: requireString(
+      record.toAgentInstanceId,
+      "toAgentInstanceId",
+    ),
+    sourceRunId: optionalNullableString(record.sourceRunId, "sourceRunId"),
+    contextRevisionId: requireString(
+      record.contextRevisionId,
+      "contextRevisionId",
+    ),
+    summary: requireString(record.summary, "summary"),
+  };
+}
+
+export function parseCreateScheduleInput(value: unknown): CreateScheduleInput {
+  const record = requireRecord(value, "Schedule input");
+  return {
+    workspaceId: requireString(record.workspaceId, "workspaceId"),
+    agentInstanceId: requireString(record.agentInstanceId, "agentInstanceId"),
+    title: requireString(record.title, "title"),
+    prompt: requireString(record.prompt, "prompt"),
+    cronExpression: requireString(record.cronExpression, "cronExpression"),
+    timeZone: requireString(record.timeZone, "timeZone"),
+    enabled: optionalBoolean(record.enabled, "enabled"),
+  };
+}
 
 export function parseCreateProjectInput(value: unknown): CreateProjectInput {
   const record = requireRecord(value, "Project input");
@@ -195,6 +539,7 @@ export function parseCreateAgentProfileInput(
     projectId: requireString(record.projectId, "projectId"),
     name: requireString(record.name, "name"),
     runtimeKind,
+    runtimeNodeId: optionalString(record.runtimeNodeId, "runtimeNodeId"),
     instructions: requireString(record.instructions, "instructions"),
     providerProfileId: optionalNullableString(
       record.providerProfileId,
@@ -250,7 +595,7 @@ export function parseUpdateProjectContextRequest(
 }
 
 export function parseId(value: unknown, field = "id"): Id {
-  return requireString(value, field);
+  return requireNonEmptyString(value, field);
 }
 
 export function isRunEvent(value: unknown): value is RunEvent {
@@ -280,6 +625,23 @@ function parseProviderProtocol(value: unknown): ProviderProtocol {
   throw new Error(
     "protocol must be openai-compatible or anthropic-compatible.",
   );
+}
+
+function parseTaskStatus(value: unknown): TaskStatus {
+  if (
+    value === "draft" ||
+    value === "ready" ||
+    value === "running" ||
+    value === "waiting-input" ||
+    value === "blocked" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled" ||
+    value === "archived"
+  ) {
+    return value;
+  }
+  throw new Error("status is not a valid Task status.");
 }
 
 function parsePartialToolPolicy(
@@ -353,6 +715,14 @@ function requireString(value: unknown, field: string): string {
   return value;
 }
 
+function requireNonEmptyString(value: unknown, field: string): string {
+  const result = requireString(value, field);
+  if (!result.trim()) {
+    throw new Error(`${field} must not be empty.`);
+  }
+  return result;
+}
+
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -376,6 +746,16 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined {
   }
   if (typeof value !== "boolean") {
     throw new Error(`${field} must be a boolean.`);
+  }
+  return value;
+}
+
+function optionalInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error(`${field} must be an integer.`);
   }
   return value;
 }

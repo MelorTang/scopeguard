@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import process from "node:process";
 
 import {
+  type PublishWorkspaceContextInput,
   ScopeGuardApplication,
   type SaveProviderProfileInput,
   type SecretVault,
@@ -13,26 +14,40 @@ import {
 import {
   createProviderAdapter,
 } from "@scopeguard/provider-adapters";
+import { HttpRemoteRuntimeClient } from "@scopeguard/remote-runtime";
 import { ScopeGuardStore } from "@scopeguard/storage-sqlite";
 import {
   ScopeGuardToolRegistry,
   shutdownRunningCommands,
 } from "@scopeguard/tool-runtime";
-import type {
-  AgentHostRequest,
-  AgentHostResponse,
-  AgentHostSecretRequest,
-  AgentHostSecretResponse,
-  AgentHostToMainMessage,
-  MainToAgentHostMessage,
-  ResolveApprovalRequest,
-  UpdateProjectContextRequest,
+import {
+  toDesktopWorkspaceSnapshot,
+  toProviderProfileView,
+  type UpdateTaskStatusRequest,
+  type UpdateAgentInstanceRuntimeRequest,
+  type AgentHostRequest,
+  type AgentHostResponse,
+  type AgentHostSecretRequest,
+  type AgentHostSecretResponse,
+  type AgentHostToMainMessage,
+  type MainToAgentHostMessage,
+  type ResolveApprovalRequest,
+  type UpdateProjectContextRequest,
 } from "@scopeguard/ipc-contracts";
 import type {
+  CreateAgentDefinitionInput,
+  CreateAgentInstanceInput,
   CreateAgentProfileInput,
+  CreateArtifactInput,
+  CreateHandoffInput,
   CreateProjectInput,
+  CreateScheduleInput,
+  CreateTaskAssignmentInput,
+  CreateTaskInput,
   CreateThreadInput,
+  CreateWorkspaceInput,
   Id,
+  SaveRuntimeNodeInput,
   StartRunInput,
 } from "@scopeguard/domain";
 
@@ -142,6 +157,8 @@ const application = new ScopeGuardApplication({
         onOutput,
       }),
   },
+  remoteClientFactory: ({ baseUrl, token }) =>
+    new HttpRemoteRuntimeClient({ baseUrl, token }),
   publish: (event) => {
     parentPort.postMessage({
       type: "host-run-event",
@@ -170,6 +187,7 @@ parentPort.postMessage({
   type: "host-ready",
   interruptedRuns: initialized.interruptedRuns,
 } satisfies AgentHostToMainMessage);
+application.resumeRemoteRuns();
 
 let shuttingDown = false;
 process.once("SIGINT", () => {
@@ -218,12 +236,59 @@ async function handleRequest(request: AgentHostRequest): Promise<void> {
 async function dispatch(request: AgentHostRequest): Promise<unknown> {
   switch (request.method) {
     case "getWorkspaceSnapshot":
-      return application.getWorkspaceSnapshot();
+      return toDesktopWorkspaceSnapshot(application.getWorkspaceSnapshot());
+    case "createWorkspace":
+      return application.createWorkspace(request.payload as CreateWorkspaceInput);
+    case "saveRuntimeNode":
+      return application.saveRuntimeNode(request.payload as SaveRuntimeNodeInput);
+    case "testRuntimeConnection":
+      return application.testRuntimeConnection(request.payload as Id);
+    case "createAgentDefinition":
+      return application.createAgentDefinition(
+        request.payload as CreateAgentDefinitionInput,
+      );
+    case "createAgentInstance":
+      return application.createAgentInstance(
+        request.payload as CreateAgentInstanceInput,
+      );
+    case "updateAgentInstanceRuntime": {
+      const input = request.payload as UpdateAgentInstanceRuntimeRequest;
+      return application.updateAgentInstanceRuntime(
+        input.agentInstanceId,
+        input.runtimeNodeId,
+      );
+    }
+    case "createTask":
+      return application.createTask(request.payload as CreateTaskInput);
+    case "updateTaskStatus": {
+      const input = request.payload as UpdateTaskStatusRequest;
+      return application.updateTaskStatus(input.taskId, input.status);
+    }
+    case "assignAgentToTask":
+      return application.assignAgentToTask(
+        request.payload as CreateTaskAssignmentInput,
+      );
+    case "createArtifact":
+      return application.createArtifact(request.payload as CreateArtifactInput);
+    case "getWorkspaceContext":
+      return application.getWorkspaceContext(request.payload as Id);
+    case "publishWorkspaceContext":
+      return application.publishWorkspaceContext(
+        request.payload as PublishWorkspaceContextInput,
+      );
+    case "createHandoff":
+      return application.createHandoff(request.payload as CreateHandoffInput);
+    case "createSchedule":
+      return application.createSchedule(request.payload as CreateScheduleInput);
+    case "resolveInboxItem":
+      return application.resolveInboxItem(request.payload as Id);
     case "addProject":
       return application.addProject(request.payload as CreateProjectInput);
     case "saveProviderProfile":
-      return application.saveProviderProfile(
-        request.payload as SaveProviderProfileInput,
+      return toProviderProfileView(
+        await application.saveProviderProfile(
+          request.payload as SaveProviderProfileInput,
+        ),
       );
     case "deleteProviderProfile":
       return application.deleteProviderProfile(request.payload as Id);

@@ -71,6 +71,41 @@ test("executes an allowed tool and continues the provider loop", async () => {
   assert.equal(provider.requests[1]?.messages.at(-1)?.role, "tool");
 });
 
+test("pauses for explicit user input and continues the same provider loop", async () => {
+  const provider = new SequenceProvider([
+    [
+      {
+        type: "tool-call",
+        toolCall: {
+          id: "provider-input-request",
+          name: "request_user_input",
+          arguments: { question: "Which reporting period should I use?" },
+        },
+      },
+      { type: "completed", finishReason: "tool-calls" },
+    ],
+    [
+      { type: "text-delta", delta: "Using the second quarter." },
+      { type: "completed", finishReason: "stop" },
+    ],
+  ]);
+  const observed = observer("approved-once", "2026 Q2");
+  const result = await new NativeAgentRuntime(
+    provider,
+    new FakeRegistry([]),
+  ).run(runInput(), observed.value);
+
+  assert.equal(result.finalText, "Using the second quarter.");
+  assert.deepEqual(observed.inputQuestions, [
+    "Which reporting period should I use?",
+  ]);
+  assert.deepEqual(observed.statuses, ["running", "succeeded"]);
+  assert.equal(provider.requests[0]?.tools.at(-1)?.name, "request_user_input");
+  const inputResult = provider.requests[1]?.messages.at(-1);
+  assert.equal(inputResult?.role, "tool");
+  assert.equal(inputResult?.content, "2026 Q2");
+});
+
 test("does not execute a tool after the user denies approval", async () => {
   const command = new FakeTool("run_command", "runCommands", {
     output: "should not run",
@@ -308,19 +343,25 @@ function runInput() {
   };
 }
 
-function observer(decision: "approved-once" | "denied" = "approved-once"): {
+function observer(
+  decision: "approved-once" | "denied" = "approved-once",
+  inputAnswer = "User answer",
+): {
   value: NativeAgentRunObserver;
   deltas: string[];
   turns: unknown[];
   statuses: string[];
+  inputQuestions: string[];
 } {
   const deltas: string[] = [];
   const turns: unknown[] = [];
   const statuses: string[] = [];
+  const inputQuestions: string[] = [];
   return {
     deltas,
     turns,
     statuses,
+    inputQuestions,
     value: {
       onTextDelta(delta) {
         deltas.push(delta);
@@ -340,6 +381,10 @@ function observer(decision: "approved-once" | "denied" = "approved-once"): {
       },
       async requestApproval() {
         return decision;
+      },
+      async requestInput({ question }) {
+        inputQuestions.push(question);
+        return inputAnswer;
       },
       onToolResult() {},
     },

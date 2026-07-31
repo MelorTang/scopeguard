@@ -18,6 +18,25 @@ import type {
 
 const DEFAULT_MAX_TOOL_ROUNDS = 12;
 const MAX_ASSISTANT_TEXT_CHARACTERS = 1_000_000;
+const MAX_INPUT_QUESTION_CHARACTERS = 4_000;
+const REQUEST_USER_INPUT_TOOL_NAME = "request_user_input";
+const REQUEST_USER_INPUT_TOOL = {
+  name: REQUEST_USER_INPUT_TOOL_NAME,
+  description:
+    "Pause the current run and ask the user for information that is required to continue.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      question: {
+        type: "string",
+        description: "A concise, specific question for the user.",
+        maxLength: MAX_INPUT_QUESTION_CHARACTERS,
+      },
+    },
+    required: ["question"],
+  },
+};
 
 export type NativeAgentRunInput = {
   projectId: Id;
@@ -30,6 +49,7 @@ export type NativeAgentRunInput = {
   signal: AbortSignal;
   maxToolRounds?: number;
   maxOutputTokens?: number;
+  allowUserInput?: boolean;
 };
 
 export type ObservedToolCall = {
@@ -56,6 +76,10 @@ export interface NativeAgentRunObserver {
     toolCallId: Id;
     description: string;
   }): Promise<ApprovalDecision>;
+  requestInput(input: {
+    toolCallId: Id;
+    question: string;
+  }): Promise<string>;
   onToolResult(input: {
     toolCallId: Id;
     providerCallId: string;
@@ -96,7 +120,10 @@ export class NativeAgentRuntime {
       for await (const event of this.#provider.streamTurn({
         credentials: input.credentials,
         messages: [...messages],
-        tools: this.#tools.definitions(input.toolPolicy),
+        tools: [
+          ...this.#tools.definitions(input.toolPolicy),
+          ...(input.allowUserInput === false ? [] : [REQUEST_USER_INPUT_TOOL]),
+        ],
         maxOutputTokens: input.maxOutputTokens,
         signal: input.signal,
       })) {
@@ -141,9 +168,11 @@ export class NativeAgentRuntime {
           providerCallId: providerCall.id,
           name: providerCall.name,
           arguments: providerCall.arguments,
-          description: tool
-            ? tool.describe(providerCall.arguments, toolContext(input))
-            : `Unknown tool: ${providerCall.name}`,
+          description: providerCall.name === REQUEST_USER_INPUT_TOOL_NAME
+            ? describeInputRequest(providerCall.arguments)
+            : tool
+              ? tool.describe(providerCall.arguments, toolContext(input))
+              : `Unknown tool: ${providerCall.name}`,
         };
       });
       const storedToolCallIds = await observer.onAssistantTurn({
@@ -170,6 +199,50 @@ export class NativeAgentRuntime {
 
       for (const providerCall of toolCalls) {
         throwIfAborted(input.signal);
+        if (
+          providerCall.name === REQUEST_USER_INPUT_TOOL_NAME &&
+          input.allowUserInput !== false
+        ) {
+          const toolCallId = storedToolCallIds[providerCall.id];
+          if (!toolCallId) {
+            throw new Error(
+              `Run observer did not persist provider tool call ${providerCall.id}.`,
+            );
+          }
+          let result: ToolExecutionResult;
+          try {
+            const question = requireInputQuestion(providerCall.arguments);
+            await observer.onToolCallStatus(toolCallId, "running");
+            const answer = await observer.requestInput({ toolCallId, question });
+            throwIfAborted(input.signal);
+            result = { output: answer, isError: false };
+            await observer.onToolCallStatus(toolCallId, "succeeded", result);
+          } catch (error) {
+            if (input.signal.aborted) {
+              await observer.onToolCallStatus(toolCallId, "cancelled");
+              throw input.signal.reason ?? error;
+            }
+            result = {
+              output: error instanceof Error ? error.message : String(error),
+              isError: true,
+            };
+            await observer.onToolCallStatus(toolCallId, "failed", result);
+          }
+          await observer.onToolResult({
+            toolCallId,
+            providerCallId: providerCall.id,
+            name: providerCall.name,
+            result,
+          });
+          messages.push({
+            role: "tool",
+            toolCallId: providerCall.id,
+            name: providerCall.name,
+            content: result.output,
+            isError: result.isError,
+          });
+          continue;
+        }
         const tool = this.#tools.get(providerCall.name);
         const observedCall = observedToolCalls.find(
           (candidate) => candidate.providerCallId === providerCall.id,
@@ -289,6 +362,24 @@ function toolContext(input: NativeAgentRunInput): ToolExecutionContext {
     toolPolicy: input.toolPolicy,
     signal: input.signal,
   };
+}
+
+function describeInputRequest(input: Record<string, unknown>): string {
+  const question = typeof input.question === "string" ? input.question.trim() : "";
+  return question ? `Ask the user: ${question}` : "Ask the user for input";
+}
+
+function requireInputQuestion(input: Record<string, unknown>): string {
+  const question = typeof input.question === "string" ? input.question.trim() : "";
+  if (!question) {
+    throw new Error("request_user_input requires a question.");
+  }
+  if (question.length > MAX_INPUT_QUESTION_CHARACTERS) {
+    throw new Error(
+      `The input question exceeds ${MAX_INPUT_QUESTION_CHARACTERS} characters.`,
+    );
+  }
+  return question;
 }
 
 function throwIfAborted(signal: AbortSignal): void {
