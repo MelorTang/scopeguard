@@ -18,6 +18,7 @@
 
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "onecoreuap.lib")
 #pragma comment(lib, "userenv.lib")
 
 namespace {
