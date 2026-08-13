@@ -22,6 +22,7 @@ Provisioning creates the local `CodexSandboxOffline` and `CodexSandboxOnline` us
 - A sandboxed process cannot terminate a process owned by the parent user.
 - Direct loopback network access is blocked.
 - Child processes remain inside the same boundary.
+- A Win32 boundary probe is kept separate from PowerShell script compatibility so a Harness limitation cannot hide an isolation failure.
 - PowerShell, CMD, Python, and Node-based document-worker, Skill, and stdio-MCP stand-ins run with the same permission profile.
 - The parent environment is allowlisted before launching Codex, so a sentinel secret is not inherited.
 

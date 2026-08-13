@@ -14,7 +14,13 @@ if (-not $IsWindows) {
 }
 
 $prototypeDirectory = $PSScriptRoot
-$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) "scopeguard-windows-sandbox-fixture"
+$fixtureBase = if ($env:RUNNER_TEMP) {
+    $env:RUNNER_TEMP
+}
+else {
+    [IO.Path]::GetTempPath()
+}
+$fixtureRoot = Join-Path $fixtureBase "scopeguard-windows-sandbox-fixture"
 $workspace = Join-Path $fixtureRoot "workspace"
 $outside = Join-Path $fixtureRoot "outside"
 $codexHome = Join-Path $fixtureRoot "codex-home"
@@ -193,6 +199,7 @@ if (Test-Path -LiteralPath $fixtureRoot) {
 New-Item -ItemType Directory -Path $workspace, $outside, $codexHome -Force | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $prototypeDirectory "probe.ps1") -Destination $workspace
+Copy-Item -LiteralPath (Join-Path $prototypeDirectory "boundary-probe.py") -Destination $workspace
 Copy-Item -LiteralPath (Join-Path $prototypeDirectory "worker-probe.js") -Destination $workspace
 Copy-Item -LiteralPath (Join-Path $prototypeDirectory "python-probe.py") -Destination $workspace
 Copy-Item -LiteralPath (Join-Path $prototypeDirectory "cmd-probe.cmd") -Destination $workspace
@@ -208,9 +215,11 @@ New-Item -ItemType HardLink -Path $hardLinkPath -Target $hardLinkTarget | Out-Nu
 
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $pythonPath = (Get-Command python.exe -ErrorAction Stop).Source
+$pwshPath = (Get-Command pwsh.exe -ErrorAction Stop).Source
 $runtimeReadRoots = @(
     (Split-Path -Parent $nodePath),
-    (Split-Path -Parent $pythonPath)
+    (Split-Path -Parent $pythonPath),
+    (Split-Path -Parent $pwshPath)
 ) | Sort-Object -Unique
 
 $filesystemLines = [System.Collections.Generic.List[string]]::new()
@@ -276,32 +285,49 @@ try {
     $checks = [System.Collections.Generic.List[object]]::new()
 
     try {
+        $boundaryResultPath = Join-Path $workspace "boundary-result.json"
+        $boundaryRun = Invoke-SandboxCommand -CommandArguments @(
+            $pythonPath,
+            (Join-Path $workspace "boundary-probe.py"),
+            $workspace,
+            $outside,
+            $outsideSecret,
+            $hardLinkPath,
+            $credentialTarget,
+            $protectedProcess.Id.ToString(),
+            $loopbackPort.ToString(),
+            $boundaryResultPath
+        )
+        $boundarySummary = if (Test-Path -LiteralPath $boundaryResultPath) {
+            Get-Content -LiteralPath $boundaryResultPath -Raw | ConvertFrom-Json
+        }
+        else {
+            $null
+        }
+        Add-Check -Checks $checks -Name "python-os-boundary" -Passed (
+            $null -ne $boundarySummary -and $boundarySummary.passed
+        ) -Detail "exit=$($boundaryRun.exitCode); stderr=$($boundaryRun.stderr.Trim())"
+        if ($null -ne $boundarySummary) {
+            foreach ($probeResult in $boundarySummary.results) {
+                Add-Check -Checks $checks -Name "boundary/$($probeResult.name)" -Passed $probeResult.passed -Detail $probeResult.detail
+            }
+        }
+
+        $powershellAllowed = Join-Path $workspace "powershell-script-output.txt"
+        $powershellDenied = Join-Path $outside "powershell-script-outside.txt"
         $powershellResultPath = Join-Path $workspace "powershell-result.json"
+        $probeScript = (Join-Path $workspace "probe.ps1").Replace("'", "''")
+        $allowedLiteral = $powershellAllowed.Replace("'", "''")
+        $deniedLiteral = $powershellDenied.Replace("'", "''")
+        $resultLiteral = $powershellResultPath.Replace("'", "''")
+        $powershellCommand = "& '$probeScript' -AllowedPath '$allowedLiteral' -DeniedPath '$deniedLiteral' -ResultPath '$resultLiteral'"
         $powershellRun = Invoke-SandboxCommand -CommandArguments @(
-            "powershell.exe",
+            $pwshPath,
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            (Join-Path $workspace "probe.ps1"),
-            "-Workspace",
-            $workspace,
-            "-OutsideDirectory",
-            $outside,
-            "-OutsideSecret",
-            $outsideSecret,
-            "-HardLinkPath",
-            $hardLinkPath,
-            "-CredentialTarget",
-            $credentialTarget,
-            "-ProtectedProcessId",
-            $protectedProcess.Id.ToString(),
-            "-LoopbackPort",
-            $loopbackPort.ToString(),
-            "-ResultPath",
-            $powershellResultPath
+            "-Command",
+            $powershellCommand
         )
         $powershellSummary = if (Test-Path -LiteralPath $powershellResultPath) {
             Get-Content -LiteralPath $powershellResultPath -Raw | ConvertFrom-Json
@@ -309,14 +335,13 @@ try {
         else {
             $null
         }
-        Add-Check -Checks $checks -Name "powershell-os-boundary" -Passed (
-            $null -ne $powershellSummary -and $powershellSummary.passed
+        Add-Check -Checks $checks -Name "powershell-script" -Passed (
+            $powershellRun.exitCode -eq 0 -and
+            $null -ne $powershellSummary -and
+            $powershellSummary.passed -and
+            (Test-Path -LiteralPath $powershellAllowed) -and
+            -not (Test-Path -LiteralPath $powershellDenied)
         ) -Detail "exit=$($powershellRun.exitCode); stderr=$($powershellRun.stderr.Trim())"
-        if ($null -ne $powershellSummary) {
-            foreach ($probeResult in $powershellSummary.results) {
-                Add-Check -Checks $checks -Name "powershell/$($probeResult.name)" -Passed $probeResult.passed -Detail $probeResult.detail
-            }
-        }
 
         $cmdAllowed = Join-Path $workspace "cmd-output.txt"
         $cmdDenied = Join-Path $outside "cmd-outside.txt"
