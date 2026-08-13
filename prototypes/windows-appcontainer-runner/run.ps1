@@ -48,8 +48,8 @@ function Invoke-SandboxCommand {
     $startInfo.FileName = $launcher
     $startInfo.WorkingDirectory = $workspace
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
     $startInfo.CreateNoWindow = $true
     $launcherArguments = @(
         "run",
@@ -95,8 +95,6 @@ function Invoke-SandboxCommand {
     if (-not $process.Start()) {
         throw "Failed to start the AppContainer launcher."
     }
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
     $outerTimeoutMilliseconds = ($TimeoutSeconds + 15) * 1000
     if (-not $process.WaitForExit($outerTimeoutMilliseconds)) {
         $process.Kill($true)
@@ -107,17 +105,10 @@ function Invoke-SandboxCommand {
             stderr = "launcher exceeded the independent PowerShell timeout"
         }
     }
-    if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) {
-        return [ordered]@{
-            exitCode = 125
-            stdout = ""
-            stderr = "launcher descendants retained redirected output handles"
-        }
-    }
     return [ordered]@{
         exitCode = $process.ExitCode
-        stdout = $stdoutTask.Result
-        stderr = $stderrTask.Result
+        stdout = ""
+        stderr = "native output is emitted directly to the job log"
     }
 }
 
