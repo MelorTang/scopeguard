@@ -18,6 +18,7 @@ $workspace = Join-Path $fixtureRoot "workspace"
 $outside = Join-Path $fixtureRoot "outside"
 $resultPath = Join-Path $fixtureRoot "result.json"
 $profileName = "ScopeGuardPrototype_$([guid]::NewGuid().ToString('N'))"
+Write-Host "[$Mode] Building native launcher"
 $launcher = (& (Join-Path $PSScriptRoot "build.ps1")).Trim()
 
 function Invoke-IcaclsGrant {
@@ -96,11 +97,27 @@ function Invoke-SandboxCommand {
     }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
+    $outerTimeoutMilliseconds = ($TimeoutSeconds + 15) * 1000
+    if (-not $process.WaitForExit($outerTimeoutMilliseconds)) {
+        $process.Kill($true)
+        $process.WaitForExit()
+        return [ordered]@{
+            exitCode = 125
+            stdout = ""
+            stderr = "launcher exceeded the independent PowerShell timeout"
+        }
+    }
+    if (-not $stdoutTask.Wait(5000) -or -not $stderrTask.Wait(5000)) {
+        return [ordered]@{
+            exitCode = 125
+            stdout = ""
+            stderr = "launcher descendants retained redirected output handles"
+        }
+    }
     return [ordered]@{
         exitCode = $process.ExitCode
-        stdout = $stdoutTask.GetAwaiter().GetResult()
-        stderr = $stderrTask.GetAwaiter().GetResult()
+        stdout = $stdoutTask.Result
+        stderr = $stderrTask.Result
     }
 }
 
@@ -119,12 +136,14 @@ Set-Content -LiteralPath $hardLinkTarget -Value "hardlink-original" -Encoding ut
 
 $pythonPath = (Get-Command python.exe -ErrorAction Stop).Source
 $pythonRoot = Split-Path -Parent $pythonPath
+Write-Host "[$Mode] Creating AppContainer profile"
 $profileSid = (& $launcher profile --name $profileName).Trim()
 if ($LASTEXITCODE -ne 0 -or $profileSid -notmatch '^S-1-15-2-') {
     throw "Failed to create the AppContainer profile or resolve its package SID."
 }
 
 try {
+    Write-Host "[$Mode] Granting package SID access to workspace and Python runtime"
     Invoke-IcaclsGrant -Path $workspace -Grant "*$($profileSid):(OI)(CI)(M)" -Recursive
     Invoke-IcaclsGrant -Path $pythonRoot -Grant "*$($profileSid):(OI)(CI)(RX)" -Recursive
     New-Item -ItemType Junction -Path (Join-Path $workspace "junction-outside") -Target $outside | Out-Null
@@ -153,6 +172,7 @@ try {
     $env:SCOPEGUARD_SECRET_SENTINEL = "must-not-cross-process-boundary"
 
     try {
+        Write-Host "[$Mode] Launching boundary probe"
         $boundaryResult = Join-Path $workspace "boundary-result.json"
         $run = Invoke-SandboxCommand -CommandArguments @(
             $pythonPath,
@@ -165,7 +185,8 @@ try {
             $protectedProcess.Id.ToString(),
             $loopbackPort.ToString(),
             $boundaryResult
-        )
+        ) -TimeoutSeconds 15
+        Write-Host "[$Mode] Boundary probe launcher exited with $($run.exitCode)"
         $probe = if (Test-Path -LiteralPath $boundaryResult) {
             Get-Content -LiteralPath $boundaryResult -Raw | ConvertFrom-Json
         }
