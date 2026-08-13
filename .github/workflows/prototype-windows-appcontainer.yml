@@ -16,12 +16,6 @@ jobs:
   boundary-matrix:
     runs-on: windows-2022
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        mode:
-          - appcontainer
-          - lpac
 
     steps:
       - name: Check out prototype
@@ -29,14 +23,20 @@ jobs:
 
       - name: Run AppContainer boundary matrix
         shell: pwsh
-        run: pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode ${{ matrix.mode }} -KeepFixture
+        run: pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode appcontainer -KeepFixture
+
+      - name: Run LPAC boundary matrix
+        shell: pwsh
+        run: pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode lpac -KeepFixture
 
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: scopeguard-${{ matrix.mode }}-diagnostics
+          name: scopeguard-appcontainer-diagnostics
           if-no-files-found: warn
           path: |
-            ${{ runner.temp }}\scopeguard-${{ matrix.mode }}-fixture\result.json
-            ${{ runner.temp }}\scopeguard-${{ matrix.mode }}-fixture\workspace\boundary-result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\boundary-result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\boundary-result.json
