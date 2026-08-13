@@ -2,7 +2,7 @@
 
 This throwaway prototype answers one question for [issue #14](https://github.com/MelorTang/scopeguard/issues/14): can ScopeGuard reuse the pinned Codex Windows sandbox as the operating-system boundary for managed local execution?
 
-It deliberately does not integrate the sandbox into the desktop application. It downloads the three signed release artifacts for Codex `0.147.0`, verifies their published SHA-256 digests, provisions the elevated sandbox, and runs ScopeGuard-owned probes.
+It deliberately does not integrate the sandbox into the desktop application. It downloads the three signed release artifacts for Codex `0.147.0`, verifies their published SHA-256 digests, provisions the elevated sandbox, and runs ScopeGuard-owned probes through the binary's internal Windows sandbox wrapper protocol. The public `codex sandbox --permission-profile` path does not forward explicit deny-read paths on Windows in this pinned version, so it is not a valid integration surface for this test.
 
 ## Run
 

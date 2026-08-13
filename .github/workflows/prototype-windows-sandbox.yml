@@ -47,3 +47,4 @@ jobs:
             ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\result.json
             ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\workspace\*-result.json
             ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\codex-home\sandbox\**
+            ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\codex-home\.sandbox\**

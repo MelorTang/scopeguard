@@ -102,27 +102,7 @@ function Invoke-SandboxCommand {
         [int]$TimeoutSeconds = 90
     )
 
-    $arguments = @(
-        "sandbox",
-        "--permission-profile",
-        "scopeguard-prototype",
-        "--cd",
-        $workspace,
-        "--"
-    ) + $CommandArguments
-
-    $startInfo = [Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $codexPath
-    $startInfo.WorkingDirectory = $workspace
-    $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    $startInfo.CreateNoWindow = $true
-    foreach ($argument in $arguments) {
-        $startInfo.ArgumentList.Add($argument)
-    }
-
-    $startInfo.Environment.Clear()
+    $childEnvironment = [ordered]@{}
     $allowedEnvironment = @(
         "ALLUSERSPROFILE",
         "APPDATA",
@@ -155,11 +135,86 @@ function Invoke-SandboxCommand {
     foreach ($name in $allowedEnvironment) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) {
-            $startInfo.Environment[$name] = $value
+            $childEnvironment[$name] = $value
         }
     }
-    $startInfo.Environment["CODEX_HOME"] = $codexHome
-    $startInfo.Environment["CODEX_DISABLE_UPDATE_CHECK"] = "1"
+    $childEnvironment["CODEX_HOME"] = $codexHome
+    $childEnvironment["CODEX_DISABLE_UPDATE_CHECK"] = "1"
+
+    $permissionEntries = [System.Collections.Generic.List[object]]::new()
+    $permissionEntries.Add([ordered]@{
+        path = [ordered]@{
+            type = "special"
+            value = [ordered]@{ kind = "minimal" }
+        }
+        access = "read"
+    })
+    $permissionEntries.Add([ordered]@{
+        path = [ordered]@{ type = "path"; path = $workspace }
+        access = "write"
+    })
+    $permissionEntries.Add([ordered]@{
+        path = [ordered]@{ type = "path"; path = $outside }
+        access = "deny"
+    })
+    foreach ($runtimeRoot in $runtimeReadRoots) {
+        $permissionEntries.Add([ordered]@{
+            path = [ordered]@{ type = "path"; path = $runtimeRoot }
+            access = "read"
+        })
+    }
+    $permissionProfileJson = [ordered]@{
+        type = "managed"
+        file_system = [ordered]@{
+            type = "restricted"
+            entries = $permissionEntries
+        }
+        network = "restricted"
+    } | ConvertTo-Json -Depth 8 -Compress
+
+    $readRoots = @($workspace) + @($runtimeReadRoots)
+    $arguments = @(
+        "--run-as-windows-sandbox",
+        "--codex-home",
+        $codexHome,
+        "--command-cwd",
+        $workspace,
+        "--workspace-root",
+        $workspace,
+        "--permission-profile",
+        $permissionProfileJson,
+        "--env-json",
+        ($childEnvironment | ConvertTo-Json -Compress),
+        "--windows-sandbox-level",
+        "elevated",
+        "--windows-sandbox-private-desktop",
+        "--read-roots-json",
+        (ConvertTo-Json -InputObject $readRoots -Compress),
+        "--read-roots-include-platform-defaults",
+        "--write-roots-json",
+        (ConvertTo-Json -InputObject @($workspace) -Compress),
+        "--deny-read-paths-json",
+        (ConvertTo-Json -InputObject @($outside) -Compress),
+        "--deny-write-paths-json",
+        (ConvertTo-Json -InputObject @($outside) -Compress),
+        "--"
+    ) + $CommandArguments
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $codexPath
+    $startInfo.WorkingDirectory = $workspace
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+    foreach ($argument in $arguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+
+    $startInfo.Environment.Clear()
+    foreach ($entry in $childEnvironment.GetEnumerator()) {
+        $startInfo.Environment[$entry.Key] = $entry.Value
+    }
 
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -412,6 +467,7 @@ try {
         $summary = [ordered]@{
             passed = $failedChecks.Count -eq 0
             codexVersion = "0.147.0"
+            runnerProtocol = "internal-windows-sandbox-wrapper"
             windows = [Environment]::OSVersion.VersionString
             powershell = $PSVersionTable.PSVersion.ToString()
             checks = $checks

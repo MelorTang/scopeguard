@@ -146,11 +146,28 @@ try:
         network_detail = f"connected to 127.0.0.1:{loopback_port}"
 except OSError as error:
     network_detail = str(error)
-add_result("direct-network-denied", not connected, network_detail)
+add_result("loopback-network-denied", not connected, network_detail)
+
+external_connected = False
+external_network_detail = "connection denied"
+try:
+    with socket.create_connection(("1.1.1.1", 443), timeout=2):
+        external_connected = True
+        external_network_detail = "connected to 1.1.1.1:443"
+except OSError as error:
+    external_network_detail = str(error)
+add_result(
+    "external-network-denied", not external_connected, external_network_detail
+)
 
 nested_outside = outside / "nested-child-write.txt"
 nested_run = subprocess.run(
-    ["cmd.exe", "/d", "/s", "/c", f'echo nested-child>"{nested_outside}"'],
+    [
+        sys.executable,
+        "-c",
+        "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('nested-child')",
+        str(nested_outside),
+    ],
     check=False,
     capture_output=True,
     text=True,
