@@ -100,6 +100,38 @@ private:
     PSID value_ = nullptr;
 };
 
+class LocalSid {
+public:
+    LocalSid() = default;
+    explicit LocalSid(PSID value) : value_(value) {}
+    LocalSid(const LocalSid&) = delete;
+    LocalSid& operator=(const LocalSid&) = delete;
+    LocalSid(LocalSid&& other) noexcept : value_(other.release()) {}
+    LocalSid& operator=(LocalSid&& other) noexcept {
+        if (this != &other) {
+            reset(other.release());
+        }
+        return *this;
+    }
+    ~LocalSid() { reset(); }
+
+    PSID get() const { return value_; }
+    PSID release() {
+        PSID value = value_;
+        value_ = nullptr;
+        return value;
+    }
+    void reset(PSID value = nullptr) {
+        if (value_) {
+            LocalFree(value_);
+        }
+        value_ = value;
+    }
+
+private:
+    PSID value_ = nullptr;
+};
+
 [[noreturn]] void ThrowLastError(const char* operation) {
     const DWORD error = GetLastError();
     throw std::runtime_error(std::string(operation) + " failed with Win32 error " + std::to_string(error));
@@ -126,6 +158,35 @@ Sid CreateOrOpenProfile(const std::wstring& name) {
     }
     CheckHresult(result, "CreateAppContainerProfile/DeriveAppContainerSidFromAppContainerName");
     return Sid(raw_sid);
+}
+
+LocalSid DeriveSingleCapabilitySid(const wchar_t* name) {
+    PSID* group_sids = nullptr;
+    DWORD group_count = 0;
+    PSID* capability_sids = nullptr;
+    DWORD capability_count = 0;
+    if (!DeriveCapabilitySidsFromName(
+            name,
+            &group_sids,
+            &group_count,
+            &capability_sids,
+            &capability_count)) {
+        ThrowLastError("DeriveCapabilitySidsFromName");
+    }
+    for (DWORD index = 0; index < group_count; ++index) {
+        LocalFree(group_sids[index]);
+    }
+    LocalFree(group_sids);
+    if (capability_count != 1) {
+        for (DWORD index = 0; index < capability_count; ++index) {
+            LocalFree(capability_sids[index]);
+        }
+        LocalFree(capability_sids);
+        throw std::runtime_error("capability name did not resolve to exactly one SID");
+    }
+    LocalSid result(capability_sids[0]);
+    LocalFree(capability_sids);
+    return result;
 }
 
 std::wstring SidToString(PSID sid) {
@@ -330,6 +391,16 @@ int RunInContainer(
 
     SECURITY_CAPABILITIES security_capabilities{};
     security_capabilities.AppContainerSid = package_sid.get();
+    LocalSid lpac_app_experience_sid;
+    SID_AND_ATTRIBUTES lpac_capability{};
+    if (lpac) {
+        lpac_app_experience_sid = DeriveSingleCapabilitySid(L"lpacAppExperience");
+        lpac_capability.Sid = lpac_app_experience_sid.get();
+        lpac_capability.Attributes = SE_GROUP_ENABLED;
+        security_capabilities.Capabilities = &lpac_capability;
+        security_capabilities.CapabilityCount = 1;
+        Diagnostic("capability=lpacAppExperience");
+    }
     if (!UpdateProcThreadAttribute(
             attribute_list,
             0,
