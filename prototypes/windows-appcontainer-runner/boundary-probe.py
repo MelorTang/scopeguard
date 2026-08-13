@@ -24,6 +24,30 @@ loopback_port = int(sys.argv[7])
 result_path = pathlib.Path(sys.argv[8])
 results: list[dict[str, object]] = []
 
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+kernel32.CloseHandle.restype = ctypes.c_int
+kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+kernel32.OpenProcess.restype = ctypes.c_void_p
+kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+kernel32.TerminateProcess.restype = ctypes.c_int
+advapi32.OpenProcessToken.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_ulong,
+    ctypes.POINTER(ctypes.c_void_p),
+]
+advapi32.OpenProcessToken.restype = ctypes.c_int
+advapi32.GetTokenInformation.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    ctypes.c_ulong,
+    ctypes.POINTER(ctypes.c_ulong),
+]
+advapi32.GetTokenInformation.restype = ctypes.c_int
+
 
 def add_result(name: str, passed: bool, detail: str) -> None:
     results.append({"name": name, "passed": passed, "detail": detail})
@@ -43,23 +67,23 @@ def write_is_denied(name: str, target: pathlib.Path) -> None:
 
 
 token = ctypes.c_void_p()
-if not ctypes.windll.advapi32.OpenProcessToken(
-    ctypes.windll.kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)
+if not advapi32.OpenProcessToken(
+    kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)
 ):
-    raise ctypes.WinError()
+    raise ctypes.WinError(ctypes.get_last_error())
 try:
     is_app_container = ctypes.c_ulong(0)
     returned = ctypes.c_ulong(0)
-    if not ctypes.windll.advapi32.GetTokenInformation(
+    if not advapi32.GetTokenInformation(
         token,
         29,
         ctypes.byref(is_app_container),
         ctypes.sizeof(is_app_container),
         ctypes.byref(returned),
     ):
-        raise ctypes.WinError()
+        raise ctypes.WinError(ctypes.get_last_error())
 finally:
-    ctypes.windll.kernel32.CloseHandle(token)
+    kernel32.CloseHandle(token)
 add_result("appcontainer-token", bool(is_app_container.value), str(is_app_container.value))
 
 workspace_input = workspace / "input.txt"
@@ -127,21 +151,17 @@ add_result(
 )
 
 process_terminate = 0x0001
-process_handle = ctypes.windll.kernel32.OpenProcess(
-    process_terminate, False, protected_pid
-)
+process_handle = kernel32.OpenProcess(process_terminate, False, protected_pid)
 process_terminated = False
 process_detail = "OpenProcess denied"
 if process_handle:
-    process_terminated = bool(
-        ctypes.windll.kernel32.TerminateProcess(process_handle, 91)
-    )
+    process_terminated = bool(kernel32.TerminateProcess(process_handle, 91))
     process_detail = (
         "termination unexpectedly succeeded"
         if process_terminated
         else f"TerminateProcess denied: {ctypes.get_last_error()}"
     )
-    ctypes.windll.kernel32.CloseHandle(process_handle)
+    kernel32.CloseHandle(process_handle)
 add_result("parent-process-protected", not process_terminated, process_detail)
 
 for name, endpoint in (
