@@ -17,6 +17,7 @@ Use an expendable Windows machine or VM with PowerShell 7 and Visual Studio Buil
 
 ```powershell
 pwsh -File prototypes/windows-appcontainer-runner/run.ps1
+pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode lpac
 ```
 
 The script creates a temporary AppContainer profile and adds temporary ACL entries for that profile SID. The GitHub Actions workflow runs on an ephemeral Windows host.

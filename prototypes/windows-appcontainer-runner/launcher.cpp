@@ -266,6 +266,25 @@ Handle CreateRestrictedJob() {
     return job;
 }
 
+bool ProcessHasTokenFlag(HANDLE process, TOKEN_INFORMATION_CLASS information_class) {
+    HANDLE raw_token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &raw_token)) {
+        ThrowLastError("OpenProcessToken(child)");
+    }
+    Handle token(raw_token);
+    DWORD value = 0;
+    DWORD returned = 0;
+    if (!GetTokenInformation(
+            token.get(),
+            information_class,
+            &value,
+            sizeof(value),
+            &returned)) {
+        ThrowLastError("GetTokenInformation(child)");
+    }
+    return value != 0;
+}
+
 int RunInContainer(
     const std::wstring& profile_name,
     const std::wstring& cwd,
@@ -351,6 +370,14 @@ int RunInContainer(
 
     Handle process(process_info.hProcess);
     Handle thread(process_info.hThread);
+    if (!ProcessHasTokenFlag(process.get(), TokenIsAppContainer)) {
+        TerminateProcess(process.get(), 126);
+        throw std::runtime_error("created process does not have an AppContainer token");
+    }
+    if (lpac && !ProcessHasTokenFlag(process.get(), TokenIsLessPrivilegedAppContainer)) {
+        TerminateProcess(process.get(), 126);
+        throw std::runtime_error("created process does not have an LPAC token");
+    }
     Handle job = CreateRestrictedJob();
     if (!AssignProcessToJobObject(job.get(), process.get())) {
         TerminateProcess(process.get(), 126);

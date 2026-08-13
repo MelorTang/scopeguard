@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidateSet("appcontainer", "lpac")]
+    [string]$Mode = "appcontainer",
     [switch]$KeepFixture
 )
 
@@ -11,7 +13,7 @@ if (-not $IsWindows) {
 }
 
 $fixtureBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
-$fixtureRoot = Join-Path $fixtureBase "scopeguard-appcontainer-fixture"
+$fixtureRoot = Join-Path $fixtureBase "scopeguard-$Mode-fixture"
 $workspace = Join-Path $fixtureRoot "workspace"
 $outside = Join-Path $fixtureRoot "outside"
 $resultPath = Join-Path $fixtureRoot "result.json"
@@ -48,16 +50,20 @@ function Invoke-SandboxCommand {
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.CreateNoWindow = $true
-    foreach ($argument in @(
+    $launcherArguments = @(
         "run",
         "--name",
         $profileName,
         "--cwd",
         $workspace,
         "--timeout",
-        $TimeoutSeconds.ToString(),
-        "--"
-    ) + $CommandArguments) {
+        $TimeoutSeconds.ToString()
+    )
+    if ($Mode -eq "lpac") {
+        $launcherArguments += "--lpac"
+    }
+    $launcherArguments += "--"
+    foreach ($argument in $launcherArguments + $CommandArguments) {
         $startInfo.ArgumentList.Add($argument)
     }
 
@@ -168,7 +174,7 @@ try {
         }
         $summary = [ordered]@{
             passed = $run.exitCode -eq 0 -and $null -ne $probe -and $probe.passed
-            runner = "appcontainer-job"
+            runner = "$Mode-job"
             packageSid = $profileSid
             windows = [Environment]::OSVersion.VersionString
             launcherExitCode = $run.exitCode
