@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -21,6 +23,15 @@ namespace {
 
 constexpr DWORD kProcessCreationAllApplicationPackagesOptOut = 0x1;
 constexpr DWORD_PTR kProcThreadAttributeAllApplicationPackagesPolicy = 0x0002000F;
+std::wstring g_diagnostics_path;
+
+void Diagnostic(const std::string& message) {
+    if (g_diagnostics_path.empty()) {
+        return;
+    }
+    std::ofstream output(std::filesystem::path(g_diagnostics_path), std::ios::app);
+    output << message << '\n';
+}
 
 class Handle {
 public:
@@ -367,6 +378,7 @@ int RunInContainer(
     if (!created) {
         ThrowLastError("CreateProcessW(AppContainer)");
     }
+    Diagnostic("child-created");
 
     Handle process(process_info.hProcess);
     Handle thread(process_info.hThread);
@@ -374,19 +386,25 @@ int RunInContainer(
         TerminateProcess(process.get(), 126);
         throw std::runtime_error("created process does not have an AppContainer token");
     }
+    Diagnostic("appcontainer-token-verified");
     if (lpac && !ProcessHasTokenFlag(process.get(), TokenIsLessPrivilegedAppContainer)) {
         TerminateProcess(process.get(), 126);
         throw std::runtime_error("created process does not have an LPAC token");
+    }
+    if (lpac) {
+        Diagnostic("lpac-token-verified");
     }
     Handle job = CreateRestrictedJob();
     if (!AssignProcessToJobObject(job.get(), process.get())) {
         TerminateProcess(process.get(), 126);
         ThrowLastError("AssignProcessToJobObject");
     }
+    Diagnostic("job-assigned-before-resume");
     if (ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
         TerminateJobObject(job.get(), 126);
         ThrowLastError("ResumeThread");
     }
+    Diagnostic("child-resumed");
 
     const DWORD timeout_ms = timeout_seconds == 0 ? INFINITE : timeout_seconds * 1000;
     const DWORD wait_result = WaitForSingleObject(process.get(), timeout_ms);
@@ -404,6 +422,7 @@ int RunInContainer(
     if (!GetExitCodeProcess(process.get(), &exit_code)) {
         ThrowLastError("GetExitCodeProcess");
     }
+    Diagnostic("child-exit=" + std::to_string(exit_code));
     return static_cast<int>(exit_code);
 }
 
@@ -462,6 +481,8 @@ int wmain(int argc, wchar_t** argv) {
                 timeout_seconds = std::stoul(RequireValue(args, index, L"--timeout"));
             } else if (args[index] == L"--lpac") {
                 lpac = true;
+            } else if (args[index] == L"--diagnostics") {
+                g_diagnostics_path = RequireValue(args, index, L"--diagnostics");
             } else if (args[index] == L"--") {
                 command.assign(args.begin() + static_cast<std::ptrdiff_t>(index + 1), args.end());
                 break;
@@ -474,6 +495,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         return RunInContainer(name, cwd, timeout_seconds, lpac, command);
     } catch (const std::exception& error) {
+        Diagnostic(std::string("error=") + error.what());
         std::cerr << "scopeguard-appcontainer: " << error.what() << "\n";
         return 126;
     }

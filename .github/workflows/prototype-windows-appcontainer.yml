@@ -38,5 +38,7 @@ jobs:
           path: |
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\result.json
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\boundary-result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\launcher-diagnostics.log
             ${{ runner.temp }}\scopeguard-lpac-fixture\result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\boundary-result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log

@@ -17,6 +17,7 @@ $fixtureRoot = Join-Path $fixtureBase "scopeguard-$Mode-fixture"
 $workspace = Join-Path $fixtureRoot "workspace"
 $outside = Join-Path $fixtureRoot "outside"
 $resultPath = Join-Path $fixtureRoot "result.json"
+$launcherDiagnosticsPath = Join-Path $workspace "launcher-diagnostics.log"
 $profileName = "ScopeGuardPrototype_$([guid]::NewGuid().ToString('N'))"
 Write-Host "[$Mode] Building native launcher"
 $launcher = (& (Join-Path $PSScriptRoot "build.ps1")).Trim()
@@ -58,7 +59,9 @@ function Invoke-SandboxCommand {
         "--cwd",
         $workspace,
         "--timeout",
-        $TimeoutSeconds.ToString()
+        $TimeoutSeconds.ToString(),
+        "--diagnostics",
+        $launcherDiagnosticsPath
     )
     if ($Mode -eq "lpac") {
         $launcherArguments += "--lpac"
@@ -192,6 +195,12 @@ try {
             launcherExitCode = $run.exitCode
             launcherStdout = $run.stdout
             launcherStderr = $run.stderr
+            launcherDiagnostics = if (Test-Path -LiteralPath $launcherDiagnosticsPath) {
+                Get-Content -LiteralPath $launcherDiagnosticsPath -Raw
+            }
+            else {
+                ""
+            }
             checks = if ($null -ne $probe) { $probe.results } else { @() }
             protectedProcessStillRunning = -not $protectedProcess.HasExited
             hardLinkTargetUnchanged = (Get-Content -LiteralPath $hardLinkTarget -Raw) -eq "hardlink-original"
