@@ -5,13 +5,16 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cwchar>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "userenv.lib")
 
 namespace {
@@ -164,6 +167,55 @@ std::wstring BuildCommandLine(const std::vector<std::wstring>& command) {
     return result;
 }
 
+struct CaseInsensitiveLess {
+    bool operator()(const std::wstring& left, const std::wstring& right) const {
+        return _wcsicmp(left.c_str(), right.c_str()) < 0;
+    }
+};
+
+std::vector<wchar_t> BuildEnvironmentBlock(PSID package_sid) {
+    std::map<std::wstring, std::wstring, CaseInsensitiveLess> environment;
+    LPWCH raw_environment = GetEnvironmentStringsW();
+    if (!raw_environment) {
+        ThrowLastError("GetEnvironmentStringsW");
+    }
+    for (const wchar_t* entry = raw_environment; *entry; entry += std::wcslen(entry) + 1) {
+        const std::wstring value(entry);
+        const std::size_t separator = value.find(L'=', value.front() == L'=' ? 1 : 0);
+        if (separator != std::wstring::npos) {
+            environment[value.substr(0, separator)] = value.substr(separator + 1);
+        }
+    }
+    FreeEnvironmentStringsW(raw_environment);
+
+    const std::wstring sid_string = SidToString(package_sid);
+    PWSTR raw_profile_path = nullptr;
+    CheckHresult(
+        GetAppContainerFolderPath(sid_string.c_str(), &raw_profile_path),
+        "GetAppContainerFolderPath");
+    const std::wstring profile_path(raw_profile_path);
+    CoTaskMemFree(raw_profile_path);
+    const std::wstring temp_path = profile_path + L"\\Temp";
+    if (!CreateDirectoryW(temp_path.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        ThrowLastError("CreateDirectoryW(AppContainer Temp)");
+    }
+
+    environment[L"APPDATA"] = profile_path;
+    environment[L"LOCALAPPDATA"] = profile_path;
+    environment[L"TEMP"] = temp_path;
+    environment[L"TMP"] = temp_path;
+    environment[L"USERPROFILE"] = profile_path;
+
+    std::vector<wchar_t> block;
+    for (const auto& [name, value] : environment) {
+        const std::wstring entry = name + L"=" + value;
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    return block;
+}
+
 void MakeStandardHandlesInheritable() {
     for (const DWORD id : {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
         const HANDLE handle = GetStdHandle(id);
@@ -275,6 +327,7 @@ int RunInContainer(
     MakeStandardHandlesInheritable();
 
     std::wstring command_line = BuildCommandLine(command);
+    std::vector<wchar_t> environment_block = BuildEnvironmentBlock(package_sid.get());
     PROCESS_INFORMATION process_info{};
     const DWORD creation_flags =
         CREATE_SUSPENDED |
@@ -287,7 +340,7 @@ int RunInContainer(
         nullptr,
         TRUE,
         creation_flags,
-        nullptr,
+        environment_block.data(),
         cwd.c_str(),
         &startup.StartupInfo,
         &process_info);
