@@ -187,20 +187,25 @@ try {
         else {
             $null
         }
+        $launcherDiagnostics = if (Test-Path -LiteralPath $launcherDiagnosticsPath) {
+            Get-Content -LiteralPath $launcherDiagnosticsPath -Raw
+        }
+        else {
+            ""
+        }
+        $matrixPassed = $run.exitCode -eq 0 -and $null -ne $probe -and $probe.passed
+        $lpacTokenVerified = $Mode -ne "lpac" -or $launcherDiagnostics -match "lpac-token-verified"
         $summary = [ordered]@{
-            passed = $run.exitCode -eq 0 -and $null -ne $probe -and $probe.passed
+            passed = $matrixPassed
+            productionReady = $matrixPassed -and $lpacTokenVerified
+            lpacTokenVerified = $lpacTokenVerified
             runner = "$Mode-job"
             packageSid = $profileSid
             windows = [Environment]::OSVersion.VersionString
             launcherExitCode = $run.exitCode
             launcherStdout = $run.stdout
             launcherStderr = $run.stderr
-            launcherDiagnostics = if (Test-Path -LiteralPath $launcherDiagnosticsPath) {
-                Get-Content -LiteralPath $launcherDiagnosticsPath -Raw
-            }
-            else {
-                ""
-            }
+            launcherDiagnostics = $launcherDiagnostics
             checks = if ($null -ne $probe) { $probe.results } else { @() }
             protectedProcessStillRunning = -not $protectedProcess.HasExited
             hardLinkTargetUnchanged = (Get-Content -LiteralPath $hardLinkTarget -Raw) -eq "hardlink-original"

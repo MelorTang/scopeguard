@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -277,7 +278,10 @@ Handle CreateRestrictedJob() {
     return job;
 }
 
-bool ProcessHasTokenFlag(HANDLE process, TOKEN_INFORMATION_CLASS information_class) {
+std::optional<bool> ProcessHasTokenFlag(
+    HANDLE process,
+    TOKEN_INFORMATION_CLASS information_class,
+    bool allow_unsupported = false) {
     HANDLE raw_token = nullptr;
     if (!OpenProcessToken(process, TOKEN_QUERY, &raw_token)) {
         ThrowLastError("OpenProcessToken(child)");
@@ -291,6 +295,10 @@ bool ProcessHasTokenFlag(HANDLE process, TOKEN_INFORMATION_CLASS information_cla
             &value,
             sizeof(value),
             &returned)) {
+        const DWORD error = GetLastError();
+        if (allow_unsupported && error == ERROR_INVALID_PARAMETER) {
+            return std::nullopt;
+        }
         ThrowLastError("GetTokenInformation(child)");
     }
     return value != 0;
@@ -382,17 +390,25 @@ int RunInContainer(
 
     Handle process(process_info.hProcess);
     Handle thread(process_info.hThread);
-    if (!ProcessHasTokenFlag(process.get(), TokenIsAppContainer)) {
+    if (!ProcessHasTokenFlag(process.get(), TokenIsAppContainer).value()) {
         TerminateProcess(process.get(), 126);
         throw std::runtime_error("created process does not have an AppContainer token");
     }
     Diagnostic("appcontainer-token-verified");
-    if (lpac && !ProcessHasTokenFlag(process.get(), TokenIsLessPrivilegedAppContainer)) {
-        TerminateProcess(process.get(), 126);
-        throw std::runtime_error("created process does not have an LPAC token");
-    }
     if (lpac) {
-        Diagnostic("lpac-token-verified");
+        const std::optional<bool> is_lpac =
+            ProcessHasTokenFlag(
+                process.get(),
+                TokenIsLessPrivilegedAppContainer,
+                true);
+        if (is_lpac.has_value() && !is_lpac.value()) {
+            TerminateProcess(process.get(), 126);
+            throw std::runtime_error("created process does not have an LPAC token");
+        }
+        Diagnostic(
+            is_lpac.has_value()
+                ? "lpac-token-verified"
+                : "lpac-token-query-unavailable");
     }
     Handle job = CreateRestrictedJob();
     if (!AssignProcessToJobObject(job.get(), process.get())) {
