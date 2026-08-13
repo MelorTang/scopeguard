@@ -1,0 +1,49 @@
+name: Prototype Windows sandbox runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/prototype-windows-sandbox-runner
+    paths:
+      - .github/workflows/prototype-windows-sandbox.yml
+      - prototypes/windows-sandbox-runner/**
+
+permissions:
+  contents: read
+
+jobs:
+  escape-matrix:
+    runs-on: windows-2022
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out prototype
+        uses: actions/checkout@v4
+
+      - name: Inspect runner elevation
+        shell: pwsh
+        run: |
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Write-Host "identity=$($identity.Name)"
+          Write-Host "administrator=$isAdmin"
+          if (-not $isAdmin) {
+            throw "The hosted runner is not elevated; use an ephemeral elevated Windows runner."
+          }
+
+      - name: Run ScopeGuard escape matrix
+        shell: pwsh
+        run: pwsh -File prototypes/windows-sandbox-runner/run.ps1 -KeepFixture
+
+      - name: Upload sandbox diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scopeguard-windows-sandbox-diagnostics
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\result.json
+            ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\workspace\*-result.json
+            ${{ runner.temp }}\scopeguard-windows-sandbox-fixture\codex-home\sandbox\**
