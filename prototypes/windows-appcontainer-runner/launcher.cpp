@@ -291,17 +291,6 @@ std::vector<wchar_t> BuildEnvironmentBlock(PSID package_sid) {
     return block;
 }
 
-void MakeStandardHandlesInheritable() {
-    for (const DWORD id : {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
-        const HANDLE handle = GetStdHandle(id);
-        if (handle && handle != INVALID_HANDLE_VALUE) {
-            if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) {
-                ThrowLastError("SetHandleInformation");
-            }
-        }
-    }
-}
-
 Handle CreateRestrictedJob() {
     Handle job(CreateJobObjectW(nullptr, nullptr));
     if (!job) {
@@ -435,12 +424,7 @@ int RunInContainer(
 
     STARTUPINFOEXW startup{};
     startup.StartupInfo.cb = sizeof(startup);
-    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    startup.StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-    startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     startup.lpAttributeList = attribute_list;
-    MakeStandardHandlesInheritable();
 
     std::wstring command_line = BuildCommandLine(command);
     std::vector<wchar_t> environment_block = BuildEnvironmentBlock(package_sid.get());
@@ -454,7 +438,7 @@ int RunInContainer(
         command_line.data(),
         nullptr,
         nullptr,
-        TRUE,
+        FALSE,
         creation_flags,
         environment_block.data(),
         cwd.c_str(),

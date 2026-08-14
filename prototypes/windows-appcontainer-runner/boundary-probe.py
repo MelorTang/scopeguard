@@ -8,10 +8,11 @@ import sys
 import winreg
 
 
-if len(sys.argv) != 9:
+if len(sys.argv) != 11:
     raise SystemExit(
         "usage: boundary-probe.py <workspace> <outside> <outside-secret> "
-        "<hard-link> <credential-target> <protected-pid> <loopback-port> <result>"
+        "<hard-link> <credential-target> <protected-pid> <loopback-port> "
+        "<outside-unc> <pipe-name> <result>"
     )
 
 workspace = pathlib.Path(sys.argv[1])
@@ -21,7 +22,9 @@ hard_link = pathlib.Path(sys.argv[4])
 credential_target = sys.argv[5]
 protected_pid = int(sys.argv[6])
 loopback_port = int(sys.argv[7])
-result_path = pathlib.Path(sys.argv[8])
+outside_unc = pathlib.Path(sys.argv[8])
+pipe_name = sys.argv[9]
+result_path = pathlib.Path(sys.argv[10])
 results: list[dict[str, object]] = []
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -93,6 +96,14 @@ workspace_output.write_text("boundary-ok", encoding="utf-8")
 add_result("workspace-read", input_value == "workspace-ok", str(workspace_input))
 add_result("workspace-write", workspace_output.exists(), str(workspace_output))
 
+workspace_ads = pathlib.Path(str(workspace_output) + ":ScopeGuardStream")
+workspace_ads.write_text("workspace-ads-ok", encoding="utf-8")
+add_result(
+    "workspace-ads-write",
+    workspace_ads.read_text(encoding="utf-8") == "workspace-ads-ok",
+    str(workspace_ads),
+)
+
 outside_visible = False
 outside_read_detail = "read denied"
 try:
@@ -103,6 +114,19 @@ try:
 except OSError as error:
     outside_read_detail = str(error)
 add_result("outside-read-denied", not outside_visible, outside_read_detail)
+
+outside_ads = pathlib.Path(str(outside_secret) + ":ScopeGuardSecret")
+outside_ads_visible = False
+outside_ads_detail = "read denied"
+try:
+    outside_ads_visible = "outside-ads-secret" in outside_ads.read_text(
+        encoding="utf-8-sig"
+    )
+    outside_ads_detail = "outside ADS sentinel was readable"
+except OSError as error:
+    outside_ads_detail = str(error)
+add_result("outside-ads-read-denied", not outside_ads_visible, outside_ads_detail)
+write_is_denied("outside-ads-write-denied", outside_ads)
 
 write_is_denied("outside-write-denied", outside / "direct-write.txt")
 write_is_denied(
@@ -124,6 +148,28 @@ except OSError as error:
     hard_link_write_failed = True
     hard_link_detail = str(error)
 add_result("hard-link-escape-denied", hard_link_write_failed, hard_link_detail)
+
+unc_visible = False
+unc_detail = "UNC read denied"
+try:
+    unc_visible = "scopeguard-outside-secret" in outside_unc.read_text(
+        encoding="utf-8-sig"
+    )
+    unc_detail = "outside sentinel was readable through UNC"
+except OSError as error:
+    unc_detail = str(error)
+add_result("unc-read-denied", not unc_visible, unc_detail)
+write_is_denied("unc-write-denied", outside_unc.parent / "unc-write.txt")
+
+pipe_connected = False
+pipe_detail = "named pipe connection denied"
+try:
+    with open("\\\\.\\pipe\\" + pipe_name, "r+b", buffering=0):
+        pipe_connected = True
+        pipe_detail = "connected to parent named pipe"
+except OSError as error:
+    pipe_detail = str(error)
+add_result("parent-ipc-denied", not pipe_connected, pipe_detail)
 
 registry_visible = False
 registry_detail = "parent HKCU value not visible"
