@@ -33,7 +33,6 @@ export function isTrustedRendererUrl(
   options: {
     developmentRendererUrl: string | null;
     rendererDirectory: string;
-    platform?: NodeJS.Platform;
   },
 ): boolean {
   try {
