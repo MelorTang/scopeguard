@@ -10,6 +10,8 @@ turbo/
 .playwright-cli/
 output/
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # Legacy local runtime data is not imported by Desktop v2.
 .scopeguard/
