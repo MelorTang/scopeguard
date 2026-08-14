@@ -8,11 +8,11 @@ import sys
 import winreg
 
 
-if len(sys.argv) != 11:
+if len(sys.argv) != 13:
     raise SystemExit(
         "usage: boundary-probe.py <workspace> <outside> <outside-secret> "
         "<hard-link> <credential-target> <protected-pid> <loopback-port> "
-        "<outside-unc> <pipe-name> <result>"
+        "<outside-unc> <pipe-name> <mode> <all-packages-sentinel> <result>"
     )
 
 workspace = pathlib.Path(sys.argv[1])
@@ -24,8 +24,13 @@ protected_pid = int(sys.argv[6])
 loopback_port = int(sys.argv[7])
 outside_unc = pathlib.Path(sys.argv[8])
 pipe_name = sys.argv[9]
-result_path = pathlib.Path(sys.argv[10])
+mode = sys.argv[10]
+all_packages_sentinel = pathlib.Path(sys.argv[11])
+result_path = pathlib.Path(sys.argv[12])
 results: list[dict[str, object]] = []
+
+if mode not in {"appcontainer", "lpac"}:
+    raise SystemExit(f"unsupported mode: {mode}")
 
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
@@ -114,6 +119,29 @@ try:
 except OSError as error:
     outside_read_detail = str(error)
 add_result("outside-read-denied", not outside_visible, outside_read_detail)
+
+all_packages_visible = False
+all_packages_detail = "read denied"
+try:
+    all_packages_visible = (
+        all_packages_sentinel.read_text(encoding="utf-8-sig").strip()
+        == "scopeguard-all-application-packages-sentinel"
+    )
+    all_packages_detail = "ALL APPLICATION PACKAGES sentinel was readable"
+except OSError as error:
+    all_packages_detail = str(error)
+if mode == "appcontainer":
+    add_result(
+        "regular-appcontainer-inherits-all-application-packages",
+        all_packages_visible,
+        all_packages_detail,
+    )
+else:
+    add_result(
+        "lpac-ignores-all-application-packages",
+        not all_packages_visible,
+        all_packages_detail,
+    )
 
 outside_ads = pathlib.Path(str(outside_secret) + ":ScopeGuardSecret")
 outside_ads_visible = False

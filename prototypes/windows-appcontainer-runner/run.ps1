@@ -17,6 +17,7 @@ $fixtureBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetT
 $fixtureRoot = Join-Path $fixtureBase "scopeguard-$Mode-fixture"
 $workspace = Join-Path $fixtureRoot "workspace"
 $outside = Join-Path $fixtureRoot "outside"
+$allPackagesArea = Join-Path $fixtureRoot "all-application-packages"
 $resultPath = Join-Path $fixtureRoot "result.json"
 $policyResultPath = Join-Path $fixtureRoot "policy-parity.json"
 $launcherDiagnosticsPath = Join-Path $workspace "launcher-diagnostics.log"
@@ -155,7 +156,7 @@ function Invoke-SandboxCommand {
 if (Test-Path -LiteralPath $fixtureRoot) {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
 }
-New-Item -ItemType Directory -Path $workspace, $outside -Force | Out-Null
+New-Item -ItemType Directory -Path $workspace, $outside, $allPackagesArea -Force | Out-Null
 foreach ($probeFile in @(
     "boundary-probe.py",
     "cmd-probe.cmd",
@@ -169,10 +170,14 @@ foreach ($probeFile in @(
 Set-Content -LiteralPath (Join-Path $workspace "input.txt") -Value "workspace-ok" -Encoding utf8
 
 $outsideSecret = Join-Path $outside "outside-secret.txt"
+$allPackagesSentinel = Join-Path $allPackagesArea "sentinel.txt"
 $hardLinkTarget = Join-Path $outside "hardlink-target.txt"
 $hardLinkPath = Join-Path $workspace "outside-hardlink.txt"
 Set-Content -LiteralPath $outsideSecret -Value "scopeguard-outside-secret" -Encoding utf8
 Set-Content -LiteralPath $outsideSecret -Stream "ScopeGuardSecret" -Value "outside-ads-secret" -Encoding utf8
+Set-Content -LiteralPath $allPackagesSentinel -Value "scopeguard-all-application-packages-sentinel" -Encoding utf8
+Invoke-IcaclsGrant -Path $allPackagesArea -Grant "*S-1-15-2-1:(RX)"
+Invoke-IcaclsGrant -Path $allPackagesSentinel -Grant "*S-1-15-2-1:(R)"
 Set-Content -LiteralPath $hardLinkTarget -Value "hardlink-original" -Encoding utf8 -NoNewline
 
 $pythonPath = (Get-Command python.exe -ErrorAction Stop).Source
@@ -280,6 +285,8 @@ try {
             $loopbackPort.ToString(),
             $outsideUnc,
             $pipeName,
+            $Mode,
+            $allPackagesSentinel,
             $boundaryResult
         ) -TimeoutSeconds 15
         Write-Host "[$Mode] Boundary probe launcher exited with $($run.exitCode)"
@@ -442,6 +449,11 @@ try {
             ""
         }
         $lpacTokenVerified = $Mode -ne "lpac" -or $launcherDiagnostics -match "lpac-token-verified"
+        $lpacAllApplicationPackagesProof = $Mode -eq "lpac" -and
+            $null -ne $probe -and
+            @($probe.results | Where-Object {
+                $_.name -eq "lpac-ignores-all-application-packages" -and $_.passed
+            }).Count -eq 1
         if ($RequireLpacTokenVerification -and $Mode -eq "lpac") {
             $lpacTokenDetail = if ($lpacTokenVerified) {
                 "TokenIsLessPrivilegedAppContainer=true"
@@ -457,6 +469,7 @@ try {
             passed = $matrixPassed
             productionReady = $false
             lpacTokenVerified = $lpacTokenVerified
+            lpacAllApplicationPackagesProof = $lpacAllApplicationPackagesProof
             supportedClientMatrixValidated = $false
             runner = "$Mode-job"
             packageSid = $profileSid

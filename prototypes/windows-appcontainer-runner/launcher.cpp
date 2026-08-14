@@ -393,6 +393,11 @@ std::optional<bool> ProcessHasTokenFlag(
             &returned)) {
         const DWORD error = GetLastError();
         if (allow_unsupported && error == ERROR_INVALID_PARAMETER) {
+            Diagnostic(
+                "token-information-class=" +
+                std::to_string(static_cast<int>(information_class)) +
+                ";error=" + std::to_string(error) +
+                ";returned=" + std::to_string(returned));
             return std::nullopt;
         }
         ThrowLastError("GetTokenInformation(child)");

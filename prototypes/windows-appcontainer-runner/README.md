@@ -10,6 +10,12 @@ This throwaway prototype is the second candidate for [issue #14](https://github.
 - an allowlisted process environment and explicit standard-handle list;
 - fail-closed setup and launch behavior.
 
+The matrix includes a differential `ALL APPLICATION PACKAGES` sentinel outside
+the workspace. The sentinel grants read access to `S-1-15-2-1` but not to the
+runner package SID. A regular AppContainer must read it, while LPAC mode must
+be denied. This proves that the opt-out changes the effective access boundary;
+it does not silently replace the direct LPAC token query.
+
 The LPAC mode grants only `lpacAppExperience`, `registryRead`, and `lpacInstrumentation`. They are required by Python and PowerShell startup on the tested Windows Server image; the full denial matrix is rerun after every capability change.
 
 The newer `Experimental_CreateProcessInSandbox` API is not used because Microsoft currently documents it as experimental and Windows 11-only. ScopeGuard V1 must support both Windows 10 and Windows 11.

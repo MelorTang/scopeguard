@@ -13,17 +13,30 @@ On 2026-08-14, the final prototype commit was run locally on a Windows 11
 interactive token is required because Windows Credential Manager rejects
 sentinel creation from an OpenSSH logon session.
 
-- Regular AppContainer passed all 34 checks.
-- LPAC passed 34 of 35 checks. Every behavioral boundary passed, including
+- Regular AppContainer passed all 35 checks. Its process could read a sentinel
+  whose only AppContainer grant was `ALL APPLICATION PACKAGES`.
+- LPAC passed 35 of 36 checks. The same sentinel was denied, proving that the
+  LPAC process disregarded `ALL APPLICATION PACKAGES`. Every other behavioral
+  boundary passed, including
   workspace containment, parent-state isolation, network denial, child-process
   containment, runtime compatibility, and process-tree cleanup.
 - The only LPAC failure was `lpac-token-verification`:
   `GetTokenInformation(TokenIsLessPrivilegedAppContainer)` returned
-  `ERROR_INVALID_PARAMETER`, recorded as `lpac-token-query-unavailable`.
+  `ERROR_INVALID_PARAMETER` (`information-class=46`, `error=87`,
+  `returned=0`), recorded as `lpac-token-query-unavailable`.
 
-This client result strengthens the semantic isolation evidence but does not
-satisfy the mandatory LPAC token identity gate. `productionReady` and
-`supportedClientMatrixValidated` therefore remain false.
+[Microsoft defines LPAC](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class)
+by its disregard of `ALL APPLICATION PACKAGES` and
+[documents the process-creation opt-out attribute](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+used by this launcher. The
+differential sentinel therefore resolves whether that security behavior is
+active on this Windows 11 client even though the convenience token query is
+unavailable. Production integration must still define a fail-closed verifier:
+use the direct token flag when available and require a qualified differential
+self-test when Windows returns `ERROR_INVALID_PARAMETER`.
+
+This result does not complete the supported client matrix. `productionReady`
+and `supportedClientMatrixValidated` therefore remain false.
 
 ## Passing evidence
 
@@ -55,7 +68,7 @@ The run verified:
 
 ## Remaining gates
 
-1. Complete strict LPAC token verification on Windows 11 x64 and run both modes on Windows 10 x64. LPAC runs must include `-RequireLpacTokenVerification`.
+1. Run both modes and the differential `ALL APPLICATION PACKAGES` proof on Windows 10 x64, then fix the supported-build verification contract for systems where the direct token query is unavailable.
 2. Confirm that the three LPAC capabilities and ancestor directory metadata exposure are acceptable in the product threat model.
 3. Specify transactional ACL cleanup and crash recovery. The prototype relies on ephemeral runners.
 4. Add Desktop integration tests proving application exit closes the broker-held Job handle and leaves no managed process or stale package profile.
