@@ -52,6 +52,23 @@ Run the standalone crash-recovery matrix with:
 pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1
 ```
 
+Run the Desktop parent/Broker lifecycle matrix with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/desktop-broker-integration-test.ps1
+```
+
+This starts two concurrent Conversation identities under a native Broker-held
+outer Job. It cancels one launcher without disturbing the other, terminates the
+Desktop parent probe, verifies the Broker detects parent exit and clears every
+remaining managed process, then recovers both ACL/profile ledgers. The proposed
+production seam and conditional capability threat decision are recorded in
+[`BROKER-SPEC.md`](BROKER-SPEC.md).
+
+The matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168`. The CI workflow
+also runs it on Windows Server 2022; neither result substitutes for the remaining
+Windows 10 x64 release gate.
+
 Recover an interrupted execution from its ledger with:
 
 ```powershell

@@ -63,6 +63,41 @@ must therefore place profile and DACL lifecycle operations behind a narrow
 elevated provisioner or broker. Agent children remain unprivileged and never
 receive that token.
 
+## Desktop Broker lifecycle checkpoint
+
+The prototype now separates an unprivileged lifetime Broker from the narrow
+elevated profile/DACL Provisioner described in
+[`BROKER-SPEC.md`](BROKER-SPEC.md). The Broker holds an outer kill-on-close Job,
+opens a synchronization handle to the Desktop parent, and launches the Agent
+Host inside that Job. Each concurrent LPAC launcher continues to own its own
+inner kill-on-close Job.
+
+On the Windows 11 25H2 x64 client, build `26200.9168`, the Desktop integration
+matrix passed all six checks:
+
+- two concurrent Conversations received different Package SIDs;
+- each could write its own Workspace and was denied peer Workspace reads and
+  writes;
+- cancelling launcher A cleared only A's process tree while B remained alive;
+- terminating the Desktop parent was detected by the Broker and cleared the
+  Broker, Agent Host, launcher B, and B's complete process tree;
+- standalone recovery cleaned both exact-SID ACL manifests and deleted both
+  AppContainer profiles;
+- no cross-Workspace output was created.
+
+All nine recorded parent, Broker, host, launcher, and sandbox process IDs were
+independently checked after the run and no longer existed. Both lifecycle
+ledgers reported `state=cleaned`, one cleanup attempt, no cleanup errors, and no
+remaining profile path. The one-time scheduled task and fixture were removed.
+
+The threat decision is conditional rather than capability-by-name trust.
+`registryRead` explicitly exposes read access to HKLM registry hives;
+`lpacAppExperience` and `lpacInstrumentation` lack sufficiently precise public
+semantics. Production must pin the minimum capability manifest per bundled
+runtime and pass the full denial matrix on every supported Windows build.
+Ancestor read/execute metadata exposure is accepted only for canonical path
+resolution; content outside the Workspace remains denied.
+
 ## Passing evidence
 
 [GitHub Actions run 31811224029](https://github.com/MelorTang/scopeguard/actions/runs/31811224029)
@@ -103,11 +138,17 @@ The run verified:
 ## Remaining gates
 
 1. Run both modes and the differential `ALL APPLICATION PACKAGES` proof on Windows 10 x64, then fix the supported-build verification contract for systems where the direct token query is unavailable.
-2. Confirm that the three LPAC capabilities and ancestor directory metadata exposure are acceptable in the product threat model.
-3. Define the production trust boundary for the narrow elevated profile/DACL
-   provisioner. A standard desktop token cannot reliably grant Package SID
-   access to volume ancestors or managed runtimes; partial `icacls /C` success
-   must fail verification.
-4. Add Desktop integration tests proving application exit closes the broker-held Job handle and leaves no managed process, stale ACL grant, or stale package profile.
+2. Minimize and pin capabilities per bundled runtime descriptor. The product
+   threat model conditionally accepts the documented/observed exposure, but the
+   current combined three-capability prototype profile is not a universal
+   production default.
+3. Implement and harden the specified elevated Provisioner interface. A
+   standard desktop token cannot reliably grant Package SID access to volume
+   ancestors or managed runtimes; partial `icacls /C` success must fail
+   verification.
+4. Adapt the passing Broker lifecycle matrix to the eventual Desktop module
+   interface. The native prototype proves parent-exit and concurrent-Run Job
+   behavior, but product code remains disabled while Wayfinder decisions are
+   open.
 
 Until these gates pass, Request Approval and Auto Approve must reject arbitrary local execution rather than fall back to a normal process.
