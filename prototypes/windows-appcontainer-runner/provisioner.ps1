@@ -293,7 +293,7 @@ function Read-ProvisionerRegistry {
 
     $registryFile = Resolve-ProvisionerRegisteredPath `
         -Path $RegistryPath `
-        -Context "Provisioner registry" 
+        -Context "Provisioner registry"
     Assert-RuntimePackSingleHardLink -Path $registryFile
     if ((Get-Item -LiteralPath $registryFile).Length -gt 2MB) {
         throw "Provisioner registry exceeds the 2 MiB limit."
