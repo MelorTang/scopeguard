@@ -4,6 +4,9 @@ This prototype supports issue #8. It measures narrow DOCX, XLSX, PPTX, and PDF
 operations without claiming that the synthetic corpus represents company
 documents or Microsoft Office fidelity.
 
+The current evidence and remaining acceptance gate are recorded in
+[`RESULT.md`](RESULT.md).
+
 ## What it proves
 
 - A DOCX/XLSX/PPTX edit changes one expected package part only.
