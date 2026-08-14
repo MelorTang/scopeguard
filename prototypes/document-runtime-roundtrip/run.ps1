@@ -3,7 +3,6 @@ param(
     [string]$FixtureDirectory = (Join-Path $PSScriptRoot "fixtures"),
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "out"),
     [string]$SofficePath = "",
-    [string]$PdfToPpmPath = "",
     [string]$QpdfPath = "",
     [string]$PythonPath = ""
 )
@@ -105,11 +104,11 @@ function Render-Pdf {
         [string]$OutputPrefix
     )
 
-    Invoke-Checked -Executable $script:PdfToPpm -Arguments @(
-        "-png",
-        "-r",
-        "150",
+    Invoke-Checked -Executable $script:Python -Arguments @(
+        (Join-Path $PSScriptRoot "render_pdf.py"),
+        "--input",
         $PdfPath,
+        "--output-prefix",
         $OutputPrefix
     )
     $rendered = Get-ChildItem -Path "$OutputPrefix-*.png" -File -ErrorAction SilentlyContinue
@@ -151,12 +150,6 @@ if (-not (Test-Path -LiteralPath $FixtureDirectory)) {
 
 $script:Soffice = Resolve-Executable -ExplicitPath $SofficePath -Names @("soffice", "soffice.exe") -KnownPaths @(
     "C:\Program Files\LibreOffice\program\soffice.exe"
-)
-$script:PdfToPpm = Resolve-Executable -ExplicitPath $PdfToPpmPath -Names @("pdftoppm", "pdftoppm.exe") -KnownPaths @(
-    "C:\ProgramData\chocolatey\bin\pdftoppm.exe",
-    "C:\ProgramData\chocolatey\lib\poppler\tools\poppler-*\Library\bin\pdftoppm.exe"
-) -SearchRoots @(
-    "C:\ProgramData\chocolatey\lib\poppler\tools"
 )
 $script:Qpdf = Resolve-Executable -ExplicitPath $QpdfPath -Names @("qpdf", "qpdf.exe") -KnownPaths @(
     "C:\Program Files\qpdf*\bin\qpdf.exe"
@@ -295,7 +288,7 @@ $summary = [ordered]@{
     tools = [ordered]@{
         dotnet = (& $dotnet --version).Trim()
         soffice = $script:Soffice
-        pdftoppm = $script:PdfToPpm
+        pymupdf = (& $script:Python -c "import pymupdf; print(pymupdf.__version__)").Trim()
         qpdf = (& $script:Qpdf --version | Select-Object -First 1).Trim()
         python = (& $script:Python --version).Trim()
     }

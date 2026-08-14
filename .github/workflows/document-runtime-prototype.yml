@@ -24,7 +24,6 @@ jobs:
         shell: pwsh
         run: |
           choco install libreoffice-fresh --version=26.2.3 -y --no-progress
-          choco install poppler --version=26.6.0 -y --no-progress
           choco install qpdf --version=12.3.2 -y --no-progress
           python -m pip install --disable-pip-version-check -r prototypes/document-runtime-roundtrip/requirements.txt
 
