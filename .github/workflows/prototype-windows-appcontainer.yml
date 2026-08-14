@@ -40,7 +40,11 @@ jobs:
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\policy-parity.json
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\boundary-result.json
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\launcher-diagnostics.log
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\*-result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\cmd-result.txt
             ${{ runner.temp }}\scopeguard-lpac-fixture\result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\policy-parity.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\boundary-result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\*-result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\cmd-result.txt

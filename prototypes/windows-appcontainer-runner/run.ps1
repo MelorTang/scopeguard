@@ -318,6 +318,7 @@ try {
 
         $cmdAllowed = Join-Path $workspace "cmd-output.txt"
         $cmdDenied = Join-Path $outside "cmd-outside.txt"
+        $cmdResultPath = Join-Path $workspace "cmd-result.txt"
         $cmdRun = Invoke-SandboxCommand -CommandArguments @(
             "cmd.exe",
             "/d",
@@ -325,13 +326,14 @@ try {
             "/c",
             (Join-Path $workspace "cmd-probe.cmd"),
             $cmdAllowed,
-            $cmdDenied
+            $cmdDenied,
+            $cmdResultPath
         ) -TimeoutSeconds 15
         Add-Check -Checks $checks -Name "cmd-runtime" -Passed (
             $cmdRun.exitCode -eq 0 -and
             (Test-Path -LiteralPath $cmdAllowed) -and
             -not (Test-Path -LiteralPath $cmdDenied)
-        ) -Detail "exit=$($cmdRun.exitCode)"
+        ) -Detail "exit=$($cmdRun.exitCode); result=$(if (Test-Path -LiteralPath $cmdResultPath) { Get-Content -LiteralPath $cmdResultPath -Raw } else { 'missing' })"
 
         foreach ($kind in @("document-worker", "skill", "stdio-mcp")) {
             $workerResultPath = Join-Path $workspace "$kind-result.json"
@@ -353,7 +355,7 @@ try {
                 $workerRun.exitCode -eq 0 -and
                 $null -ne $workerSummary -and
                 $workerSummary.passed
-            ) -Detail "exit=$($workerRun.exitCode)"
+            ) -Detail "exit=$($workerRun.exitCode); result=$($workerSummary | ConvertTo-Json -Compress)"
         }
 
         $pythonResultPath = Join-Path $workspace "python-result.json"
