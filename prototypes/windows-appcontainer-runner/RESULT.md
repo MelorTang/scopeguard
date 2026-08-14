@@ -8,7 +8,7 @@ The regular AppContainer mode also passes the current matrix, but LPAC is prefer
 
 ## Passing evidence
 
-[GitHub Actions run 31763059532](https://github.com/MelorTang/scopeguard/actions/runs/31763059532) passed both AppContainer and LPAC modes on Windows Server 2022.
+[GitHub Actions run 31763241724](https://github.com/MelorTang/scopeguard/actions/runs/31763241724) passed both AppContainer and LPAC modes on Windows Server 2022 from the final prototype commit.
 
 The run verified:
 
