@@ -159,6 +159,36 @@ install the complete pack in an administrator-owned location that the Desktop
 user cannot modify, and verify signatures plus descriptor/file identity. Hashing
 inside a user-writable root does not close a validation-to-launch race.
 
+## Narrow Provisioner protocol checkpoint
+
+The elevated Provisioner prototype now accepts only a bounded authenticated
+envelope. Its prepare payload contains `workspaceId`, `runtimeId`, and a
+caller-assigned execution identity; it cannot carry raw paths, Package SIDs,
+Capabilities, ACLs, runtime roots, or manifest digests. The Provisioner derives
+the profile name and independently resolves a
+strict registered policy, verifies canonical non-reparse paths and single-link
+metadata, verifies the complete runtime pack, derives the AppContainer profile
+and exact ACL plan, and persists the lifecycle ledger.
+
+On Windows 11 build `26200.9168`, Node `24.19.0` passed:
+
+- 20 of 20 authentication, schema, freshness, identifier, registry, reparse,
+  hard-link, runtime-tamper, and unknown-lifecycle checks;
+- 7 of 7 Profile/ACL/LPAC lifecycle checks;
+- exact `registryRead` token evidence, Workspace write, outside/runtime write
+  denial, and parent-secret exclusion;
+- idempotent identical prepare and cleanup, conflict rejection, and rejection
+  of prepare replay after cleanup;
+- one cleanup attempt, no cleanup errors, no profile path, and no remaining
+  Package SID ACE on the Workspace or runtime pack.
+
+The check ran in an elevated one-time task, not an installed Windows service.
+The fixture's HMAC key was generated in memory and zeroed; it does not settle
+Broker identity, named-pipe ACLs, key/handle bootstrap, or same-user renderer
+isolation. Registry and state roots were also test directories rather than
+administrator-owned installation paths. The protocol is therefore a candidate
+service contract, not a production privilege boundary.
+
 ## Passing evidence
 
 [GitHub Actions run 31820442840](https://github.com/MelorTang/scopeguard/actions/runs/31820442840)
@@ -225,10 +255,11 @@ The run verified:
    their recorded versions/digests, signatures, installer ACLs, and pinned
    manifests. The copied-Node checkpoint still requires documented
    `registryRead` exposure and is not a production distribution artifact.
-3. Implement and harden the specified elevated Provisioner interface. A
-   standard desktop token cannot reliably grant Package SID access to volume
-   ancestors or managed runtimes; partial `icacls /C` success must fail
-   verification.
+3. Move the passing Provisioner request/state contract behind an installed
+   Windows service with an OS-authenticated Broker channel, protected
+   registry/state roots, signed identities, crash-safe pre-profile intent, and
+   startup recovery. The in-memory HMAC fixture is not the production trust
+   boundary.
 4. Adapt the passing Broker lifecycle matrix to the eventual Desktop module
    interface. The native prototype proves parent-exit and concurrent-Run Job
    behavior, but product code remains disabled while Wayfinder decisions are

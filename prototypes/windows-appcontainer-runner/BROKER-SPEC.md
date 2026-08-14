@@ -144,6 +144,38 @@ between hashing and process creation. The manifest digest is a trust binding,
 not a substitute for installer ACLs, package signing, or launch-time identity
 verification.
 
+## Provisioner protocol checkpoint
+
+The prototype Provisioner accepts a size-bounded HMAC-SHA-256 envelope and
+authenticates the raw payload bytes before parsing JSON. The payload has an
+exact operation-specific schema, a five-minute freshness window,
+32-hex-character request and execution identities, and only registered
+Workspace/Runtime IDs.
+The request cannot express a path, Package SID, Capability, ACL, runtime root,
+or manifest digest.
+
+The Provisioner independently loads a strict registry, rejects duplicate IDs,
+noncanonical, reparse, alternate-stream, or multiply-linked metadata paths,
+and reuses the runtime-pack verifier. It derives the profile and ledger paths,
+records every exact-SID ACL before mutation, verifies grants and removal, and
+allows only exact prepare retries. A conflicting request or prepare replay after
+cleanup is rejected. Cleanup is idempotent without increasing the cleanup
+attempt count.
+
+On Windows 11 build `26200.9168`, the elevated one-time test host passed 20/20
+request/registry validation checks and 7/7 real lifecycle checks. The prepared
+Node LPAC token exactly contained `registryRead`, wrote the Workspace, was
+denied outside and runtime-pack writes, and inherited no parent sentinel. The
+ledger reached `cleaned` after one attempt with no remaining Profile or exact
+Package SID ACE.
+
+This validates request semantics, not the production transport. The fixture's
+HMAC key exists only in process memory and its registry/state roots are test
+directories. A production Windows service must authenticate the Broker over an
+OS-protected channel, define key or handle bootstrap without renderer access,
+pin the signed Broker/runtime identities, and own the registry and recovery
+roots. Until then the renderer-to-Provisioner boundary is not approved.
+
 ## Capability and metadata threat decision
 
 LPAC remains preferred because it disregards ambient `ALL APPLICATION

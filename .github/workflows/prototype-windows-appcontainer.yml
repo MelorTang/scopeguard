@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/runtime-pack-integration-test.ps1 -KeepFixture
 
+      - name: Validate narrow Sandbox Provisioner contract
+        shell: pwsh
+        run: pwsh -File prototypes/windows-appcontainer-runner/provisioner-integration-test.ps1 -KeepFixture
+
       - name: Run lifecycle crash recovery matrix
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1 -KeepFixture
@@ -79,6 +83,10 @@ jobs:
             ${{ runner.temp }}\scopeguard-runtime-pack-fixture\cleanup-result.json
             ${{ runner.temp }}\scopeguard-runtime-pack-fixture\metadata\*.json
             ${{ runner.temp }}\scopeguard-runtime-pack-fixture\diagnostics\*.log
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\result.json
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\state\*\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\launcher-diagnostics.log
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\launcher-diagnostics.log.child-output.log
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\result.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\lifecycle-ledger.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\recovery-*.json

@@ -105,6 +105,26 @@ installer metadata and install payloads below an administrator-owned location
 that the Desktop user cannot modify. Hash verification in a user-writable root
 does not by itself close the validation-to-launch race.
 
+Validate the narrow elevated Provisioner request and lifecycle contract with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/provisioner-integration-test.ps1
+```
+
+The caller submits an authenticated envelope containing only registered
+Workspace and Runtime IDs plus an execution identity. Raw paths, Package SIDs,
+Capabilities, ACL strings, runtime roots, and manifest digests are not request
+fields. The Provisioner requires an elevated administrator token, resolves its
+own strict registry, re-verifies the pinned runtime pack, derives the profile
+name and exact ACL plan, and makes identical prepare/cleanup requests
+idempotent. Conflicting or post-cleanup replay fails closed.
+
+The Windows 11 checkpoint passed 20/20 request, registry, path, link, freshness,
+and tamper checks plus 7/7 real Profile/ACL/LPAC lifecycle checks. Its ephemeral
+in-memory HMAC key demonstrates envelope integrity only. A production service
+still needs an OS-authenticated Broker channel and key/bootstrap design,
+administrator-owned registry and state roots, and a signed runtime package.
+
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every
