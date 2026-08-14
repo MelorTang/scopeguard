@@ -6,6 +6,7 @@ on:
     branches:
       - codex/prototype-document-runtime
     paths:
+      - ".gitattributes"
       - ".github/workflows/document-runtime-prototype.yml"
       - "prototypes/document-runtime-roundtrip/**"
 
