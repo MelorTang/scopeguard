@@ -365,7 +365,10 @@ try {
 
         $requiredAclPaths = @(
             [pscustomobject]@{ path = $workspace; recursive = $true },
-            [pscustomobject]@{ path = "C:\"; recursive = $false }
+            [pscustomobject]@{
+                path = [IO.Path]::GetPathRoot($workspace)
+                recursive = $false
+            }
         ) + @($runtimeRoots | ForEach-Object {
             [pscustomobject]@{ path = $_; recursive = $true }
         })
