@@ -330,6 +330,24 @@ Handle CreateRestrictedJob() {
     return job;
 }
 
+Handle OpenInheritableNullHandle(DWORD desired_access) {
+    SECURITY_ATTRIBUTES security_attributes{};
+    security_attributes.nLength = sizeof(security_attributes);
+    security_attributes.bInheritHandle = TRUE;
+    Handle handle(CreateFileW(
+        L"NUL",
+        desired_access,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &security_attributes,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr));
+    if (!handle) {
+        ThrowLastError("CreateFileW(NUL)");
+    }
+    return handle;
+}
+
 std::optional<bool> ProcessHasTokenFlag(
     HANDLE process,
     TOKEN_INFORMATION_CLASS information_class,
@@ -367,7 +385,7 @@ int RunInContainer(
     }
 
     Sid package_sid = CreateOrOpenProfile(profile_name);
-    const DWORD attribute_count = lpac ? 2 : 1;
+    const DWORD attribute_count = lpac ? 3 : 2;
     SIZE_T attribute_list_size = 0;
     InitializeProcThreadAttributeList(nullptr, attribute_count, 0, &attribute_list_size);
     if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
@@ -422,8 +440,32 @@ int RunInContainer(
         ThrowLastError("UpdateProcThreadAttribute(ALL_APPLICATION_PACKAGES_POLICY)");
     }
 
+    Handle standard_input = OpenInheritableNullHandle(GENERIC_READ);
+    Handle standard_output = OpenInheritableNullHandle(GENERIC_WRITE);
+    Handle standard_error = OpenInheritableNullHandle(GENERIC_WRITE);
+    std::array<HANDLE, 3> inherited_handles{
+        standard_input.get(),
+        standard_output.get(),
+        standard_error.get(),
+    };
+    if (!UpdateProcThreadAttribute(
+            attribute_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inherited_handles.data(),
+            inherited_handles.size() * sizeof(HANDLE),
+            nullptr,
+            nullptr)) {
+        DeleteProcThreadAttributeList(attribute_list);
+        ThrowLastError("UpdateProcThreadAttribute(HANDLE_LIST)");
+    }
+
     STARTUPINFOEXW startup{};
     startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = standard_input.get();
+    startup.StartupInfo.hStdOutput = standard_output.get();
+    startup.StartupInfo.hStdError = standard_error.get();
     startup.lpAttributeList = attribute_list;
 
     std::wstring command_line = BuildCommandLine(command);
@@ -438,7 +480,7 @@ int RunInContainer(
         command_line.data(),
         nullptr,
         nullptr,
-        FALSE,
+        TRUE,
         creation_flags,
         environment_block.data(),
         cwd.c_str(),
