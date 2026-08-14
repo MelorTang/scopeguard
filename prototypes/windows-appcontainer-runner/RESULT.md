@@ -100,6 +100,11 @@ resolution; content outside the Workspace remains denied.
 
 ## Passing evidence
 
+[GitHub Actions run 31814542432](https://github.com/MelorTang/scopeguard/actions/runs/31814542432)
+passed 36 AppContainer checks, 36 LPAC checks, four crash-recovery checks,
+and all six Desktop Broker lifecycle checks on Windows Server 2022 from commit
+`a191064`.
+
 [GitHub Actions run 31811224029](https://github.com/MelorTang/scopeguard/actions/runs/31811224029)
 passed 36 AppContainer checks, 36 LPAC checks, and all four crash-recovery
 checks on Windows Server 2022. Downloaded cleanup artifacts report

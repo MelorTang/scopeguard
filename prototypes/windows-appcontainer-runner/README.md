@@ -65,9 +65,9 @@ remaining managed process, then recovers both ACL/profile ledgers. The proposed
 production seam and conditional capability threat decision are recorded in
 [`BROKER-SPEC.md`](BROKER-SPEC.md).
 
-The matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168`. The CI workflow
-also runs it on Windows Server 2022; neither result substitutes for the remaining
-Windows 10 x64 release gate.
+The matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168` and in
+[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31814542432).
+Neither result substitutes for the remaining Windows 10 x64 release gate.
 
 Recover an interrupted execution from its ledger with:
 
