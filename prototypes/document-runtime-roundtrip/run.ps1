@@ -15,7 +15,8 @@ function Resolve-Executable {
     param(
         [string]$ExplicitPath,
         [string[]]$Names,
-        [string[]]$KnownPaths = @()
+        [string[]]$KnownPaths = @(),
+        [string[]]$SearchRoots = @()
     )
 
     if ($ExplicitPath) {
@@ -36,6 +37,18 @@ function Resolve-Executable {
         $matches = Get-ChildItem -Path $knownPath -File -ErrorAction SilentlyContinue
         if ($matches) {
             return $matches[0].FullName
+        }
+    }
+
+    foreach ($searchRoot in $SearchRoots) {
+        if (-not (Test-Path -LiteralPath $searchRoot)) {
+            continue
+        }
+        $match = Get-ChildItem -LiteralPath $searchRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in $Names } |
+            Select-Object -First 1
+        if ($match) {
+            return $match.FullName
         }
     }
 
@@ -142,6 +155,8 @@ $script:Soffice = Resolve-Executable -ExplicitPath $SofficePath -Names @("soffic
 $script:PdfToPpm = Resolve-Executable -ExplicitPath $PdfToPpmPath -Names @("pdftoppm", "pdftoppm.exe") -KnownPaths @(
     "C:\ProgramData\chocolatey\bin\pdftoppm.exe",
     "C:\ProgramData\chocolatey\lib\poppler\tools\poppler-*\Library\bin\pdftoppm.exe"
+) -SearchRoots @(
+    "C:\ProgramData\chocolatey\lib\poppler\tools"
 )
 $script:Qpdf = Resolve-Executable -ExplicitPath $QpdfPath -Names @("qpdf", "qpdf.exe") -KnownPaths @(
     "C:\Program Files\qpdf*\bin\qpdf.exe"
