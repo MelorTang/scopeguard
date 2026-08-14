@@ -40,6 +40,10 @@ and `supportedClientMatrixValidated` therefore remain false.
 
 ## Passing evidence
 
+[GitHub Actions run 31804862628](https://github.com/MelorTang/scopeguard/actions/runs/31804862628)
+passed the differential `ALL APPLICATION PACKAGES` matrix in both AppContainer
+and LPAC modes on Windows Server 2022 from commit `349405e`.
+
 [GitHub Actions run 31763241724](https://github.com/MelorTang/scopeguard/actions/runs/31763241724) passed both AppContainer and LPAC modes on Windows Server 2022 from the final prototype commit.
 
 The run verified:
