@@ -411,7 +411,6 @@ function isTrustedRendererUrl(value: string): boolean {
   return checkTrustedRendererUrl(value, {
     developmentRendererUrl,
     rendererDirectory,
-    platform: process.platform,
   });
 }
 

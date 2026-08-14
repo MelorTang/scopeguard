@@ -33,7 +33,6 @@ export function isTrustedRendererUrl(
   options: {
     developmentRendererUrl: string | null;
     rendererDirectory: string;
-    platform?: NodeJS.Platform;
   },
 ): boolean {
   try {
@@ -47,10 +46,10 @@ export function isTrustedRendererUrl(
 
     const filePath = fileURLToPath(url);
     const pathFromRenderer = relative(options.rendererDirectory, filePath);
-    const separator = options.platform === "win32" ? "\\" : "/";
     return (
       pathFromRenderer !== ".."
-      && !pathFromRenderer.startsWith(`..${separator}`)
+      && !pathFromRenderer.startsWith("../")
+      && !pathFromRenderer.startsWith("..\\")
       && !isAbsolute(pathFromRenderer)
     );
   } catch {

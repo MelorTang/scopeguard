@@ -108,7 +108,7 @@ test("cancels a bounded file read", async () => {
   }
 });
 
-test("writes files atomically inside the project and preserves file mode", async () => {
+test("writes files atomically and preserves file mode where supported", async () => {
   const fixture = await createFixture();
   try {
     const target = join(fixture.project, "notes.md");
@@ -124,7 +124,9 @@ test("writes files atomically inside the project and preserves file mode", async
       isError: false,
     });
     assert.equal(await readFile(target, "utf8"), "new content");
-    assert.equal((await stat(target)).mode & 0o777, 0o750);
+    if (process.platform !== "win32") {
+      assert.equal((await stat(target)).mode & 0o777, 0o750);
+    }
   } finally {
     await fixture.cleanup();
   }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import type {
@@ -668,7 +668,11 @@ test("registers a successful write_file result as a provenance-rich file Artifac
     assert.equal(artifact?.mimeType, "text/markdown");
     assert.equal(
       artifact?.filePath,
-      "/tmp/scopeguard-application-test/reports/quarterly-report.md",
+      resolve(
+        workspace.project.rootPath,
+        "reports",
+        "quarterly-report.md",
+      ),
     );
   } finally {
     fixture.store.close();
