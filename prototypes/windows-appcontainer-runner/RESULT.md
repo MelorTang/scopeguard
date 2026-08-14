@@ -38,7 +38,37 @@ self-test when Windows returns `ERROR_INVALID_PARAMETER`.
 This result does not complete the supported client matrix. `productionReady`
 and `supportedClientMatrixValidated` therefore remain false.
 
+## Lifecycle recovery checkpoint
+
+Commit `3f9b06b` adds a durable lifecycle ledger shared by normal shutdown and
+standalone crash recovery. Every Package SID ACL mutation is recorded before it
+is attempted, verified from the resulting DACL, removed by exact SID, and
+verified absent before the AppContainer profile is deleted. Profile deletion is
+retryable, and repeating recovery is idempotent.
+
+On the Windows 11 client:
+
+- regular AppContainer passed 36 of 36 checks from a clean ACL baseline;
+- LPAC passed all 36 behavioral checks, or 36 of 37 in strict mode with only
+  the known unavailable LPAC token-information query failing;
+- the crash-recovery matrix passed 4 of 4 checks: forced host exit, durable
+  recovery evidence, ACL/Profile removal, and idempotent replay;
+- five Package SIDs left by older prototype runs were identified across the
+  exact ScopeGuard ancestor/runtime grant set and removed. A subsequent run
+  left no Package SID ACE on those roots.
+
+A limited-token provisioning attempt was rejected by DACL verification even
+though `icacls /C` returned success after skipping protected paths. Production
+must therefore place profile and DACL lifecycle operations behind a narrow
+elevated provisioner or broker. Agent children remain unprivileged and never
+receive that token.
+
 ## Passing evidence
+
+[GitHub Actions run 31811224029](https://github.com/MelorTang/scopeguard/actions/runs/31811224029)
+passed 36 AppContainer checks, 36 LPAC checks, and all four crash-recovery
+checks on Windows Server 2022. Downloaded cleanup artifacts report
+`state=cleaned`, no remaining ACL grants, and no profile path for both modes.
 
 [GitHub Actions run 31804862628](https://github.com/MelorTang/scopeguard/actions/runs/31804862628)
 passed the differential `ALL APPLICATION PACKAGES` matrix in both AppContainer
