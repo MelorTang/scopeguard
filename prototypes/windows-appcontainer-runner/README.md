@@ -119,11 +119,12 @@ own strict registry, re-verifies the pinned runtime pack, derives the profile
 name and exact ACL plan, and makes identical prepare/cleanup requests
 idempotent. Conflicting or post-cleanup replay fails closed.
 
-The Windows 11 checkpoint passed 20/20 request, registry, path, link, freshness,
-and tamper checks plus 7/7 real Profile/ACL/LPAC lifecycle checks. Its ephemeral
-in-memory HMAC key demonstrates envelope integrity only. A production service
-still needs an OS-authenticated Broker channel and key/bootstrap design,
-administrator-owned registry and state roots, and a signed runtime package.
+The Windows 11 and Windows Server 2022 checkpoints passed 20/20 request,
+registry, path, link, freshness, and tamper checks plus 7/7 real
+Profile/ACL/LPAC lifecycle checks. The ephemeral in-memory HMAC key demonstrates
+envelope integrity only. A production service still needs an OS-authenticated
+Broker channel and key/bootstrap design, administrator-owned registry and state
+roots, and a signed runtime package.
 
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
@@ -133,7 +134,7 @@ production seam and conditional capability threat decision are recorded in
 [`BROKER-SPEC.md`](BROKER-SPEC.md).
 
 The Broker matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168` and in
-[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31820442840).
+[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31824339077).
 Neither result substitutes for the remaining Windows 10 x64 release gate.
 
 Recover an interrupted execution from its ledger with:

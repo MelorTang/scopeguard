@@ -189,7 +189,22 @@ isolation. Registry and state roots were also test directories rather than
 administrator-owned installation paths. The protocol is therefore a candidate
 service contract, not a production privilege boundary.
 
+The same matrix passed on Windows Server 2022 build `20348` with Node
+`22.23.2` (`SHA-256
+0d0f5e39f9f3d9587bc19f73eab3c2c9c4903fd02d6dbf9c853dd81b3d95fad4`).
+The downloaded artifact records 20/20 validation checks, 7/7 lifecycle checks,
+exact token evidence, all six ACL ledger entries removed, one cleanup attempt,
+no cleanup errors, and no remaining Profile path.
+
 ## Passing evidence
+
+[GitHub Actions run 31824339077](https://github.com/MelorTang/scopeguard/actions/runs/31824339077)
+passed the complete Windows Server 2022 matrix from commit `d4317b1`, including
+the new narrow Provisioner's 20 request/registry checks and 7 real lifecycle
+checks. The same run retained all earlier AppContainer, LPAC, Capability,
+runtime-pack, crash-recovery, and Desktop Broker results. Downloaded
+Provisioner evidence reports `state=cleaned`, one cleanup attempt, no cleanup
+error, and every exact-SID ACL entry removed.
 
 [GitHub Actions run 31820442840](https://github.com/MelorTang/scopeguard/actions/runs/31820442840)
 passed the complete Windows Server 2022 matrix from commit `c06671d`: 36

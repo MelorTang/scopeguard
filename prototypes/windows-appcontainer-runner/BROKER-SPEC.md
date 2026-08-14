@@ -169,6 +169,10 @@ denied outside and runtime-pack writes, and inherited no parent sentinel. The
 ledger reached `cleaned` after one attempt with no remaining Profile or exact
 Package SID ACE.
 
+Windows Server 2022 build `20348` produced the same 20/20 and 7/7 result with
+Node `22.23.2`. Its downloaded ledger records all six ACL entries as `removed`,
+one cleanup attempt, no cleanup error, and no remaining Profile path.
+
 This validates request semantics, not the production transport. The fixture's
 HMAC key exists only in process memory and its registry/state roots are test
 directories. A production Windows service must authenticate the Broker over an
