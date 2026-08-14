@@ -201,6 +201,17 @@ std::wstring SidToString(PSID sid) {
     return value;
 }
 
+std::wstring GetProfilePath(PSID package_sid) {
+    const std::wstring sid_string = SidToString(package_sid);
+    PWSTR raw_profile_path = nullptr;
+    CheckHresult(
+        GetAppContainerFolderPath(sid_string.c_str(), &raw_profile_path),
+        "GetAppContainerFolderPath");
+    const std::wstring profile_path(raw_profile_path);
+    CoTaskMemFree(raw_profile_path);
+    return profile_path;
+}
+
 std::wstring QuoteArgument(const std::wstring& argument) {
     if (argument.empty()) {
         return L"\"\"";
@@ -263,13 +274,7 @@ std::vector<wchar_t> BuildEnvironmentBlock(PSID package_sid) {
     }
     FreeEnvironmentStringsW(raw_environment);
 
-    const std::wstring sid_string = SidToString(package_sid);
-    PWSTR raw_profile_path = nullptr;
-    CheckHresult(
-        GetAppContainerFolderPath(sid_string.c_str(), &raw_profile_path),
-        "GetAppContainerFolderPath");
-    const std::wstring profile_path(raw_profile_path);
-    CoTaskMemFree(raw_profile_path);
+    const std::wstring profile_path = GetProfilePath(package_sid);
     const std::wstring temp_path = profile_path + L"\\Temp";
     if (!CreateDirectoryW(temp_path.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
         ThrowLastError("CreateDirectoryW(AppContainer Temp)");
@@ -405,6 +410,32 @@ std::optional<bool> ProcessHasTokenFlag(
     return value != 0;
 }
 
+bool ProcessHasPackageSid(HANDLE process, PSID expected_sid) {
+    HANDLE raw_token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &raw_token)) {
+        ThrowLastError("OpenProcessToken(child package SID)");
+    }
+    Handle token(raw_token);
+    DWORD required = 0;
+    GetTokenInformation(token.get(), TokenAppContainerSid, nullptr, 0, &required);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || required == 0) {
+        ThrowLastError("GetTokenInformation(child package SID size)");
+    }
+    std::vector<std::byte> storage(required);
+    if (!GetTokenInformation(
+            token.get(),
+            TokenAppContainerSid,
+            storage.data(),
+            required,
+            &required)) {
+        ThrowLastError("GetTokenInformation(child package SID)");
+    }
+    const auto* information =
+        reinterpret_cast<const TOKEN_APPCONTAINER_INFORMATION*>(storage.data());
+    return information->TokenAppContainer != nullptr &&
+        EqualSid(information->TokenAppContainer, expected_sid);
+}
+
 int RunInContainer(
     const std::wstring& profile_name,
     const std::wstring& cwd,
@@ -534,6 +565,11 @@ int RunInContainer(
         throw std::runtime_error("created process does not have an AppContainer token");
     }
     Diagnostic("appcontainer-token-verified");
+    if (!ProcessHasPackageSid(process.get(), package_sid.get())) {
+        TerminateProcess(process.get(), 126);
+        throw std::runtime_error("created process package SID does not match the requested profile");
+    }
+    Diagnostic("package-sid-verified");
     if (lpac) {
         const std::optional<bool> is_lpac =
             ProcessHasTokenFlag(
@@ -594,7 +630,7 @@ std::wstring RequireValue(const std::vector<std::wstring>& args, std::size_t& in
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc < 2) {
-            throw std::runtime_error("usage: scopeguard-appcontainer <profile|delete|run> ...");
+            throw std::runtime_error("usage: scopeguard-appcontainer <profile|profile-path|delete|run> ...");
         }
         std::vector<std::wstring> args(argv + 1, argv + argc);
 
@@ -604,6 +640,19 @@ int wmain(int argc, wchar_t** argv) {
             }
             Sid sid = CreateOrOpenProfile(args[2]);
             std::wcout << SidToString(sid.get()) << L"\n";
+            return 0;
+        }
+
+        if (args[0] == L"profile-path") {
+            if (args.size() != 3 || args[1] != L"--name") {
+                throw std::runtime_error("usage: profile-path --name <name>");
+            }
+            PSID raw_sid = nullptr;
+            CheckHresult(
+                DeriveAppContainerSidFromAppContainerName(args[2].c_str(), &raw_sid),
+                "DeriveAppContainerSidFromAppContainerName");
+            Sid sid(raw_sid);
+            std::wcout << GetProfilePath(sid.get()) << L"\n";
             return 0;
         }
 

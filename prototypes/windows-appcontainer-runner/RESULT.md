@@ -74,7 +74,10 @@ The run verified:
 
 1. Run both modes and the differential `ALL APPLICATION PACKAGES` proof on Windows 10 x64, then fix the supported-build verification contract for systems where the direct token query is unavailable.
 2. Confirm that the three LPAC capabilities and ancestor directory metadata exposure are acceptable in the product threat model.
-3. Specify transactional ACL cleanup and crash recovery. The prototype relies on ephemeral runners.
-4. Add Desktop integration tests proving application exit closes the broker-held Job handle and leaves no managed process or stale package profile.
+3. Define the production trust boundary for the narrow elevated profile/DACL
+   provisioner. A standard desktop token cannot reliably grant Package SID
+   access to volume ancestors or managed runtimes; partial `icacls /C` success
+   must fail verification.
+4. Add Desktop integration tests proving application exit closes the broker-held Job handle and leaves no managed process, stale ACL grant, or stale package profile.
 
 Until these gates pass, Request Approval and Auto Approve must reject arbitrary local execution rather than fall back to a normal process.

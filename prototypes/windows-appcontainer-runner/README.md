@@ -8,6 +8,8 @@ This throwaway prototype is the second candidate for [issue #14](https://github.
 - no network capabilities;
 - a nested Job Object with kill-on-close, active-process limits, and UI restrictions;
 - an allowlisted process environment and explicit standard-handle list;
+- a durable lifecycle ledger with exact Package SID ACL removal, profile
+  deletion retries, and standalone crash recovery;
 - fail-closed setup and launch behavior.
 
 The matrix includes a differential `ALL APPLICATION PACKAGES` sentinel outside
@@ -30,6 +32,31 @@ pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode lpac
 pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode lpac -RequireLpacTokenVerification
 ```
 
-The script creates a temporary AppContainer profile and adds temporary ACL entries for that profile SID. The GitHub Actions workflow runs on an ephemeral Windows host.
+The script creates a temporary AppContainer profile and records every ACL
+mutation before applying it. Normal shutdown invokes the same recovery path as
+crash recovery: remove only grant ACEs for the unique Package SID, verify their
+absence, and then delete the AppContainer profile. A failed cleanup retains the
+ledger and fixture for another recovery attempt.
+
+Provisioning access to volume ancestors and managed runtimes commonly requires
+an elevated token because those paths are not owned by a standard desktop
+process. Production integration therefore needs a narrow elevated provisioner
+or broker for profile and DACL lifecycle operations. Conversation and Agent
+processes remain unprivileged AppContainer children and never receive that
+token. The provisioner must verify every requested ACE after `icacls`; command
+exit code alone is insufficient because `/C` can continue past denied paths.
+
+Run the standalone crash-recovery matrix with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1
+```
+
+Recover an interrupted execution from its ledger with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/recover.ps1 `
+  -LedgerPath C:\path\to\lifecycle-ledger.json
+```
 
 Use `-RequireLpacTokenVerification` for the mandatory Windows 10/11 client runs. Windows Server 2022 returned `ERROR_INVALID_PARAMETER` for that token information query even though the documented LPAC creation attribute and semantic boundary checks succeeded.

@@ -13,6 +13,8 @@ if (-not $IsWindows) {
     throw "This prototype must run on Windows with PowerShell 7."
 }
 
+. (Join-Path $PSScriptRoot "lifecycle.ps1")
+
 $fixtureBase = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
 $fixtureRoot = Join-Path $fixtureBase "scopeguard-$Mode-fixture"
 $workspace = Join-Path $fixtureRoot "workspace"
@@ -20,6 +22,8 @@ $outside = Join-Path $fixtureRoot "outside"
 $allPackagesArea = Join-Path $fixtureRoot "all-application-packages"
 $resultPath = Join-Path $fixtureRoot "result.json"
 $policyResultPath = Join-Path $fixtureRoot "policy-parity.json"
+$lifecycleLedgerPath = Join-Path $fixtureRoot "lifecycle-ledger.json"
+$cleanupResultPath = Join-Path $fixtureRoot "cleanup-result.json"
 $launcherDiagnosticsPath = Join-Path $workspace "launcher-diagnostics.log"
 $childOutputPath = "$launcherDiagnosticsPath.child-output.log"
 $profileName = "ScopeGuardPrototype_$([guid]::NewGuid().ToString('N'))"
@@ -193,17 +197,41 @@ $profileSid = (& $launcher profile --name $profileName).Trim()
 if ($LASTEXITCODE -ne 0 -or $profileSid -notmatch '^S-1-15-2-') {
     throw "Failed to create the AppContainer profile or resolve its package SID."
 }
+$profilePath = (& $launcher profile-path --name $profileName).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $profilePath) {
+    & $launcher delete --name $profileName
+    throw "Failed to resolve the AppContainer profile path."
+}
+$lifecycleInitialized = $false
+$cleanupPassed = $false
 
 try {
+    New-SandboxLifecycleLedger `
+        -Path $lifecycleLedgerPath `
+        -ProfileName $profileName `
+        -PackageSid $profileSid `
+        -ProfilePath $profilePath | Out-Null
+    $lifecycleInitialized = $true
     Write-Host "[$Mode] Granting package SID access to workspace and managed runtimes"
-    Invoke-IcaclsGrant -Path $workspace -Grant "*$($profileSid):(OI)(CI)(M)" -Recursive
+    Grant-SandboxAcl `
+        -LedgerPath $lifecycleLedgerPath `
+        -Path $workspace `
+        -Grant "(OI)(CI)(M)" `
+        -Recursive
     $workspaceAncestor = [IO.Directory]::GetParent($workspace)
     while ($null -ne $workspaceAncestor) {
-        Invoke-IcaclsGrant -Path $workspaceAncestor.FullName -Grant "*$($profileSid):(RX)"
+        Grant-SandboxAcl `
+            -LedgerPath $lifecycleLedgerPath `
+            -Path $workspaceAncestor.FullName `
+            -Grant "(RX)"
         $workspaceAncestor = $workspaceAncestor.Parent
     }
     foreach ($runtimeRoot in $runtimeRoots) {
-        Invoke-IcaclsGrant -Path $runtimeRoot -Grant "*$($profileSid):(OI)(CI)(RX)" -Recursive
+        Grant-SandboxAcl `
+            -LedgerPath $lifecycleLedgerPath `
+            -Path $runtimeRoot `
+            -Grant "(OI)(CI)(RX)" `
+            -Recursive
     }
     New-Item -ItemType Junction -Path (Join-Path $workspace "junction-outside") -Target $outside | Out-Null
     New-Item -ItemType HardLink -Path $hardLinkPath -Target $hardLinkTarget | Out-Null
@@ -334,6 +362,29 @@ try {
             (Test-Path -LiteralPath $powershellAllowed) -and
             -not (Test-Path -LiteralPath $powershellDenied)
         ) -Detail "exit=$($powershellRun.exitCode)"
+
+        $requiredAclPaths = @(
+            [pscustomobject]@{ path = $workspace; recursive = $true },
+            [pscustomobject]@{ path = "C:\"; recursive = $false }
+        ) + @($runtimeRoots | ForEach-Object {
+            [pscustomobject]@{ path = $_; recursive = $true }
+        })
+        $missingRequiredAcls = @($requiredAclPaths | Where-Object {
+            Test-SandboxSidAceAbsent `
+                -Path $_.path `
+                -PackageSid $profileSid `
+                -Recursive $_.recursive
+        })
+        $missingRequiredAclDetail = if ($missingRequiredAcls.Count -eq 0) {
+            "all-present"
+        }
+        else {
+            @($missingRequiredAcls | ForEach-Object path) |
+                ConvertTo-Json -Compress
+        }
+        Add-Check -Checks $checks -Name "lifecycle-acls-present-before-runtime-probes" -Passed (
+            $missingRequiredAcls.Count -eq 0
+        ) -Detail $missingRequiredAclDetail
 
         $cmdAllowed = Join-Path $workspace "cmd-output.txt"
         $cmdDenied = Join-Path $outside "cmd-outside.txt"
@@ -504,8 +555,30 @@ try {
     }
 }
 finally {
-    & $launcher delete --name $profileName
-    if (-not $KeepFixture -and (Test-Path -LiteralPath $fixtureRoot)) {
-        Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+    try {
+        if ($lifecycleInitialized) {
+            $cleanupResult = Invoke-SandboxLifecycleRecovery `
+                -LedgerPath $lifecycleLedgerPath `
+                -Launcher $launcher
+        }
+        else {
+            & $launcher delete --name $profileName
+            $cleanupResult = [ordered]@{
+                passed = $LASTEXITCODE -eq 0
+                state = if ($LASTEXITCODE -eq 0) { "cleaned" } else { "cleanup-failed" }
+                errors = @()
+            }
+        }
+        $cleanupResult | ConvertTo-Json -Depth 12 |
+            Set-Content -LiteralPath $cleanupResultPath -Encoding utf8
+        $cleanupPassed = $cleanupResult.passed
+        if (-not $cleanupPassed) {
+            throw "Sandbox lifecycle cleanup failed. See $cleanupResultPath."
+        }
+    }
+    finally {
+        if (-not $KeepFixture -and $cleanupPassed -and (Test-Path -LiteralPath $fixtureRoot)) {
+            Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+        }
     }
 }

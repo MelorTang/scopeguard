@@ -29,6 +29,10 @@ jobs:
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode lpac -KeepFixture
 
+      - name: Run lifecycle crash recovery matrix
+        shell: pwsh
+        run: pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1 -KeepFixture
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -38,6 +42,8 @@ jobs:
           path: |
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\result.json
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\policy-parity.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\cleanup-result.json
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\boundary-result.json
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\launcher-diagnostics.log
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\launcher-diagnostics.log.child-output.log
@@ -45,8 +51,13 @@ jobs:
             ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\cmd-result.txt
             ${{ runner.temp }}\scopeguard-lpac-fixture\result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\policy-parity.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\cleanup-result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\boundary-result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log.child-output.log
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\*-result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\cmd-result.txt
+            ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\result.json
+            ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\recovery-*.json
