@@ -34,6 +34,23 @@ The same six Open XML fixtures passed the structure and LibreOffice render
 matrix on macOS. The worker also built locally with .NET SDK 8.0.424 with zero
 warnings and zero errors.
 
+## Windows 11 local checkpoint
+
+On 2026-08-14, the public matrix was rerun locally on a Windows 11 25H2 x64
+client, build `26200.9168`. All seven fixtures passed again with the same page
+counts and bounded pixel ratios shown above. Source hashes remained unchanged,
+only the intended Open XML parts changed, no new validation errors appeared,
+and the qpdf rewrite and rotation outputs passed structural checks.
+
+The local toolchain was .NET SDK 8.0.424, Python 3.12.10, Pillow 12.3.0,
+PyMuPDF 1.28.2, qpdf 12.3.2, and LibreOffice 26.2.5.2. LibreOffice is newer
+than the pinned 26.2.3 prototype baseline, so this is supplemental client
+evidence rather than a replacement for the pinned run.
+
+This run used only the public corpus and LibreOffice rendering. It does not
+satisfy the private company fixture or Microsoft Office desktop acceptance
+gates.
+
 ## Preliminary V1 boundary
 
 Evidence currently supports these narrow operations:
