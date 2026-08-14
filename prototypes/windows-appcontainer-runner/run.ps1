@@ -191,6 +191,11 @@ if ($LASTEXITCODE -ne 0 -or $profileSid -notmatch '^S-1-15-2-') {
 try {
     Write-Host "[$Mode] Granting package SID access to workspace and managed runtimes"
     Invoke-IcaclsGrant -Path $workspace -Grant "*$($profileSid):(OI)(CI)(M)" -Recursive
+    $workspaceAncestor = [IO.Directory]::GetParent($workspace)
+    while ($null -ne $workspaceAncestor) {
+        Invoke-IcaclsGrant -Path $workspaceAncestor.FullName -Grant "*$($profileSid):(X,RA)"
+        $workspaceAncestor = $workspaceAncestor.Parent
+    }
     foreach ($runtimeRoot in $runtimeRoots) {
         Invoke-IcaclsGrant -Path $runtimeRoot -Grant "*$($profileSid):(OI)(CI)(RX)" -Recursive
     }
