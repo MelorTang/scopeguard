@@ -193,7 +193,7 @@ try {
     Invoke-IcaclsGrant -Path $workspace -Grant "*$($profileSid):(OI)(CI)(M)" -Recursive
     $workspaceAncestor = [IO.Directory]::GetParent($workspace)
     while ($null -ne $workspaceAncestor) {
-        Invoke-IcaclsGrant -Path $workspaceAncestor.FullName -Grant "*$($profileSid):(X,RA)"
+        Invoke-IcaclsGrant -Path $workspaceAncestor.FullName -Grant "*$($profileSid):(RX)"
         $workspaceAncestor = $workspaceAncestor.Parent
     }
     foreach ($runtimeRoot in $runtimeRoots) {
