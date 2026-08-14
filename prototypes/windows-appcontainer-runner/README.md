@@ -79,6 +79,26 @@ checks passed on Windows 11 build `26200.9168` and Windows Server 2022 build
 `20348`. Both selected the same minimum manifests. `lpacAppExperience` was not
 required by any representative runtime.
 
+Validate the integrity and LPAC behavior of a copied, ScopeGuard-owned Node
+runtime pack with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/runtime-pack-integration-test.ps1
+```
+
+The prototype requires a caller-pinned manifest SHA-256, an exact schema and
+file inventory, relative non-reparse paths, canonical Capability ordering, and
+matching file sizes and SHA-256 digests before creating an AppContainer profile.
+Named alternate streams and payloads with multiple hard links are rejected.
+It then runs all eight Capability subsets from freshly verified descriptors.
+The fixture copies the machine's Node executable into an isolated pack root; it
+does not claim to be the final signed distribution artifact.
+
+Production must obtain the expected manifest digest from signed application or
+installer metadata and install payloads below an administrator-owned location
+that the Desktop user cannot modify. Hash verification in a user-writable root
+does not by itself close the validation-to-launch race.
+
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every

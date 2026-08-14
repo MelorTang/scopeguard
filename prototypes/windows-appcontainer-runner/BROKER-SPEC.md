@@ -124,6 +124,26 @@ and provision its traversal/read-execute ACL at install time. Recursively
 granting a new Package SID across arbitrary system Python, Node, or PowerShell
 installations for every Run is prototype behavior, not the production design.
 
+The Broker resolves a runtime descriptor ID through installer-owned metadata;
+the caller never supplies a runtime root, executable path, Capability list, or
+manifest digest. Before provisioning and again immediately before launch, the
+resolver must verify:
+
+- the expected manifest digest from signed application/installer metadata;
+- an exact versioned schema with no duplicate or unknown properties;
+- a relative executable path and complete case-insensitive payload inventory;
+- no traversal, absolute/device path, alternate stream, reparse point, or
+  multiply linked payload;
+- every payload size and SHA-256 digest;
+- the descriptor's canonical allowlisted Capability manifest.
+
+The runtime root must be installed under an administrator-owned, versioned
+location that is not writable by the Desktop user or LPAC identity. Validation
+inside a user-writable directory is not an atomic defense against replacement
+between hashing and process creation. The manifest digest is a trust binding,
+not a substitute for installer ACLs, package signing, or launch-time identity
+verification.
+
 ## Capability and metadata threat decision
 
 LPAC remains preferred because it disregards ambient `ALL APPLICATION

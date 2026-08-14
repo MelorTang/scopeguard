@@ -123,6 +123,34 @@ production must repeat it against ScopeGuard-bundled immutable runtimes and try
 to remove `registryRead`. Ancestor metadata exposure remains limited to
 canonical path resolution; content outside the Workspace stays denied.
 
+## Bundled Node runtime-pack checkpoint
+
+The runtime-pack prototype copies the installed Node executable into an isolated
+ScopeGuard-owned payload root, generates an external descriptor manifest, and
+requires a caller-pinned manifest SHA-256 before parsing any descriptor field.
+The strict resolver rejects duplicate or extra JSON properties, path traversal,
+absolute paths, unlisted executables, unsupported/duplicate/noncanonical
+Capabilities, payload additions/removal/tampering, named alternate streams,
+multiple hard links, and reparse roots. It verifies an exact file inventory,
+sizes, SHA-256 digests, executable path, and Capability manifest before any
+AppContainer profile is created.
+
+On Windows 11 build `26200.9168`, Node `24.19.0` passed:
+
+- 17 of 17 valid/invalid runtime-pack checks;
+- exact Token Capability evidence for all eight Capability subsets;
+- the same minimum manifest, `registryRead`;
+- Workspace write, outside-write denial, runtime-pack-write denial, and parent
+  secret exclusion for every passing subset;
+- one-attempt ACL/Profile cleanup with no remaining error or profile path.
+
+This checkpoint does not approve a production package. The test payload is a
+copy of the machine runtime, not a signed ScopeGuard artifact. Production must
+pin the expected manifest digest through signed application/installer metadata,
+install the complete pack in an administrator-owned location that the Desktop
+user cannot modify, and verify signatures plus descriptor/file identity. Hashing
+inside a user-writable root does not close a validation-to-launch race.
+
 ## Passing evidence
 
 [GitHub Actions run 31817961995](https://github.com/MelorTang/scopeguard/actions/runs/31817961995)
@@ -177,9 +205,9 @@ The run verified:
 
 1. Run both modes and the differential `ALL APPLICATION PACKAGES` proof on Windows 10 x64, then fix the supported-build verification contract for systems where the direct token query is unavailable.
 2. Bundle immutable ScopeGuard-owned runtimes, repeat the 8-subset matrix for
-   their recorded versions/digests, and pin the resulting manifests. The
-   system-runtime checkpoint still requires documented `registryRead` exposure
-   and is not a production default.
+   their recorded versions/digests, signatures, installer ACLs, and pinned
+   manifests. The copied-Node checkpoint still requires documented
+   `registryRead` exposure and is not a production distribution artifact.
 3. Implement and harden the specified elevated Provisioner interface. A
    standard desktop token cannot reliably grant Package SID access to volume
    ancestors or managed runtimes; partial `icacls /C` success must fail

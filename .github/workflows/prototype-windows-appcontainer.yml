@@ -33,6 +33,10 @@ jobs:
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/runtime-capability-matrix.ps1 -KeepFixture
 
+      - name: Validate bundled Node runtime pack
+        shell: pwsh
+        run: pwsh -File prototypes/windows-appcontainer-runner/runtime-pack-integration-test.ps1 -KeepFixture
+
       - name: Run lifecycle crash recovery matrix
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1 -KeepFixture
@@ -70,6 +74,11 @@ jobs:
             ${{ runner.temp }}\scopeguard-runtime-capability-fixture\lifecycle-ledger.json
             ${{ runner.temp }}\scopeguard-runtime-capability-fixture\cleanup-result.json
             ${{ runner.temp }}\scopeguard-runtime-capability-fixture\diagnostics\*.log
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\result.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\cleanup-result.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\metadata\*.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\diagnostics\*.log
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\result.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\lifecycle-ledger.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\recovery-*.json
