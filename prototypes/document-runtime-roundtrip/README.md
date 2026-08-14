@@ -24,9 +24,8 @@ the document content and must be handled at the same sensitivity as the source.
 
 - PowerShell 7
 - .NET 8 SDK
-- Python 3 with `Pillow==12.3.0`
+- Python 3 with `Pillow==12.3.0` and `PyMuPDF==1.28.2`
 - LibreOffice Fresh 26.2.3
-- Poppler 26.6.0 (`pdftoppm`)
 - qpdf 12.3.2
 
 The versions above are the pinned prototype baseline, not the final product
