@@ -87,7 +87,7 @@ production seam and conditional capability threat decision are recorded in
 [`BROKER-SPEC.md`](BROKER-SPEC.md).
 
 The Broker matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168` and in
-[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31817295712).
+[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31817961995).
 Neither result substitutes for the remaining Windows 10 x64 release gate.
 
 Recover an interrupted execution from its ledger with:

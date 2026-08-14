@@ -125,12 +125,13 @@ canonical path resolution; content outside the Workspace stays denied.
 
 ## Passing evidence
 
-[GitHub Actions run 31817295712](https://github.com/MelorTang/scopeguard/actions/runs/31817295712)
+[GitHub Actions run 31817961995](https://github.com/MelorTang/scopeguard/actions/runs/31817961995)
 passed 36 AppContainer checks, 36 LPAC checks, all 32 Capability combinations,
 three malformed-manifest rejection checks, four crash-recovery checks, and all
 six Desktop Broker lifecycle checks on Windows Server 2022 from commit
-`b4777b8`. The downloaded Capability ledger reported `state=cleaned`, one
-cleanup attempt, and no cleanup error.
+`7453f77`. The downloaded result bound each runtime path/version to its SHA-256;
+the Capability ledger reported `state=cleaned`, one cleanup attempt, and no
+cleanup error.
 
 [GitHub Actions run 31814542432](https://github.com/MelorTang/scopeguard/actions/runs/31814542432)
 passed 36 AppContainer checks, 36 LPAC checks, four crash-recovery checks,
