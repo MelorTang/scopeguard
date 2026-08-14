@@ -70,6 +70,22 @@ function Invoke-Checked {
     }
 }
 
+function Wait-ForFile {
+    param(
+        [string]$Path,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            return
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Timed out waiting for output file: $Path"
+}
+
 function Convert-OfficeToPdf {
     param(
         [string]$InputPath,
@@ -92,9 +108,7 @@ function Convert-OfficeToPdf {
         $InputPath
     )
     $pdfPath = Join-Path $DestinationDirectory "$([IO.Path]::GetFileNameWithoutExtension($InputPath)).pdf"
-    if (-not (Test-Path -LiteralPath $pdfPath)) {
-        throw "LibreOffice did not create the expected PDF: $pdfPath"
-    }
+    Wait-ForFile -Path $pdfPath
     return $pdfPath
 }
 
@@ -148,7 +162,8 @@ if (-not (Test-Path -LiteralPath $FixtureDirectory)) {
     throw "Fixture directory does not exist: $FixtureDirectory"
 }
 
-$script:Soffice = Resolve-Executable -ExplicitPath $SofficePath -Names @("soffice", "soffice.exe") -KnownPaths @(
+$script:Soffice = Resolve-Executable -ExplicitPath $SofficePath -Names @("soffice.com", "soffice", "soffice.exe") -KnownPaths @(
+    "C:\Program Files\LibreOffice\program\soffice.com",
     "C:\Program Files\LibreOffice\program\soffice.exe"
 )
 $script:Qpdf = Resolve-Executable -ExplicitPath $QpdfPath -Names @("qpdf", "qpdf.exe") -KnownPaths @(
