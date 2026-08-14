@@ -348,6 +348,32 @@ Handle OpenInheritableNullHandle(DWORD desired_access) {
     return handle;
 }
 
+Handle OpenInheritableOutputHandle() {
+    if (g_diagnostics_path.empty()) {
+        return OpenInheritableNullHandle(GENERIC_WRITE);
+    }
+    const std::wstring output_path = g_diagnostics_path + L".child-output.log";
+    SECURITY_ATTRIBUTES security_attributes{};
+    security_attributes.nLength = sizeof(security_attributes);
+    security_attributes.bInheritHandle = TRUE;
+    Handle handle(CreateFileW(
+        output_path.c_str(),
+        GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        &security_attributes,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr));
+    if (!handle) {
+        ThrowLastError("CreateFileW(child output)");
+    }
+    if (SetFilePointer(handle.get(), 0, nullptr, FILE_END) == INVALID_SET_FILE_POINTER &&
+        GetLastError() != ERROR_SUCCESS) {
+        ThrowLastError("SetFilePointer(child output)");
+    }
+    return handle;
+}
+
 std::optional<bool> ProcessHasTokenFlag(
     HANDLE process,
     TOKEN_INFORMATION_CLASS information_class,
@@ -441,8 +467,8 @@ int RunInContainer(
     }
 
     Handle standard_input = OpenInheritableNullHandle(GENERIC_READ);
-    Handle standard_output = OpenInheritableNullHandle(GENERIC_WRITE);
-    Handle standard_error = OpenInheritableNullHandle(GENERIC_WRITE);
+    Handle standard_output = OpenInheritableOutputHandle();
+    Handle standard_error = OpenInheritableOutputHandle();
     std::array<HANDLE, 3> inherited_handles{
         standard_input.get(),
         standard_output.get(),

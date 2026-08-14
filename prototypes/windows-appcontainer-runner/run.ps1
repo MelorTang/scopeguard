@@ -19,6 +19,7 @@ $outside = Join-Path $fixtureRoot "outside"
 $resultPath = Join-Path $fixtureRoot "result.json"
 $policyResultPath = Join-Path $fixtureRoot "policy-parity.json"
 $launcherDiagnosticsPath = Join-Path $workspace "launcher-diagnostics.log"
+$childOutputPath = "$launcherDiagnosticsPath.child-output.log"
 $profileName = "ScopeGuardPrototype_$([guid]::NewGuid().ToString('N'))"
 Write-Host "[$Mode] Building native launcher"
 $launcher = (& (Join-Path $PSScriptRoot "build.ps1")).Trim()
@@ -444,6 +445,12 @@ try {
             windows = [Environment]::OSVersion.VersionString
             boundaryExitCode = $run.exitCode
             launcherDiagnostics = $launcherDiagnostics
+            childOutput = if (Test-Path -LiteralPath $childOutputPath) {
+                Get-Content -LiteralPath $childOutputPath -Raw
+            }
+            else {
+                ""
+            }
             checks = $checks
         }
         $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultPath -Encoding utf8
