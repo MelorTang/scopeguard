@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -393,14 +394,19 @@ int RunInContainer(
     SECURITY_CAPABILITIES security_capabilities{};
     security_capabilities.AppContainerSid = package_sid.get();
     LocalSid lpac_app_experience_sid;
-    SID_AND_ATTRIBUTES lpac_capability{};
+    LocalSid registry_read_sid;
+    std::array<SID_AND_ATTRIBUTES, 2> lpac_capabilities{};
     if (lpac) {
         lpac_app_experience_sid = DeriveSingleCapabilitySid(L"lpacAppExperience");
-        lpac_capability.Sid = lpac_app_experience_sid.get();
-        lpac_capability.Attributes = SE_GROUP_ENABLED;
-        security_capabilities.Capabilities = &lpac_capability;
-        security_capabilities.CapabilityCount = 1;
-        Diagnostic("capability=lpacAppExperience");
+        registry_read_sid = DeriveSingleCapabilitySid(L"registryRead");
+        lpac_capabilities[0].Sid = lpac_app_experience_sid.get();
+        lpac_capabilities[0].Attributes = SE_GROUP_ENABLED;
+        lpac_capabilities[1].Sid = registry_read_sid.get();
+        lpac_capabilities[1].Attributes = SE_GROUP_ENABLED;
+        security_capabilities.Capabilities = lpac_capabilities.data();
+        security_capabilities.CapabilityCount =
+            static_cast<DWORD>(lpac_capabilities.size());
+        Diagnostic("capabilities=lpacAppExperience,registryRead");
     }
     if (!UpdateProcThreadAttribute(
             attribute_list,
