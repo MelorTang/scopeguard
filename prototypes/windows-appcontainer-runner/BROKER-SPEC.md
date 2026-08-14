@@ -180,11 +180,15 @@ Before enabling Request Approval or Auto Approve arbitrary local execution:
 2. Repeat minimization against the actual bundled runtime descriptors, pin each
    executable digest and selected manifest, then rerun the full denial matrix
    for every supported build.
-3. Prove two concurrent Runs have unique Package SIDs and cannot read or write
+3. Install signed runtime packs and their pinned manifests below an
+   administrator-owned location that the Desktop user cannot modify, then prove
+   descriptor verification and launch cannot be raced through replacement,
+   hard links, reparse points, or alternate data streams.
+4. Prove two concurrent Runs have unique Package SIDs and cannot read or write
    each other's Workspace.
-4. Prove cancelling Run A leaves Run B alive.
-5. Prove Desktop parent exit clears the Broker, Agent Host, every launcher, and
+5. Prove cancelling Run A leaves Run B alive.
+6. Prove Desktop parent exit clears the Broker, Agent Host, every launcher, and
    every managed descendant.
-6. Recover both ledgers and prove no stale exact-SID ACE or profile remains.
-7. Exercise the same module interface from Desktop integration tests; do not
+7. Recover both ledgers and prove no stale exact-SID ACE or profile remains.
+8. Exercise the same module interface from Desktop integration tests; do not
    substitute mocks for Job and profile lifecycle assertions.

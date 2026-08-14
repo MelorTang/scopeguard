@@ -94,6 +94,12 @@ It then runs all eight Capability subsets from freshly verified descriptors.
 The fixture copies the machine's Node executable into an isolated pack root; it
 does not claim to be the final signed distribution artifact.
 
+The runtime-pack fixture passed 17/17 descriptor and payload validation checks
+and all eight exact-token Capability combinations on Windows 11 build
+`26200.9168` and Windows Server 2022 build `20348`. Both selected
+`registryRead` as the minimum runnable manifest and denied writes to the runtime
+pack and outside the Workspace.
+
 Production must obtain the expected manifest digest from signed application or
 installer metadata and install payloads below an administrator-owned location
 that the Desktop user cannot modify. Hash verification in a user-writable root
@@ -107,7 +113,7 @@ production seam and conditional capability threat decision are recorded in
 [`BROKER-SPEC.md`](BROKER-SPEC.md).
 
 The Broker matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168` and in
-[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31817961995).
+[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31820442840).
 Neither result substitutes for the remaining Windows 10 x64 release gate.
 
 Recover an interrupted execution from its ledger with:

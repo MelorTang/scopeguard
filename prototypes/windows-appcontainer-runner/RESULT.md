@@ -144,6 +144,14 @@ On Windows 11 build `26200.9168`, Node `24.19.0` passed:
   secret exclusion for every passing subset;
 - one-attempt ACL/Profile cleanup with no remaining error or profile path.
 
+The same matrix passed on Windows Server 2022 build `20348` with Node
+`22.23.2` (`SHA-256
+0d0f5e39f9f3d9587bc19f73eab3c2c9c4903fd02d6dbf9c853dd81b3d95fad4`).
+The CI artifact records 17/17 validation checks, exact token evidence for all
+eight subsets, `registryRead` as the minimum runnable manifest, runtime and
+outside write denial, parent-secret exclusion, and a cleaned lifecycle ledger
+after one cleanup attempt.
+
 This checkpoint does not approve a production package. The test payload is a
 copy of the machine runtime, not a signed ScopeGuard artifact. Production must
 pin the expected manifest digest through signed application/installer metadata,
@@ -152,6 +160,15 @@ user cannot modify, and verify signatures plus descriptor/file identity. Hashing
 inside a user-writable root does not close a validation-to-launch race.
 
 ## Passing evidence
+
+[GitHub Actions run 31820442840](https://github.com/MelorTang/scopeguard/actions/runs/31820442840)
+passed the complete Windows Server 2022 matrix from commit `c06671d`: 36
+AppContainer checks, 36 LPAC checks, all 32 representative-runtime Capability
+combinations plus three malformed-manifest rejections, the bundled Node runtime
+pack's 17 integrity checks and eight Capability subsets, four crash-recovery
+checks, and six Desktop Broker lifecycle checks. The runtime-pack and Capability
+ledgers both finished `state=cleaned` after one cleanup attempt with no cleanup
+error.
 
 [GitHub Actions run 31817961995](https://github.com/MelorTang/scopeguard/actions/runs/31817961995)
 passed 36 AppContainer checks, 36 LPAC checks, all 32 Capability combinations,
