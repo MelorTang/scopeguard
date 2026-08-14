@@ -58,6 +58,17 @@ Run the Desktop parent/Broker lifecycle matrix with:
 pwsh -File prototypes/windows-appcontainer-runner/desktop-broker-integration-test.ps1
 ```
 
+Minimize the explicit Capability manifest for each representative Runtime with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/runtime-capability-matrix.ps1
+```
+
+The launcher accepts only repeated `--capability` values from the prototype
+allowlist. An LPAC launch with no values receives no declared Capability. Before
+resume, the launcher requires the child token's `TokenCapabilities` SID set to
+match the requested manifest exactly.
+
 This starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every

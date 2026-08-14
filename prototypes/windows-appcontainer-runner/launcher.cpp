@@ -3,6 +3,7 @@
 #include <userenv.h>
 #include <sddl.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
@@ -188,6 +189,43 @@ LocalSid DeriveSingleCapabilitySid(const wchar_t* name) {
     }
     LocalSid result(capability_sids[0]);
     LocalFree(capability_sids);
+    return result;
+}
+
+bool IsSupportedCapabilityName(const std::wstring& name) {
+    static constexpr std::array<std::wstring_view, 3> supported{
+        L"lpacAppExperience",
+        L"registryRead",
+        L"lpacInstrumentation",
+    };
+    return std::find(supported.begin(), supported.end(), name) != supported.end();
+}
+
+std::string CapabilityNameForDiagnostics(const std::wstring& name) {
+    if (name == L"lpacAppExperience") {
+        return "lpacAppExperience";
+    }
+    if (name == L"registryRead") {
+        return "registryRead";
+    }
+    if (name == L"lpacInstrumentation") {
+        return "lpacInstrumentation";
+    }
+    throw std::runtime_error("unsupported capability name in diagnostics");
+}
+
+std::string CapabilityListForDiagnostics(
+    const std::vector<std::wstring>& names) {
+    if (names.empty()) {
+        return "none";
+    }
+    std::string result;
+    for (const auto& name : names) {
+        if (!result.empty()) {
+            result.push_back(',');
+        }
+        result.append(CapabilityNameForDiagnostics(name));
+    }
     return result;
 }
 
@@ -436,14 +474,75 @@ bool ProcessHasPackageSid(HANDLE process, PSID expected_sid) {
         EqualSid(information->TokenAppContainer, expected_sid);
 }
 
+bool ProcessHasExactCapabilities(
+    HANDLE process,
+    const std::vector<LocalSid>& expected_sids) {
+    HANDLE raw_token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &raw_token)) {
+        ThrowLastError("OpenProcessToken(child capabilities)");
+    }
+    Handle token(raw_token);
+    DWORD required = 0;
+    GetTokenInformation(token.get(), TokenCapabilities, nullptr, 0, &required);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || required == 0) {
+        ThrowLastError("GetTokenInformation(child capabilities size)");
+    }
+    std::vector<std::byte> storage(required);
+    if (!GetTokenInformation(
+            token.get(),
+            TokenCapabilities,
+            storage.data(),
+            required,
+            &required)) {
+        ThrowLastError("GetTokenInformation(child capabilities)");
+    }
+
+    const auto* groups = reinterpret_cast<const TOKEN_GROUPS*>(storage.data());
+    if (static_cast<std::size_t>(groups->GroupCount) != expected_sids.size()) {
+        Diagnostic(
+            "token-capability-count=" + std::to_string(groups->GroupCount) +
+            ";expected=" + std::to_string(expected_sids.size()));
+        return false;
+    }
+    std::vector<bool> matched(expected_sids.size(), false);
+    for (DWORD group_index = 0; group_index < groups->GroupCount; ++group_index) {
+        const auto& group = groups->Groups[group_index];
+        if ((group.Attributes & SE_GROUP_ENABLED) == 0) {
+            return false;
+        }
+        bool found = false;
+        for (std::size_t expected_index = 0;
+             expected_index < expected_sids.size();
+             ++expected_index) {
+            if (
+                !matched[expected_index] &&
+                EqualSid(group.Sid, expected_sids[expected_index].get())) {
+                matched[expected_index] = true;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return std::all_of(matched.begin(), matched.end(), [](bool value) {
+        return value;
+    });
+}
+
 int RunInContainer(
     const std::wstring& profile_name,
     const std::wstring& cwd,
     DWORD timeout_seconds,
     bool lpac,
+    const std::vector<std::wstring>& capability_names,
     const std::vector<std::wstring>& command) {
     if (command.empty()) {
         throw std::runtime_error("sandbox command must not be empty");
+    }
+    if (!lpac && !capability_names.empty()) {
+        throw std::runtime_error("capabilities require --lpac");
     }
 
     Sid package_sid = CreateOrOpenProfile(profile_name);
@@ -462,24 +561,23 @@ int RunInContainer(
 
     SECURITY_CAPABILITIES security_capabilities{};
     security_capabilities.AppContainerSid = package_sid.get();
-    LocalSid lpac_app_experience_sid;
-    LocalSid registry_read_sid;
-    LocalSid lpac_instrumentation_sid;
-    std::array<SID_AND_ATTRIBUTES, 3> lpac_capabilities{};
+    std::vector<LocalSid> capability_sids;
+    std::vector<SID_AND_ATTRIBUTES> capabilities;
     if (lpac) {
-        lpac_app_experience_sid = DeriveSingleCapabilitySid(L"lpacAppExperience");
-        registry_read_sid = DeriveSingleCapabilitySid(L"registryRead");
-        lpac_instrumentation_sid = DeriveSingleCapabilitySid(L"lpacInstrumentation");
-        lpac_capabilities[0].Sid = lpac_app_experience_sid.get();
-        lpac_capabilities[0].Attributes = SE_GROUP_ENABLED;
-        lpac_capabilities[1].Sid = registry_read_sid.get();
-        lpac_capabilities[1].Attributes = SE_GROUP_ENABLED;
-        lpac_capabilities[2].Sid = lpac_instrumentation_sid.get();
-        lpac_capabilities[2].Attributes = SE_GROUP_ENABLED;
-        security_capabilities.Capabilities = lpac_capabilities.data();
+        capability_sids.reserve(capability_names.size());
+        capabilities.reserve(capability_names.size());
+        for (const auto& name : capability_names) {
+            capability_sids.push_back(DeriveSingleCapabilitySid(name.c_str()));
+        }
+        for (const auto& sid : capability_sids) {
+            capabilities.push_back({sid.get(), SE_GROUP_ENABLED});
+        }
+        security_capabilities.Capabilities =
+            capabilities.empty() ? nullptr : capabilities.data();
         security_capabilities.CapabilityCount =
-            static_cast<DWORD>(lpac_capabilities.size());
-        Diagnostic("capabilities=lpacAppExperience,registryRead,lpacInstrumentation");
+            static_cast<DWORD>(capabilities.size());
+        Diagnostic(
+            "capabilities=" + CapabilityListForDiagnostics(capability_names));
     }
     if (!UpdateProcThreadAttribute(
             attribute_list,
@@ -571,6 +669,14 @@ int RunInContainer(
     }
     Diagnostic("package-sid-verified");
     if (lpac) {
+        if (!ProcessHasExactCapabilities(process.get(), capability_sids)) {
+            TerminateProcess(process.get(), 126);
+            throw std::runtime_error(
+                "created process capability SIDs do not match the manifest");
+        }
+        Diagnostic(
+            "token-capabilities-verified=" +
+            CapabilityListForDiagnostics(capability_names));
         const std::optional<bool> is_lpac =
             ProcessHasTokenFlag(
                 process.get(),
@@ -675,6 +781,7 @@ int wmain(int argc, wchar_t** argv) {
         std::wstring cwd;
         DWORD timeout_seconds = 60;
         bool lpac = false;
+        std::vector<std::wstring> capability_names;
         std::vector<std::wstring> command;
         for (std::size_t index = 1; index < args.size(); ++index) {
             if (args[index] == L"--name") {
@@ -685,6 +792,20 @@ int wmain(int argc, wchar_t** argv) {
                 timeout_seconds = std::stoul(RequireValue(args, index, L"--timeout"));
             } else if (args[index] == L"--lpac") {
                 lpac = true;
+            } else if (args[index] == L"--capability") {
+                const std::wstring capability =
+                    RequireValue(args, index, L"--capability");
+                if (!IsSupportedCapabilityName(capability)) {
+                    throw std::runtime_error("unsupported capability name");
+                }
+                if (
+                    std::find(
+                        capability_names.begin(),
+                        capability_names.end(),
+                        capability) != capability_names.end()) {
+                    throw std::runtime_error("duplicate capability name");
+                }
+                capability_names.push_back(capability);
             } else if (args[index] == L"--diagnostics") {
                 g_diagnostics_path = RequireValue(args, index, L"--diagnostics");
             } else if (args[index] == L"--") {
@@ -697,7 +818,13 @@ int wmain(int argc, wchar_t** argv) {
         if (name.empty() || cwd.empty()) {
             throw std::runtime_error("run requires --name and --cwd");
         }
-        return RunInContainer(name, cwd, timeout_seconds, lpac, command);
+        return RunInContainer(
+            name,
+            cwd,
+            timeout_seconds,
+            lpac,
+            capability_names,
+            command);
     } catch (const std::exception& error) {
         Diagnostic(std::string("error=") + error.what());
         std::cerr << "scopeguard-appcontainer: " << error.what() << "\n";

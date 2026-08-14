@@ -2,6 +2,12 @@
 param(
     [ValidateSet("appcontainer", "lpac")]
     [string]$Mode = "appcontainer",
+    [ValidateSet("lpacAppExperience", "registryRead", "lpacInstrumentation")]
+    [string[]]$Capabilities = @(
+        "lpacAppExperience",
+        "registryRead",
+        "lpacInstrumentation"
+    ),
     [switch]$RequireLpacTokenVerification,
     [switch]$KeepFixture
 )
@@ -27,6 +33,12 @@ $cleanupResultPath = Join-Path $fixtureRoot "cleanup-result.json"
 $launcherDiagnosticsPath = Join-Path $workspace "launcher-diagnostics.log"
 $childOutputPath = "$launcherDiagnosticsPath.child-output.log"
 $profileName = "ScopeGuardPrototype_$([guid]::NewGuid().ToString('N'))"
+$effectiveCapabilities = if ($Mode -eq "lpac") {
+    @($Capabilities | Sort-Object -Unique)
+}
+else {
+    @()
+}
 Write-Host "[$Mode] Building native launcher"
 $launcher = (& (Join-Path $PSScriptRoot "build.ps1")).Trim()
 
@@ -101,6 +113,9 @@ function Invoke-SandboxCommand {
     )
     if ($Mode -eq "lpac") {
         $launcherArguments += "--lpac"
+        foreach ($capability in $effectiveCapabilities) {
+            $launcherArguments += @("--capability", $capability)
+        }
     }
     $launcherArguments += "--"
     foreach ($argument in $launcherArguments + $CommandArguments) {
@@ -274,12 +289,7 @@ try {
         packageSid = $profileSid
         workspace = $workspace
         runtimeRoots = $runtimeRoots
-        capabilities = if ($Mode -eq "lpac") {
-            @("lpacAppExperience", "registryRead", "lpacInstrumentation")
-        }
-        else {
-            @()
-        }
+        capabilities = $effectiveCapabilities
         network = "deny"
         activeProcessLimit = 32
         killOnJobClose = $true

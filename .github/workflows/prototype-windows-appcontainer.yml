@@ -29,6 +29,10 @@ jobs:
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/run.ps1 -Mode lpac -KeepFixture
 
+      - name: Minimize runtime Capability manifests
+        shell: pwsh
+        run: pwsh -File prototypes/windows-appcontainer-runner/runtime-capability-matrix.ps1 -KeepFixture
+
       - name: Run lifecycle crash recovery matrix
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1 -KeepFixture
@@ -62,6 +66,10 @@ jobs:
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log.child-output.log
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\*-result.json
             ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\cmd-result.txt
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\result.json
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\cleanup-result.json
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\diagnostics\*.log
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\result.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\lifecycle-ledger.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\recovery-*.json
