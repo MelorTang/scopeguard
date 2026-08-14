@@ -2,6 +2,7 @@
 param(
     [ValidateSet("appcontainer", "lpac")]
     [string]$Mode = "appcontainer",
+    [switch]$RequireLpacTokenVerification,
     [switch]$KeepFixture
 )
 
@@ -440,9 +441,18 @@ try {
         else {
             ""
         }
+        $lpacTokenVerified = $Mode -ne "lpac" -or $launcherDiagnostics -match "lpac-token-verified"
+        if ($RequireLpacTokenVerification -and $Mode -eq "lpac") {
+            $lpacTokenDetail = if ($lpacTokenVerified) {
+                "TokenIsLessPrivilegedAppContainer=true"
+            }
+            else {
+                "query unavailable or false"
+            }
+            Add-Check -Checks $checks -Name "lpac-token-verification" -Passed $lpacTokenVerified -Detail $lpacTokenDetail
+        }
         $failedChecks = @($checks | Where-Object { -not $_.passed })
         $matrixPassed = $failedChecks.Count -eq 0
-        $lpacTokenVerified = $Mode -ne "lpac" -or $launcherDiagnostics -match "lpac-token-verified"
         $summary = [ordered]@{
             passed = $matrixPassed
             productionReady = $false
