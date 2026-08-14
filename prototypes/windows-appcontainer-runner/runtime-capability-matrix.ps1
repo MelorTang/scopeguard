@@ -140,6 +140,22 @@ function Test-LauncherRejectsArguments {
     }
 }
 
+function New-RuntimeDescriptor {
+    param(
+        [string]$Id,
+        [string]$Path
+    )
+
+    $item = Get-Item -LiteralPath $Path
+    return [pscustomobject][ordered]@{
+        id = $Id
+        path = $item.FullName
+        fileVersion = $item.VersionInfo.FileVersion
+        productVersion = $item.VersionInfo.ProductVersion
+        sha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Invoke-RuntimeProbe {
     param(
         [string]$Runtime,
@@ -311,6 +327,12 @@ try {
     $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
     $pythonPath = (Get-Command python.exe -ErrorAction Stop).Source
     $pwshPath = (Get-Command pwsh.exe -ErrorAction Stop).Source
+    $runtimeDescriptors = @(
+        New-RuntimeDescriptor -Id "cmd" -Path $cmdPath
+        New-RuntimeDescriptor -Id "node" -Path $nodePath
+        New-RuntimeDescriptor -Id "python" -Path $pythonPath
+        New-RuntimeDescriptor -Id "powershell" -Path $pwshPath
+    )
     $runtimeRoots = @(
         (Split-Path -Parent $nodePath),
         (Split-Path -Parent $pythonPath),
@@ -451,6 +473,7 @@ try {
             "registryRead",
             "lpacInstrumentation"
         )
+        runtimeDescriptors = $runtimeDescriptors
         validationChecks = $validationChecks
         selected = $selected
         results = $results

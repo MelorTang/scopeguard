@@ -129,14 +129,15 @@ installations for every Run is prototype behavior, not the production design.
 LPAC remains preferred because it disregards ambient `ALL APPLICATION
 PACKAGES` access. No network capability is granted in the V1 bounded profile.
 
-The combined prototype profile uses three compatibility capabilities. They are
-not an unconditional production default:
+The full regression profile uses three compatibility capabilities. The 8-way
+subset matrix on Windows 11 build `26200.9168` and Windows Server 2022 build
+`20348` selected smaller manifests, so the superset is not a production default:
 
 | Exposure | Decision |
 | --- | --- |
-| `registryRead` | Conditional acceptance. Microsoft documents it as read access to HKLM registry hives. A runtime descriptor may request it only when its pinned executable fails a no-capability preflight. HKCU credentials remain outside the profile, but machine software/configuration metadata is explicitly exposed. |
-| `lpacAppExperience` | Conditional acceptance for pinned managed runtimes only. Public semantics are not precise enough to infer safety from the name. Each supported Windows build must pass the complete denial matrix with the exact capability manifest. |
-| `lpacInstrumentation` | Conditional acceptance for a pinned PowerShell worker only. It is omitted from command/runtime profiles that do not require it and receives the same per-build denial-matrix gate. |
+| `registryRead` | Conditional acceptance. Microsoft documents it as read access to HKLM registry hives. The tested system CMD, Node, Python, and PowerShell executables all required it, so machine software/configuration metadata is explicitly exposed. A bundled runtime must still retry the no-capability profile before requesting it. HKCU credentials remain outside the profile. |
+| `lpacAppExperience` | Excluded from every currently selected runtime manifest. Public semantics are not precise enough to infer safety from the name. Reintroduce it only for a pinned runtime that fails without it and passes the complete denial matrix on every supported build. |
+| `lpacInstrumentation` | Conditional acceptance for the pinned PowerShell worker only. CMD, Node, and Python omit it. PowerShell receives the same exact-token and per-build denial-matrix gate. |
 | Workspace ancestors | Accept non-inheriting read/execute on canonical ancestors because CMD and Node require path resolution. Ancestor names and directory metadata may be visible; descendant content outside the Workspace must remain denied. |
 | Managed runtime roots | Accept read/execute only under the ScopeGuard-owned, versioned runtime root. Runtime files are immutable to the LPAC identity. |
 
@@ -144,8 +145,11 @@ not an unconditional production default:
 states that LPAC requires explicit capabilities for resources regular
 AppContainers can access. The newer sandbox API documentation describes
 [`registryRead` as HKLM read access](https://learn.microsoft.com/en-us/windows/win32/secauthz/createprocessinsandbox).
-The empirical matrix therefore complements the documented capability model; it
-does not replace an undocumented capability with a broad trust assumption.
+All 32 runtime/manifest combinations verified that the suspended child token's
+Capability SID set exactly matched the requested manifest. The empirical matrix
+therefore complements the documented capability model; it does not replace an
+undocumented capability with a broad trust assumption. Its result binds the
+selection evidence to each executable's file version and SHA-256 digest.
 
 ## Verification obligations
 
@@ -153,8 +157,9 @@ Before enabling Request Approval or Auto Approve arbitrary local execution:
 
 1. Pass the full boundary and LPAC differential matrix on supported Windows 10
    and Windows 11 x64 builds.
-2. Minimize and pin a capability manifest per bundled runtime descriptor, then
-   rerun the full denial matrix for each manifest.
+2. Repeat minimization against the actual bundled runtime descriptors, pin each
+   executable digest and selected manifest, then rerun the full denial matrix
+   for every supported build.
 3. Prove two concurrent Runs have unique Package SIDs and cannot read or write
    each other's Workspace.
 4. Prove cancelling Run A leaves Run B alive.

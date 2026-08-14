@@ -8,7 +8,7 @@ The regular AppContainer mode also passes the current matrix, but LPAC is prefer
 
 ## Windows 11 client checkpoint
 
-On 2026-08-14, the final prototype commit was run locally on a Windows 11
+On 2026-08-14, the boundary prototype was run locally on a Windows 11
 25H2 x64 client, build `26200.9168`, using an interactive user token. The
 interactive token is required because Windows Credential Manager rejects
 sentinel creation from an OpenSSH logon session.
@@ -90,15 +90,47 @@ independently checked after the run and no longer existed. Both lifecycle
 ledgers reported `state=cleaned`, one cleanup attempt, no cleanup errors, and no
 remaining profile path. The one-time scheduled task and fixture were removed.
 
-The threat decision is conditional rather than capability-by-name trust.
-`registryRead` explicitly exposes read access to HKLM registry hives;
-`lpacAppExperience` and `lpacInstrumentation` lack sufficiently precise public
-semantics. Production must pin the minimum capability manifest per bundled
-runtime and pass the full denial matrix on every supported Windows build.
-Ancestor read/execute metadata exposure is accepted only for canonical path
-resolution; content outside the Workspace remains denied.
+## Runtime Capability minimization checkpoint
+
+Commit `b4777b8` replaced the launcher's implicit three-Capability LPAC profile
+with an explicit allowlisted manifest. Unsupported names, duplicates, and any
+Capability request without LPAC are rejected. Before resume, the launcher reads
+`TokenCapabilities` and requires the exact enabled SID set requested by the
+manifest.
+
+The 8-subset matrix ran against CMD, Node, Python, and PowerShell on Windows 11
+build `26200.9168` and Windows Server 2022 build `20348`. Both systems produced
+the same minimum manifests:
+
+| Runtime | Minimum passing manifest |
+| --- | --- |
+| CMD | `registryRead` |
+| Node | `registryRead` |
+| Python | `registryRead` |
+| PowerShell | `registryRead`, `lpacInstrumentation` |
+
+All 32 runtime/manifest combinations produced exact Token Capability evidence,
+including combinations where runtime startup later failed. All three malformed
+manifest checks were rejected with exit code 126. `lpacAppExperience` was not
+required by any tested runtime. The full three-Capability profile remains only a
+regression superset for the 36-check LPAC boundary matrix.
+
+This is a conditional threat decision, not capability-by-name trust.
+`registryRead` explicitly exposes read access to HKLM registry hives, so the
+current system runtimes still carry meaningful machine-metadata exposure. The
+matrix now records each executable path, file/product version, and SHA-256;
+production must repeat it against ScopeGuard-bundled immutable runtimes and try
+to remove `registryRead`. Ancestor metadata exposure remains limited to
+canonical path resolution; content outside the Workspace stays denied.
 
 ## Passing evidence
+
+[GitHub Actions run 31817295712](https://github.com/MelorTang/scopeguard/actions/runs/31817295712)
+passed 36 AppContainer checks, 36 LPAC checks, all 32 Capability combinations,
+three malformed-manifest rejection checks, four crash-recovery checks, and all
+six Desktop Broker lifecycle checks on Windows Server 2022 from commit
+`b4777b8`. The downloaded Capability ledger reported `state=cleaned`, one
+cleanup attempt, and no cleanup error.
 
 [GitHub Actions run 31814542432](https://github.com/MelorTang/scopeguard/actions/runs/31814542432)
 passed 36 AppContainer checks, 36 LPAC checks, four crash-recovery checks,
@@ -131,11 +163,11 @@ The run verified:
 
 - Create a unique AppContainer profile per managed execution identity.
 - Launch suspended with `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`.
-- For LPAC, set `PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT` and grant only `lpacAppExperience`, `registryRead`, and `lpacInstrumentation`.
+- For LPAC, set `PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT` and resolve an explicit Capability manifest from a pinned runtime descriptor. The current representative minima are `registryRead` for CMD/Node/Python and `registryRead` plus `lpacInstrumentation` for PowerShell.
 - Grant the package SID modify access to the workspace, read/execute access to managed runtime roots, and non-inheriting read/execute access to workspace ancestors.
 - Grant no network capability by default.
 - Pass only explicit stdin/stdout/stderr handles via `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`.
-- Validate the AppContainer token before resume; require LPAC token validation on supported client builds.
+- Validate the AppContainer package SID and exact `TokenCapabilities` SID set before resume; require LPAC token validation on supported client builds.
 - Assign the suspended process to a kill-on-close Job Object before resume. Apply active-process and UI limits.
 - Build the process environment from an allowlist. Never inherit provider keys or unrelated parent variables.
 - Fail closed on profile, DACL, capability, token, Job, handle-list, launch, timeout, or cleanup verification failure.
@@ -143,10 +175,10 @@ The run verified:
 ## Remaining gates
 
 1. Run both modes and the differential `ALL APPLICATION PACKAGES` proof on Windows 10 x64, then fix the supported-build verification contract for systems where the direct token query is unavailable.
-2. Minimize and pin capabilities per bundled runtime descriptor. The product
-   threat model conditionally accepts the documented/observed exposure, but the
-   current combined three-capability prototype profile is not a universal
-   production default.
+2. Bundle immutable ScopeGuard-owned runtimes, repeat the 8-subset matrix for
+   their recorded versions/digests, and pin the resulting manifests. The
+   system-runtime checkpoint still requires documented `registryRead` exposure
+   and is not a production default.
 3. Implement and harden the specified elevated Provisioner interface. A
    standard desktop token cannot reliably grant Package SID access to volume
    ancestors or managed runtimes; partial `icacls /C` success must fail

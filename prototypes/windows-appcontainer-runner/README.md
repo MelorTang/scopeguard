@@ -18,7 +18,11 @@ runner package SID. A regular AppContainer must read it, while LPAC mode must
 be denied. This proves that the opt-out changes the effective access boundary;
 it does not silently replace the direct LPAC token query.
 
-The LPAC mode grants only `lpacAppExperience`, `registryRead`, and `lpacInstrumentation`. They are required by Python and PowerShell startup on the tested Windows Server image; the full denial matrix is rerun after every capability change.
+The full LPAC regression profile declares `lpacAppExperience`, `registryRead`,
+and `lpacInstrumentation`, but it is not the production default. The minimization
+matrix currently selects only `registryRead` for CMD, Node, and Python, and
+`registryRead` plus `lpacInstrumentation` for PowerShell. The full denial matrix
+is rerun after every Capability change.
 
 The newer `Experimental_CreateProcessInSandbox` API is not used because Microsoft currently documents it as experimental and Windows 11-only. ScopeGuard V1 must support both Windows 10 and Windows 11.
 
@@ -67,17 +71,23 @@ pwsh -File prototypes/windows-appcontainer-runner/runtime-capability-matrix.ps1
 The launcher accepts only repeated `--capability` values from the prototype
 allowlist. An LPAC launch with no values receives no declared Capability. Before
 resume, the launcher requires the child token's `TokenCapabilities` SID set to
-match the requested manifest exactly.
+match the requested manifest exactly. The result also records each tested
+runtime executable's path, file version, product version, and SHA-256 digest.
 
-This starts two concurrent Conversation identities under a native Broker-held
+All 32 runtime/manifest combinations and the three invalid-manifest rejection
+checks passed on Windows 11 build `26200.9168` and Windows Server 2022 build
+`20348`. Both selected the same minimum manifests. `lpacAppExperience` was not
+required by any representative runtime.
+
+The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every
 remaining managed process, then recovers both ACL/profile ledgers. The proposed
 production seam and conditional capability threat decision are recorded in
 [`BROKER-SPEC.md`](BROKER-SPEC.md).
 
-The matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168` and in
-[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31814542432).
+The Broker matrix passed 6/6 on Windows 11 25H2 x64 build `26200.9168` and in
+[Windows Server 2022 CI](https://github.com/MelorTang/scopeguard/actions/runs/31817295712).
 Neither result substitutes for the remaining Windows 10 x64 release gate.
 
 Recover an interrupted execution from its ledger with:
