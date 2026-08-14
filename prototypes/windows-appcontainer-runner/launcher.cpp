@@ -428,18 +428,22 @@ int RunInContainer(
     security_capabilities.AppContainerSid = package_sid.get();
     LocalSid lpac_app_experience_sid;
     LocalSid registry_read_sid;
-    std::array<SID_AND_ATTRIBUTES, 2> lpac_capabilities{};
+    LocalSid lpac_instrumentation_sid;
+    std::array<SID_AND_ATTRIBUTES, 3> lpac_capabilities{};
     if (lpac) {
         lpac_app_experience_sid = DeriveSingleCapabilitySid(L"lpacAppExperience");
         registry_read_sid = DeriveSingleCapabilitySid(L"registryRead");
+        lpac_instrumentation_sid = DeriveSingleCapabilitySid(L"lpacInstrumentation");
         lpac_capabilities[0].Sid = lpac_app_experience_sid.get();
         lpac_capabilities[0].Attributes = SE_GROUP_ENABLED;
         lpac_capabilities[1].Sid = registry_read_sid.get();
         lpac_capabilities[1].Attributes = SE_GROUP_ENABLED;
+        lpac_capabilities[2].Sid = lpac_instrumentation_sid.get();
+        lpac_capabilities[2].Attributes = SE_GROUP_ENABLED;
         security_capabilities.Capabilities = lpac_capabilities.data();
         security_capabilities.CapabilityCount =
             static_cast<DWORD>(lpac_capabilities.size());
-        Diagnostic("capabilities=lpacAppExperience,registryRead");
+        Diagnostic("capabilities=lpacAppExperience,registryRead,lpacInstrumentation");
     }
     if (!UpdateProcThreadAttribute(
             attribute_list,

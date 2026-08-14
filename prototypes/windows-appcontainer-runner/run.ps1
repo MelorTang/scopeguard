@@ -240,7 +240,12 @@ try {
         packageSid = $profileSid
         workspace = $workspace
         runtimeRoots = $runtimeRoots
-        capabilities = if ($Mode -eq "lpac") { @("lpacAppExperience", "registryRead") } else { @() }
+        capabilities = if ($Mode -eq "lpac") {
+            @("lpacAppExperience", "registryRead", "lpacInstrumentation")
+        }
+        else {
+            @()
+        }
         network = "deny"
         activeProcessLimit = 32
         killOnJobClose = $true
