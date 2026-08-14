@@ -14,9 +14,9 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "8.0.x"
 
@@ -36,7 +36,7 @@ jobs:
 
       - name: Upload reports and public renders
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: document-runtime-windows-server-2022
           path: ${{ runner.temp }}\scopeguard-document-results

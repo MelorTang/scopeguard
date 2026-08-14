@@ -140,7 +140,8 @@ $script:Soffice = Resolve-Executable -ExplicitPath $SofficePath -Names @("soffic
     "C:\Program Files\LibreOffice\program\soffice.exe"
 )
 $script:PdfToPpm = Resolve-Executable -ExplicitPath $PdfToPpmPath -Names @("pdftoppm", "pdftoppm.exe") -KnownPaths @(
-    "C:\ProgramData\chocolatey\bin\pdftoppm.exe"
+    "C:\ProgramData\chocolatey\bin\pdftoppm.exe",
+    "C:\ProgramData\chocolatey\lib\poppler\tools\poppler-*\Library\bin\pdftoppm.exe"
 )
 $script:Qpdf = Resolve-Executable -ExplicitPath $QpdfPath -Names @("qpdf", "qpdf.exe") -KnownPaths @(
     "C:\Program Files\qpdf*\bin\qpdf.exe"
