@@ -1,0 +1,44 @@
+name: Document runtime round-trip prototype
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/prototype-document-runtime
+    paths:
+      - ".github/workflows/document-runtime-prototype.yml"
+      - "prototypes/document-runtime-roundtrip/**"
+
+jobs:
+  windows-server-2022:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install pinned document tools
+        shell: pwsh
+        run: |
+          choco install libreoffice-fresh --version=26.2.3 -y --no-progress
+          choco install poppler --version=26.6.0 -y --no-progress
+          choco install qpdf --version=12.3.2 -y --no-progress
+          python -m pip install --disable-pip-version-check -r prototypes/document-runtime-roundtrip/requirements.txt
+
+      - name: Run round-trip matrix
+        shell: pwsh
+        run: |
+          pwsh -File prototypes/document-runtime-roundtrip/run.ps1 `
+            -OutputDirectory "$env:RUNNER_TEMP\scopeguard-document-results"
+
+      - name: Upload reports and public renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-runtime-windows-server-2022
+          path: ${{ runner.temp }}\scopeguard-document-results
+          if-no-files-found: error
+          retention-days: 7
