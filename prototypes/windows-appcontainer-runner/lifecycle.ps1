@@ -44,6 +44,7 @@ function New-SandboxLifecycleLedger {
         [Parameter(Mandatory)]
         [string]$PackageSid,
         [Parameter(Mandatory)]
+        [AllowEmptyString()]
         [string]$ProfilePath
     )
 
