@@ -83,7 +83,7 @@ function Invoke-ServiceClient {
     }
     $process.StandardInput.Write($Payload)
     $process.StandardInput.Close()
-    if (-not $process.WaitForExit(180000)) {
+    if (-not $process.WaitForExit(210000)) {
         $process.Kill($true)
         $process.WaitForExit()
         throw "Provisioner service client timed out."
@@ -183,8 +183,14 @@ $runtimeRoot = Join-Path $installRoot "runtime\node"
 $metadataRoot = Join-Path $installRoot "metadata"
 $stateRoot = Join-Path $fixtureRoot "state"
 $requestRoot = Join-Path $fixtureRoot "requests"
-$workspace = Join-Path $fixtureRoot "workspace"
-$outside = Join-Path $fixtureRoot "outside"
+$workspaceBase = if ($env:RUNNER_TEMP) {
+    Join-Path $env:RUNNER_TEMP "scopeguard-provisioner-service-workspace"
+}
+else {
+    $fixtureRoot
+}
+$workspace = Join-Path $workspaceBase "workspace"
+$outside = Join-Path $workspaceBase "outside"
 $resultPath = Join-Path $fixtureRoot "result.json"
 $diagnosticsPath = Join-Path $fixtureRoot "service-diagnostics.log"
 $checks = [System.Collections.Generic.List[object]]::new()
@@ -197,6 +203,9 @@ if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
 }
 if (Test-Path -LiteralPath $fixtureRoot) {
     Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+}
+if ($workspaceBase -ne $fixtureRoot -and (Test-Path -LiteralPath $workspaceBase)) {
+    Remove-Item -LiteralPath $workspaceBase -Recurse -Force
 }
 New-Item -ItemType Directory -Path @(
     $installRoot,
@@ -514,5 +523,10 @@ finally {
     }
     if (-not $KeepFixture -and $cleanupPassed -and (Test-Path -LiteralPath $fixtureRoot)) {
         Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+    }
+    if (-not $KeepFixture -and $cleanupPassed -and
+        $workspaceBase -ne $fixtureRoot -and
+        (Test-Path -LiteralPath $workspaceBase)) {
+        Remove-Item -LiteralPath $workspaceBase -Recurse -Force
     }
 }
