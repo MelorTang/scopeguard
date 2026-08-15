@@ -46,6 +46,7 @@ $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
 $scriptBytes = [IO.File]::ReadAllBytes($scriptPath)
 $extraPath = Join-Path $PackageRoot "payload\unexpected.txt"
 $linkPath = Join-Path $PackageRoot "payload\scripts-link"
+$hardLinkPath = Join-Path (Split-Path -Parent $PackageRoot) "scopeguard-package-hardlink.ps1"
 $streamName = "scopeguard-package-test"
 $streamPath = "${scriptPath}:$streamName"
 
@@ -91,6 +92,11 @@ Invoke-Check -Name "alternate-data-stream-rejected" -ShouldPass $false -Mutation
     [IO.File]::WriteAllText($streamPath, "unexpected", [Text.UTF8Encoding]::new($false))
 } -Restore {
     Remove-Item -LiteralPath $scriptPath -Stream $streamName -Force -ErrorAction SilentlyContinue
+}
+Invoke-Check -Name "external-hard-link-rejected" -ShouldPass $false -Mutation {
+    New-Item -ItemType HardLink -Path $hardLinkPath -Target $scriptPath | Out-Null
+} -Restore {
+    Remove-Item -LiteralPath $hardLinkPath -Force -ErrorAction SilentlyContinue
 }
 
 $linkCreated = $false

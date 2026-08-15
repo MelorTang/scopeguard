@@ -16,7 +16,9 @@ if (-not ("ScopeGuard.NativeStreamInspector" -as [type])) {
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace ScopeGuard {
     public static class NativeStreamInspector {
@@ -26,6 +28,20 @@ namespace ScopeGuard {
 
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 296)]
             public string StreamName;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileInformation {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
         }
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -44,6 +60,12 @@ namespace ScopeGuard {
         [DllImport("kernel32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool FindClose(IntPtr findFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out FileInformation information);
 
         public static string[] List(string path) {
             var nativePath = path.StartsWith(@"\\", StringComparison.Ordinal)
@@ -71,6 +93,23 @@ namespace ScopeGuard {
                 FindClose(handle);
             }
             return streams.ToArray();
+        }
+
+        public static uint LinkCount(string path) {
+            using (var handle = File.OpenHandle(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                FileOptions.None)) {
+                FileInformation information;
+                if (!GetFileInformationByHandle(handle, out information)) {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "Failed to inspect file identity: " + path);
+                }
+                return information.NumberOfLinks;
+            }
         }
     }
 }
@@ -220,6 +259,9 @@ foreach ($item in $items) {
             Where-Object { $_ -cne ':$DATA' -and $_ -cne '::$DATA' })
         if ($streams.Count -gt 0) {
             throw "Companion package contains an alternate data stream: $($item.FullName)"
+        }
+        if ([ScopeGuard.NativeStreamInspector]::LinkCount($item.FullName) -ne 1) {
+            throw "Companion package contains a multiply linked file: $($item.FullName)"
         }
     }
 }
