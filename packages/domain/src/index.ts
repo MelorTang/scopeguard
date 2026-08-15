@@ -531,7 +531,8 @@ export type ToolCallStatus =
   | "succeeded"
   | "failed"
   | "denied"
-  | "cancelled";
+  | "cancelled"
+  | "effect_unknown";
 
 export type ToolCallRecord = {
   id: Id;
@@ -784,6 +785,33 @@ export function assertRunTransition(from: RunStatus, to: RunStatus): void {
   if (!canTransitionRun(from, to)) {
     throw new Error(`Invalid run status transition: ${from} -> ${to}`);
   }
+}
+
+const TOOL_CALL_TRANSITIONS: Record<
+  ToolCallStatus,
+  ReadonlySet<ToolCallStatus>
+> = {
+  proposed: new Set([
+    "awaiting-approval",
+    "running",
+    "failed",
+    "denied",
+    "cancelled",
+  ]),
+  "awaiting-approval": new Set(["running", "failed", "denied", "cancelled"]),
+  running: new Set(["succeeded", "failed", "cancelled", "effect_unknown"]),
+  succeeded: new Set(),
+  failed: new Set(),
+  denied: new Set(),
+  cancelled: new Set(),
+  effect_unknown: new Set(),
+};
+
+export function canTransitionToolCall(
+  from: ToolCallStatus,
+  to: ToolCallStatus,
+): boolean {
+  return TOOL_CALL_TRANSITIONS[from].has(to);
 }
 
 export function normalizeProviderBaseUrl(value: string): string {

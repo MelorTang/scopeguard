@@ -7,6 +7,7 @@ import {
   SCOPEGUARD_SCHEMA_VERSION,
   assertRunTransition,
   assertTaskTransition,
+  canTransitionToolCall,
   mergeToolPolicy,
   type ApprovalDecision,
   type AgentDefinition,
@@ -1455,6 +1456,14 @@ export class ScopeGuardStore {
     );
   }
 
+  listRunEvents(runId: Id): RunEvent[] {
+    return this.#all(
+      `SELECT payload_json FROM run_events
+       WHERE run_id = ? ORDER BY sequence ASC`,
+      runId,
+    ).map((row) => JSON.parse(asString(row.payload_json)) as RunEvent);
+  }
+
   createToolCall(
     runId: Id,
     input: {
@@ -1526,6 +1535,14 @@ export class ScopeGuardStore {
     const current = this.getToolCall(toolCallId);
     if (!current) {
       throw new Error(`Tool call not found: ${toolCallId}`);
+    }
+    if (current.status === status || isTerminalToolCallStatus(current.status)) {
+      return current;
+    }
+    if (!canTransitionToolCall(current.status, status)) {
+      throw new Error(
+        `Invalid tool call status transition: ${current.status} -> ${status}`,
+      );
     }
     const completedAt = isTerminalToolCallStatus(status)
       ? new Date().toISOString()
@@ -1654,6 +1671,44 @@ export class ScopeGuardStore {
          )`,
     ).run(new Date().toISOString());
     return Number(result.changes);
+  }
+
+  recoverUnfinishedToolCallsForRun(runId: Id): ToolCallRecord[] {
+    return this.#transaction(() => {
+      const recoverableIds = this.listToolCallsForRun(runId)
+        .filter((toolCall) =>
+          toolCall.status === "proposed" ||
+          toolCall.status === "awaiting-approval" ||
+          toolCall.status === "running"
+        )
+        .map((toolCall) => toolCall.id);
+      const completedAt = new Date().toISOString();
+      this.#run(
+        `UPDATE tool_calls
+         SET status = 'cancelled', completed_at = COALESCE(completed_at, ?)
+         WHERE run_id = ?
+           AND status IN ('proposed', 'awaiting-approval')`,
+        completedAt,
+        runId,
+      );
+      this.#run(
+        `UPDATE tool_calls
+         SET status = 'effect_unknown',
+             error = COALESCE(
+               error,
+               'Tool execution effect is unknown after an unclean shutdown.'
+             ),
+             completed_at = COALESCE(completed_at, ?)
+         WHERE run_id = ?
+           AND status = 'running'`,
+        completedAt,
+        runId,
+      );
+      return recoverableIds.flatMap((toolCallId) => {
+        const toolCall = this.getToolCall(toolCallId);
+        return toolCall ? [toolCall] : [];
+      });
+    });
   }
 
   getProjectContext(projectId: Id): ContextRevision | null {
@@ -3088,6 +3143,7 @@ function isTerminalToolCallStatus(status: ToolCallStatus): boolean {
     status === "succeeded" ||
     status === "failed" ||
     status === "denied" ||
-    status === "cancelled"
+    status === "cancelled" ||
+    status === "effect_unknown"
   );
 }

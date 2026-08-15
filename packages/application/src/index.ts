@@ -172,6 +172,7 @@ export interface WorkspaceStore {
   updateRunStatus(runId: Id, status: RunStatus, error?: string): AgentRun;
   interruptNonTerminalRuns(): number;
   appendRunEvent(event: RunEvent): void;
+  listRunEvents(runId: Id): RunEvent[];
   recordRunRequestManifest(
     input: Omit<RunRequestManifest, "createdAt">,
   ): RunRequestManifest;
@@ -215,6 +216,7 @@ export interface WorkspaceStore {
   expirePendingApprovalsForTerminalRuns(): number;
   cancelUnfinishedToolCallsForRun(runId: Id): ToolCallRecord[];
   cancelUnfinishedToolCallsForTerminalRuns(): number;
+  recoverUnfinishedToolCallsForRun(runId: Id): ToolCallRecord[];
 
   getProjectContext(projectId: Id): ContextRevision | null;
   updateProjectContext(
@@ -347,8 +349,22 @@ export class ScopeGuardApplication {
       .filter((run) => !this.#store.getRemoteRunBinding(run.id))
       .map((run) => run.id);
     const interruptedRuns = this.#store.interruptNonTerminalRuns();
+    for (const runId of localRunIds) {
+      const run = this.#store.getRun(runId);
+      if (!run || run.status !== "interrupted") {
+        continue;
+      }
+      const thread = this.#store.getThread(run.threadId);
+      if (!thread) {
+        continue;
+      }
+      this.persistRecoveredToolCallResults(
+        run,
+        thread,
+        this.#store.recoverUnfinishedToolCallsForRun(runId),
+      );
+    }
     this.#store.expirePendingApprovalsForTerminalRuns();
-    this.#store.cancelUnfinishedToolCallsForTerminalRuns();
     const interruptedRunIds = new Set(localRunIds);
     for (const item of this.#store.listInboxItems()) {
       if (
@@ -2611,6 +2627,45 @@ export class ScopeGuardApplication {
           isError: true,
         }],
         metadata: { synthetic: true },
+      });
+      this.emitMessage(run, thread, message);
+    }
+  }
+
+  persistRecoveredToolCallResults(
+    run: AgentRun,
+    thread: AgentThread,
+    toolCalls: ToolCallRecord[],
+  ): void {
+    const resultIds = new Set(
+      this.#store.listThreadMessages(thread.id)
+        .filter((message) => message.runId === run.id)
+        .flatMap((message) => message.content)
+        .filter((block) => block.type === "tool-result")
+        .map((block) => block.toolCallId),
+    );
+    for (const toolCall of toolCalls) {
+      if (resultIds.has(toolCall.id)) {
+        continue;
+      }
+      const effectUnknown = toolCall.status === "effect_unknown";
+      this.emitToolCall(run, thread, toolCall);
+      const message = this.#store.appendMessage({
+        threadId: thread.id,
+        runId: run.id,
+        role: "tool",
+        status: "interrupted",
+        content: [{
+          type: "tool-result",
+          toolCallId: toolCall.id,
+          providerCallId: toolCall.providerCallId,
+          name: toolCall.name,
+          output: effectUnknown
+            ? "Tool execution stopped before ScopeGuard could confirm the result. The effect is unknown. Verify the external state before retrying."
+            : "Tool call cancelled before execution.",
+          isError: true,
+        }],
+        metadata: { synthetic: true, effectUnknown },
       });
       this.emitMessage(run, thread, message);
     }

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   canTransitionRun,
   canTransitionTask,
+  canTransitionToolCall,
   countWorkspacePendingAttention,
   mergeToolPolicy,
   normalizeProviderBaseUrl,
@@ -93,6 +94,15 @@ test("keeps durable task transitions explicit", () => {
   assert.equal(canTransitionTask("waiting-input", "running"), true);
   assert.equal(canTransitionTask("completed", "running"), false);
   assert.equal(canTransitionTask("archived", "ready"), false);
+});
+
+test("keeps tool call facts monotonic after a terminal outcome", () => {
+  assert.equal(canTransitionToolCall("proposed", "awaiting-approval"), true);
+  assert.equal(canTransitionToolCall("awaiting-approval", "running"), true);
+  assert.equal(canTransitionToolCall("running", "effect_unknown"), true);
+  assert.equal(canTransitionToolCall("effect_unknown", "cancelled"), false);
+  assert.equal(canTransitionToolCall("succeeded", "failed"), false);
+  assert.equal(canTransitionToolCall("cancelled", "running"), false);
 });
 
 test("merges tool policy without making writes implicit", () => {

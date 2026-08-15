@@ -1609,6 +1609,112 @@ test("reconciles Task, Assignment, and Inbox state after an unclean restart", as
   }
 });
 
+test("recovers a started tool call as effect unknown after an unclean restart", async () => {
+  const provider = new ControlledProvider();
+  const fixture = createApplicationFixture(provider);
+  try {
+    const workspace = await createWorkspace(fixture.application);
+    const run = await fixture.application.startRun({
+      threadId: workspace.thread.id,
+      prompt: "Start work before the process crashes",
+    });
+    await provider.waitForStarts(1);
+
+    const toolCall = fixture.store.createToolCall(run.id, {
+      providerCallId: "provider-crash-1",
+      name: "run_command",
+      description: "Run a non-idempotent command",
+      arguments: { command: "publish-report" },
+    });
+    fixture.store.updateToolCallStatus(toolCall.id, "running");
+    const proposedCall = fixture.store.createToolCall(run.id, {
+      providerCallId: "provider-crash-2",
+      name: "write_file",
+      description: "Write a file after approval",
+      arguments: { path: "report.md" },
+    });
+    const awaitingApprovalCall = fixture.store.createToolCall(run.id, {
+      providerCallId: "provider-crash-3",
+      name: "run_command",
+      description: "Wait for approval",
+      arguments: { command: "echo safe" },
+    });
+    fixture.store.updateToolCallStatus(awaitingApprovalCall.id, "awaiting-approval");
+    fixture.store.createApproval(
+      run.id,
+      awaitingApprovalCall.id,
+      "Wait for approval",
+    );
+    const alreadyCancelledCall = fixture.store.createToolCall(run.id, {
+      providerCallId: "provider-crash-4",
+      name: "run_command",
+      description: "Already cancelled",
+      arguments: { command: "echo cancelled" },
+    });
+    fixture.store.updateToolCallStatus(alreadyCancelledCall.id, "cancelled");
+    fixture.store.appendMessage({
+      threadId: workspace.thread.id,
+      runId: run.id,
+      role: "assistant",
+      status: "committed",
+      content: [toolCall, proposedCall, awaitingApprovalCall, alreadyCancelledCall]
+        .map((call) => ({
+          type: "tool-call" as const,
+          toolCallId: call.id,
+          providerCallId: call.providerCallId,
+          name: call.name,
+          arguments: call.arguments,
+        })),
+      metadata: {},
+    });
+
+    const recovered = new ScopeGuardApplication({
+      store: fixture.store,
+      secrets: fixture.vault,
+      providerFactory: () => fixture.provider,
+      tools: new FakeRegistry(),
+    });
+    assert.equal(recovered.initialize().interruptedRuns, 1);
+
+    assert.equal(
+      fixture.store.getToolCall(toolCall.id)?.status,
+      "effect_unknown",
+    );
+    const recoveredResult = fixture.store.listThreadMessages(workspace.thread.id)
+      .find((message) =>
+        message.runId === run.id &&
+        message.role === "tool" &&
+        message.content.some((block) =>
+          block.type === "tool-result" && block.toolCallId === toolCall.id
+        )
+      );
+    assert.equal(recoveredResult?.status, "interrupted");
+    assert.equal(recoveredResult?.metadata.effectUnknown, true);
+    assert.match(messageText(recoveredResult ? [recoveredResult] : []), /effect is unknown/i);
+    for (const call of [proposedCall, awaitingApprovalCall]) {
+      assert.equal(fixture.store.getToolCall(call.id)?.status, "cancelled");
+      const result = fixture.store.listThreadMessages(workspace.thread.id)
+        .find((message) => message.content.some((block) =>
+          block.type === "tool-result" && block.toolCallId === call.id
+        ));
+      assert.equal(result?.metadata.effectUnknown, false);
+      assert.match(messageText(result ? [result] : []), /cancelled before execution/i);
+    }
+    assert.equal(
+      fixture.store.listThreadMessages(workspace.thread.id).some(
+        (message) => message.content.some((block) =>
+          block.type === "tool-result" && block.toolCallId === alreadyCancelledCall.id
+        ),
+      ),
+      false,
+    );
+
+  } finally {
+    await fixture.application.shutdown();
+    fixture.store.close();
+  }
+});
+
 test("recovers a remote Run when the submit response is lost", async () => {
   const directory = await mkdtemp(join(tmpdir(), "scopeguard-submit-loss-"));
   const remoteService = new RemoteRuntimeService({
