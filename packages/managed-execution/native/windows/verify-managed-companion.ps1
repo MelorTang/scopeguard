@@ -11,6 +11,72 @@ if (-not $IsWindows) {
     throw "The managed execution companion package must be verified on Windows."
 }
 
+if (-not ("ScopeGuard.NativeStreamInspector" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+namespace ScopeGuard {
+    public static class NativeStreamInspector {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct FindStreamData {
+            public long StreamSize;
+
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 296)]
+            public string StreamName;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr FindFirstStreamW(
+            string fileName,
+            int informationLevel,
+            out FindStreamData findStreamData,
+            int flags);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool FindNextStreamW(
+            IntPtr findStream,
+            out FindStreamData findStreamData);
+
+        [DllImport("kernel32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool FindClose(IntPtr findFile);
+
+        public static string[] List(string path) {
+            var nativePath = path.StartsWith(@"\\", StringComparison.Ordinal)
+                ? @"\\?\UNC\" + path.Substring(2)
+                : @"\\?\" + path;
+            var streams = new List<string>();
+            FindStreamData data;
+            var handle = FindFirstStreamW(nativePath, 0, out data, 0);
+            if (handle == new IntPtr(-1)) {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Failed to enumerate file streams: " + path);
+            }
+            try {
+                streams.Add(data.StreamName);
+                while (FindNextStreamW(handle, out data)) {
+                    streams.Add(data.StreamName);
+                }
+                var error = Marshal.GetLastWin32Error();
+                if (error != 38) {
+                    throw new Win32Exception(error, "Failed to enumerate file streams: " + path);
+                }
+            }
+            finally {
+                FindClose(handle);
+            }
+            return streams.ToArray();
+        }
+    }
+}
+'@
+}
+
 function Assert-ExactProperties {
     param(
         [Parameter(Mandatory)][object]$Value,
@@ -150,8 +216,8 @@ foreach ($item in $items) {
         throw "Companion package contains a reparse point: $($item.FullName)"
     }
     if (-not $item.PSIsContainer) {
-        $streams = @(Get-Item -LiteralPath $item.FullName -Stream * -ErrorAction Stop |
-            Where-Object Stream -CNE ':$DATA')
+        $streams = @([ScopeGuard.NativeStreamInspector]::List($item.FullName) |
+            Where-Object { $_ -cne ':$DATA' -and $_ -cne '::$DATA' })
         if ($streams.Count -gt 0) {
             throw "Companion package contains an alternate data stream: $($item.FullName)"
         }
