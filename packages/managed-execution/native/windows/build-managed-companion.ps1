@@ -118,7 +118,13 @@ if (-not (Test-Path -LiteralPath $packagedPowerShell -PathType Leaf)) {
 
 $packagedNode = Join-Path $nodeRoot "node.exe"
 $nodeVersion = (& $packagedNode --version).TrimStart('v')
+$nodeArchitecture = (& $packagedNode -p "process.arch").Trim()
 $powershellVersion = (& $packagedPowerShell -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()').Trim()
+$powershellArchitecture = (& $packagedPowerShell -NoLogo -NoProfile -Command `
+    '[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()').Trim()
+if ($nodeArchitecture -cne "x64" -or $powershellArchitecture -cne "X64") {
+    throw "The packaged Node and PowerShell runtimes must both be Windows x64."
+}
 $nodeRuntimeManifestPath = Join-Path $metadataRoot "node-runtime.json"
 Write-Utf8Json -Path $nodeRuntimeManifestPath -Value ([ordered]@{
     schemaVersion = 1

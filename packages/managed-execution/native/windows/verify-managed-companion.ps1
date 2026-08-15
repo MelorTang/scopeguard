@@ -153,6 +153,37 @@ function Get-Sha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-PeMachine {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $stream = [IO.File]::Open(
+        $Path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::Read
+    )
+    $reader = [IO.BinaryReader]::new($stream)
+    try {
+        if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5a4d) {
+            throw "Entrypoint is not a PE image: $Path"
+        }
+        $stream.Position = 0x3c
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 64 -or $peOffset + 6 -gt $stream.Length) {
+            throw "Entrypoint has an invalid PE header offset: $Path"
+        }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) {
+            throw "Entrypoint has an invalid PE signature: $Path"
+        }
+        return $reader.ReadUInt16()
+    }
+    finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Assert-NoDuplicateJsonProperties {
     param(
         [Parameter(Mandatory)][System.Text.Json.JsonElement]$Element,
@@ -402,6 +433,11 @@ $signedPaths = @(
     $manifest.entrypoints.powershell,
     "payload/runtimes/node/node.exe"
 )
+foreach ($path in $signedPaths) {
+    if ((Get-PeMachine -Path (Join-Path $PackageRoot $path)) -ne 0x8664) {
+        throw "Companion entrypoint is not a Windows x64 PE image: $path"
+    }
+}
 $signatureEvidence = @($signedPaths | ForEach-Object {
     $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $PackageRoot $_)
     [pscustomobject][ordered]@{
