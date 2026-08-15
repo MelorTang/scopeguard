@@ -247,9 +247,27 @@ Managed execution was additionally verified on 2026-08-15:
   success evidence. The same baseline and product probes passed when scheduled
   into the logged-in user's interactive session.
 
+The internal Windows package pipeline was verified on 2026-08-15:
+
+- [Windows Server 2022 run 31887615478](https://github.com/MelorTang/scopeguard/actions/runs/31887615478)
+  built a self-contained x64 Electron ASAR and NSIS per-user installer from a
+  frozen lockfile. Package checks rejected unresolved Workspace imports,
+  source files, tests, source maps, credentials, and unexpected files.
+- Windows 11 25H2 build `26200.9168` silently installed the unsigned package.
+  An interactive-user smoke test observed the `ScopeGuard` main window and four
+  live descendants, then closed the window gracefully and confirmed that no
+  packaged process remained.
+- Silent uninstall returned zero and removed the installation directory,
+  uninstall registration, desktop shortcut, and Start menu shortcut. The
+  application user-data directory was intentionally preserved.
+- This internal package contains the Desktop application only. It does not ship
+  the signed Provisioner, Broker, launcher, or managed Node runtime pack, so the
+  two bounded execution profiles continue to fail closed in this artifact.
+
 ## 12. Release-External Work
 
-Source MVP verification does not cover signed/notarized installers, auto-update,
-crash reporting, privacy policy, Windows/Linux packaging, production TLS
-operations, or public Runtime hardening. Those are release engineering work,
-not evidence for the first-stage product loop.
+Source MVP verification does not cover signed/notarized installers, the managed
+Windows runtime installation, upgrade/rollback/repair, auto-update, crash
+reporting, privacy policy, Linux packaging, production TLS operations, or public
+Runtime hardening. Those are release engineering work, not evidence for the
+first-stage product loop.

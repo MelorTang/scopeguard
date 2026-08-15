@@ -104,6 +104,15 @@ accepted Windows client success environment; client validation must run from a
 logged-in user session. This evidence is source integration, not a signed or
 packaged Desktop release result.
 
+The base Desktop packaging path is now independently repeatable. Windows Server
+2022 run [31887615478](https://github.com/MelorTang/scopeguard/actions/runs/31887615478)
+built the unsigned x64 ASAR and NSIS installer, and Windows 11 build
+`26200.9168` passed install, interactive main-window startup, Agent-process
+stability, graceful shutdown, and uninstall checks. The package deliberately
+omits the managed-execution native resources. It proves the Electron application
+lifecycle only; it is not a packaged LPAC end-to-end result and does not change
+the bounded profiles' fail-closed status.
+
 ## Remaining Release Gates
 
 - Signed ScopeGuard service, Broker, launcher, and immutable Node runtime pack.
