@@ -247,6 +247,128 @@ test("runs an API Agent without a local folder and exposes no file or command to
       ),
       true,
     );
+    assert.deepEqual(
+      fixture.store.listRunUsageRecords(run.id).map((record) => ({
+        status: record.status,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+      })),
+      [{ status: "unavailable", inputTokens: null, outputTokens: null }],
+    );
+  } finally {
+    fixture.store.close();
+  }
+});
+
+test("persists local Native request manifests and provider usage without credentials", async () => {
+  const provider = new UsageRecordingProvider();
+  const fixture = createApplicationFixture(provider);
+  try {
+    const workspace = fixture.application.createWorkspace({ name: "Ledger" });
+    const providerProfile = await fixture.application.saveProviderProfile({
+      name: "Private relay",
+      protocol: "openai-compatible",
+      baseUrl: "https://relay.example.com/v1",
+      defaultModel: "ledger-model",
+      apiKey: "sk-ledger-secret",
+    });
+    const agent = fixture.application.createAgentProfile({
+      projectId: workspace.id,
+      name: "Ledger Agent",
+      instructions: "Answer from the durable request.",
+      providerProfileId: providerProfile.id,
+    });
+    const thread = fixture.application.createThread({
+      projectId: workspace.id,
+      agentProfileId: agent.id,
+      title: "Ledger Run",
+    });
+
+    const run = await fixture.application.startRun({
+      threadId: thread.id,
+      prompt: "Record this request.",
+    });
+    const completed = await fixture.application.waitForRun(run.id);
+    assert.equal(completed.status, "completed");
+
+    const manifests = fixture.store.listRunRequestManifests(run.id);
+    assert.equal(manifests.length, 1);
+    assert.equal(manifests[0]?.stepSequence, 1);
+    assert.equal(manifests[0]?.model, "ledger-model");
+    assert.match(manifests[0]?.requestHash ?? "", /^[0-9a-f]{64}$/);
+    assert.equal(
+      manifests[0]?.messages.some(
+        (message) => message.role === "user" && message.content === "Record this request.",
+      ),
+      true,
+    );
+    const durablePayload = JSON.stringify(manifests);
+    assert.equal(durablePayload.includes("sk-ledger-secret"), false);
+    assert.equal(durablePayload.includes("relay.example.com"), false);
+
+    const secondThread = fixture.application.createThread({
+      projectId: workspace.id,
+      agentProfileId: agent.id,
+      title: "Equivalent Ledger Run",
+    });
+    const equivalentRun = await fixture.application.startRun({
+      threadId: secondThread.id,
+      prompt: "Record this request.",
+    });
+    await fixture.application.waitForRun(equivalentRun.id);
+    assert.equal(
+      fixture.store.listRunRequestManifests(equivalentRun.id)[0]?.requestHash,
+      manifests[0]?.requestHash,
+    );
+
+    assert.deepEqual(
+      fixture.store.listRunUsageRecords(run.id).map((record) => ({
+        sequence: record.sequence,
+        stepSequence: record.stepSequence,
+        status: record.status,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+      })),
+      [
+        {
+          sequence: 1,
+          stepSequence: 1,
+          status: "reported",
+          inputTokens: 21,
+          outputTokens: null,
+        },
+        {
+          sequence: 2,
+          stepSequence: 1,
+          status: "reported",
+          inputTokens: null,
+          outputTokens: 5,
+        },
+      ],
+    );
+  } finally {
+    fixture.store.close();
+  }
+});
+
+test("fails a Native Run before provider invocation when manifest storage fails", async () => {
+  const provider = new RecordingProvider();
+  const fixture = createApplicationFixture(provider);
+  try {
+    const workspace = await createWorkspace(fixture.application);
+    fixture.store.recordRunRequestManifest = () => {
+      throw new Error("Injected manifest storage failure.");
+    };
+
+    const run = await fixture.application.startRun({
+      threadId: workspace.thread.id,
+      prompt: "This must not reach the provider.",
+    });
+    const failed = await fixture.application.waitForRun(run.id);
+
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error ?? "", /manifest storage failure/);
+    assert.equal(provider.requests.length, 0);
   } finally {
     fixture.store.close();
   }
@@ -276,6 +398,7 @@ test("snapshots model and execution settings from the current conversation", asy
 
     assert.equal(completed.configSnapshot.model, "specialist-model");
     assert.equal(completed.configSnapshot.executionProfile, "full-access");
+    assert.equal(provider.request?.credentials.model, "specialist-model");
     assert.equal(
       fixture.store.getThread(sibling.id)?.executionProfile,
       "request-approval",
@@ -2023,6 +2146,19 @@ class RecordingProvider extends ImmediateProvider {
   }
 }
 
+class UsageRecordingProvider extends RecordingProvider {
+  override async *streamTurn(
+    request: ProviderTurnRequest,
+  ): AsyncIterable<ProviderStreamEvent> {
+    this.request = request;
+    this.requests.push(request);
+    yield { type: "usage", inputTokens: 21 };
+    yield { type: "text-delta", delta: "Recorded" };
+    yield { type: "usage", outputTokens: 5 };
+    yield { type: "completed", finishReason: "stop" };
+  }
+}
+
 class ControlledProvider extends ImmediateProvider {
   readonly #startedPrompts: string[] = [];
   readonly #waiters: Array<() => void> = [];
@@ -2034,12 +2170,20 @@ class ControlledProvider extends ImmediateProvider {
     const prompt = [...request.messages]
       .reverse()
       .find((message) => message.role === "user")?.content ?? "";
-    const gate = new Promise<void>((resolve, reject) => {
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    this.#releases.set(prompt, releaseGate);
+    this.#startedPrompts.push(prompt);
+    this.#notifyWaiters();
+    yield { type: "text-delta", delta: `Working on ${prompt}` };
+    await new Promise<void>((resolve, reject) => {
       const abort = () => reject(
         request.signal.reason ?? new DOMException("Cancelled", "AbortError"),
       );
       request.signal.addEventListener("abort", abort, { once: true });
-      this.#releases.set(prompt, () => {
+      void gate.then(() => {
         request.signal.removeEventListener("abort", abort);
         resolve();
       });
@@ -2047,10 +2191,6 @@ class ControlledProvider extends ImmediateProvider {
         abort();
       }
     });
-    this.#startedPrompts.push(prompt);
-    this.#notifyWaiters();
-    yield { type: "text-delta", delta: `Working on ${prompt}` };
-    await gate;
     yield { type: "completed", finishReason: "stop" };
   }
 

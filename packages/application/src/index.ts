@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 
 import {
@@ -62,7 +62,9 @@ import {
   type SaveRuntimeNodeInput,
   type RunConfigSnapshot,
   type RunEvent,
+  type RunRequestManifest,
   type RunStatus,
+  type RunUsageRecord,
   type StartRunInput,
   type TaskAssignment,
   type TaskStatus,
@@ -170,6 +172,14 @@ export interface WorkspaceStore {
   updateRunStatus(runId: Id, status: RunStatus, error?: string): AgentRun;
   interruptNonTerminalRuns(): number;
   appendRunEvent(event: RunEvent): void;
+  recordRunRequestManifest(
+    input: Omit<RunRequestManifest, "createdAt">,
+  ): RunRequestManifest;
+  listRunRequestManifests(runId: Id): RunRequestManifest[];
+  appendRunUsageRecord(
+    input: Omit<RunUsageRecord, "sequence" | "receivedAt">,
+  ): RunUsageRecord;
+  listRunUsageRecords(runId: Id): RunUsageRecord[];
   createRemoteRunBinding(input: {
     runId: Id;
     runtimeNodeId: Id;
@@ -1946,10 +1956,12 @@ export class ScopeGuardApplication {
       }
       throwIfAborted(controller.signal);
       const credentials: ProviderCredentials = {
-        protocol: provider.protocol,
-        baseUrl: normalizeProviderBaseUrl(provider.baseUrl),
+        protocol: run.configSnapshot.providerProtocol ?? provider.protocol,
+        baseUrl: normalizeProviderBaseUrl(
+          run.configSnapshot.providerBaseUrl ?? provider.baseUrl,
+        ),
         apiKey,
-        model: profile.modelOverride ?? provider.defaultModel,
+        model: run.configSnapshot.model ?? provider.defaultModel,
         customHeaders: {},
       };
       const history = toModelMessages(
@@ -1961,7 +1973,7 @@ export class ScopeGuardApplication {
       this.emitStatus(this.#store.updateRunStatus(run.id, "running"));
 
       const runtime = new NativeAgentRuntime(
-        this.#providerFactory(provider.protocol),
+        this.#providerFactory(credentials.protocol),
         workspace.localRootPath ? this.#tools : NO_TOOLS,
       );
       await runtime.run(
@@ -2136,6 +2148,23 @@ export class ScopeGuardApplication {
     partial: PartialOutputState,
   ): NativeAgentRunObserver {
     return {
+      onRequestManifest: (input) => {
+        const manifestContent = {
+          providerProtocol: input.providerProtocol,
+          model: input.model,
+          messages: input.messages,
+          tools: input.tools,
+          maxOutputTokens: input.maxOutputTokens,
+        };
+        this.#store.recordRunRequestManifest({
+          runId: run.id,
+          stepSequence: input.stepSequence,
+          ...manifestContent,
+          requestHash: createHash("sha256")
+            .update(canonicalJson(manifestContent))
+            .digest("hex"),
+        });
+      },
       onTextDelta: (delta) => {
         partial.text += delta;
         this.checkpointPartial(run.id, partial);
@@ -2147,7 +2176,21 @@ export class ScopeGuardApplication {
           at: new Date().toISOString(),
         });
       },
-      onUsage: () => {},
+      onUsage: (usage) => {
+        const unavailable = usage.status === "unavailable";
+        this.#store.appendRunUsageRecord({
+          runId: run.id,
+          stepSequence: usage.stepSequence,
+          source: "provider",
+          status: usage.status,
+          inputTokens: unavailable
+            ? null
+            : normalizeTokenCount(usage.inputTokens, "inputTokens"),
+          outputTokens: unavailable
+            ? null
+            : normalizeTokenCount(usage.outputTokens, "outputTokens"),
+        });
+      },
       onAssistantTurn: async (turn) => {
         const callIds: Record<string, Id> = {};
         const blocks: MessageContentBlock[] = [];
@@ -3082,6 +3125,39 @@ function redactExactSecrets(value: string, secrets: string[]): string {
       (redacted, secret) => redacted.replaceAll(secret, "[REDACTED]"),
       value,
     );
+}
+
+function canonicalJson(value: unknown): string {
+  const encoded = JSON.stringify(value, (_key, nested) => {
+    if (
+      nested &&
+      typeof nested === "object" &&
+      !Array.isArray(nested)
+    ) {
+      return Object.fromEntries(
+        Object.entries(nested as Record<string, unknown>)
+          .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
+      );
+    }
+    return nested;
+  });
+  if (encoded === undefined) {
+    throw new Error("Run request manifest is not JSON serializable.");
+  }
+  return encoded;
+}
+
+function normalizeTokenCount(
+  value: number | undefined,
+  field: string,
+): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative safe integer.`);
+  }
+  return value;
 }
 
 function assertMaximumLength(

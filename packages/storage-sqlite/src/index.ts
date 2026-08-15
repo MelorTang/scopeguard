@@ -41,7 +41,9 @@ import {
   type RemoteRunBinding,
   type RunConfigSnapshot,
   type RunEvent,
+  type RunRequestManifest,
   type RunStatus,
+  type RunUsageRecord,
   type TaskAssignment,
   type TaskStatus,
   type ThreadMessage,
@@ -1174,6 +1176,79 @@ export class ScopeGuardStore {
   getRun(runId: Id): AgentRun | null {
     const row = this.#get("SELECT * FROM agent_runs WHERE id = ?", runId);
     return row ? mapAgentRun(row) : null;
+  }
+
+  recordRunRequestManifest(
+    input: Omit<RunRequestManifest, "createdAt">,
+  ): RunRequestManifest {
+    const manifest: RunRequestManifest = {
+      ...input,
+      createdAt: new Date().toISOString(),
+    };
+    this.#run(
+      `INSERT INTO run_request_manifests (
+        run_id, step_sequence, provider_protocol, model, messages_json,
+        tools_json, max_output_tokens, request_hash, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      manifest.runId,
+      manifest.stepSequence,
+      manifest.providerProtocol,
+      manifest.model,
+      JSON.stringify(manifest.messages),
+      JSON.stringify(manifest.tools),
+      manifest.maxOutputTokens,
+      manifest.requestHash,
+      manifest.createdAt,
+    );
+    return manifest;
+  }
+
+  listRunRequestManifests(runId: Id): RunRequestManifest[] {
+    return this.#all(
+      `SELECT * FROM run_request_manifests
+       WHERE run_id = ? ORDER BY step_sequence`,
+      runId,
+    ).map(mapRunRequestManifest);
+  }
+
+  appendRunUsageRecord(
+    input: Omit<RunUsageRecord, "sequence" | "receivedAt">,
+  ): RunUsageRecord {
+    return this.#transaction(() => {
+      const row = this.#get(
+        `SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+         FROM run_usage_records WHERE run_id = ?`,
+        input.runId,
+      );
+      const record: RunUsageRecord = {
+        ...input,
+        sequence: asNumber(row?.next_sequence ?? 1),
+        receivedAt: new Date().toISOString(),
+      };
+      this.#run(
+        `INSERT INTO run_usage_records (
+          run_id, sequence, step_sequence, source, status,
+          input_tokens, output_tokens, received_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        record.runId,
+        record.sequence,
+        record.stepSequence,
+        record.source,
+        record.status,
+        record.inputTokens,
+        record.outputTokens,
+        record.receivedAt,
+      );
+      return record;
+    });
+  }
+
+  listRunUsageRecords(runId: Id): RunUsageRecord[] {
+    return this.#all(
+      `SELECT * FROM run_usage_records
+       WHERE run_id = ? ORDER BY sequence`,
+      runId,
+    ).map(mapRunUsageRecord);
   }
 
   listActiveRuns(): AgentRun[] {
@@ -2361,6 +2436,52 @@ export class ScopeGuardStore {
            WHERE key = 'schema_version'`,
         );
       });
+      currentVersion = 8;
+    }
+
+    if (currentVersion < 9) {
+      this.#transaction(() => {
+        this.#database.exec(`
+          CREATE TABLE IF NOT EXISTS run_request_manifests (
+            run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+            step_sequence INTEGER NOT NULL CHECK(step_sequence > 0),
+            provider_protocol TEXT NOT NULL,
+            model TEXT NOT NULL,
+            messages_json TEXT NOT NULL,
+            tools_json TEXT NOT NULL,
+            max_output_tokens INTEGER CHECK(
+              max_output_tokens IS NULL OR max_output_tokens >= 0
+            ),
+            request_hash TEXT NOT NULL CHECK(
+              length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*'
+            ),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(run_id, step_sequence)
+          );
+
+          CREATE TABLE IF NOT EXISTS run_usage_records (
+            run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK(sequence > 0),
+            step_sequence INTEGER NOT NULL CHECK(step_sequence > 0),
+            source TEXT NOT NULL CHECK(source = 'provider'),
+            status TEXT NOT NULL CHECK(status IN ('reported', 'unavailable')),
+            input_tokens INTEGER CHECK(input_tokens IS NULL OR input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens IS NULL OR output_tokens >= 0),
+            received_at TEXT NOT NULL,
+            PRIMARY KEY(run_id, sequence),
+            FOREIGN KEY(run_id, step_sequence)
+              REFERENCES run_request_manifests(run_id, step_sequence)
+              ON DELETE CASCADE
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_run_usage_step
+            ON run_usage_records(run_id, step_sequence, sequence);
+        `);
+        this.#run(
+          `UPDATE schema_metadata SET value = '9'
+           WHERE key = 'schema_version'`,
+        );
+      });
     }
   }
 
@@ -2768,6 +2889,33 @@ function mapAgentRun(row: UnknownRow): AgentRun {
   };
 }
 
+function mapRunRequestManifest(row: UnknownRow): RunRequestManifest {
+  return {
+    runId: asString(row.run_id),
+    stepSequence: asNumber(row.step_sequence),
+    providerProtocol: asString(row.provider_protocol) as RunRequestManifest["providerProtocol"],
+    model: asString(row.model),
+    messages: parseJsonArray(row.messages_json) as RunRequestManifest["messages"],
+    tools: parseJsonArray(row.tools_json) as RunRequestManifest["tools"],
+    maxOutputTokens: asNullableNumber(row.max_output_tokens),
+    requestHash: asString(row.request_hash),
+    createdAt: asString(row.created_at),
+  };
+}
+
+function mapRunUsageRecord(row: UnknownRow): RunUsageRecord {
+  return {
+    runId: asString(row.run_id),
+    sequence: asNumber(row.sequence),
+    stepSequence: asNumber(row.step_sequence),
+    source: asString(row.source) as RunUsageRecord["source"],
+    status: asString(row.status) as RunUsageRecord["status"],
+    inputTokens: asNullableNumber(row.input_tokens),
+    outputTokens: asNullableNumber(row.output_tokens),
+    receivedAt: asString(row.received_at),
+  };
+}
+
 function mapRemoteRunBinding(row: UnknownRow): RemoteRunBinding {
   return {
     runId: asString(row.run_id),
@@ -2856,6 +3004,10 @@ function asNumber(value: unknown): number {
     return Number(value);
   }
   throw new Error(`Expected numeric database value, received ${typeof value}.`);
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return value === null || value === undefined ? null : asNumber(value);
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {

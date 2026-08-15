@@ -10,6 +10,7 @@ import type {
 import type {
   ModelMessage,
   ModelToolCall,
+  ModelToolDefinition,
   ProviderAdapter,
   ProviderCredentials,
   ProviderFinishReason,
@@ -64,8 +65,21 @@ export type ObservedToolCall = {
 };
 
 export interface NativeAgentRunObserver {
+  onRequestManifest(input: {
+    stepSequence: number;
+    providerProtocol: ProviderCredentials["protocol"];
+    model: string;
+    messages: ModelMessage[];
+    tools: ModelToolDefinition[];
+    maxOutputTokens: number | null;
+  }): void | Promise<void>;
   onTextDelta(delta: string): void | Promise<void>;
-  onUsage(usage: { inputTokens?: number; outputTokens?: number }): void | Promise<void>;
+  onUsage(usage: {
+    stepSequence: number;
+    status: "reported" | "unavailable";
+    inputTokens?: number;
+    outputTokens?: number;
+  }): void | Promise<void>;
   onAssistantTurn(turn: {
     content: string;
     toolCalls: ObservedToolCall[];
@@ -117,39 +131,70 @@ export class NativeAgentRuntime {
 
     for (let toolRound = 0; toolRound <= maxToolRounds; toolRound += 1) {
       throwIfAborted(input.signal);
+      const stepSequence = toolRound + 1;
       let text = "";
       let finishReason: ProviderFinishReason = "unknown";
       const toolCalls: ModelToolCall[] = [];
+      const requestMessages = structuredClone(messages);
+      const requestTools = structuredClone([
+        ...this.#tools.definitions(input.toolPolicy),
+        ...(input.allowUserInput === false ? [] : [REQUEST_USER_INPUT_TOOL]),
+      ]);
+      await observer.onRequestManifest({
+        stepSequence,
+        providerProtocol: input.credentials.protocol,
+        model: input.credentials.model,
+        messages: structuredClone(requestMessages),
+        tools: structuredClone(requestTools),
+        maxOutputTokens: input.maxOutputTokens ?? null,
+      });
 
-      for await (const event of this.#provider.streamTurn({
-        credentials: input.credentials,
-        messages: [...messages],
-        tools: [
-          ...this.#tools.definitions(input.toolPolicy),
-          ...(input.allowUserInput === false ? [] : [REQUEST_USER_INPUT_TOOL]),
-        ],
-        maxOutputTokens: input.maxOutputTokens,
-        signal: input.signal,
-      })) {
-        throwIfAborted(input.signal);
-        if (event.type === "text-delta") {
-          if (text.length + event.delta.length > MAX_ASSISTANT_TEXT_CHARACTERS) {
-            throw new Error(
-              `Provider response exceeded ${MAX_ASSISTANT_TEXT_CHARACTERS} characters.`,
-            );
+      let usageReported = false;
+      let providerFailed = false;
+      let providerError: unknown;
+      try {
+        for await (const event of this.#provider.streamTurn({
+          credentials: input.credentials,
+          messages: requestMessages,
+          tools: requestTools,
+          maxOutputTokens: input.maxOutputTokens,
+          signal: input.signal,
+        })) {
+          throwIfAborted(input.signal);
+          if (event.type === "text-delta") {
+            if (text.length + event.delta.length > MAX_ASSISTANT_TEXT_CHARACTERS) {
+              throw new Error(
+                `Provider response exceeded ${MAX_ASSISTANT_TEXT_CHARACTERS} characters.`,
+              );
+            }
+            text += event.delta;
+            await observer.onTextDelta(event.delta);
+          } else if (event.type === "tool-call") {
+            toolCalls.push(event.toolCall);
+          } else if (event.type === "usage") {
+            usageReported = true;
+            await observer.onUsage({
+              stepSequence,
+              status: "reported",
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+            });
+          } else if (event.type === "completed") {
+            finishReason = event.finishReason;
           }
-          text += event.delta;
-          await observer.onTextDelta(event.delta);
-        } else if (event.type === "tool-call") {
-          toolCalls.push(event.toolCall);
-        } else if (event.type === "usage") {
-          await observer.onUsage({
-            inputTokens: event.inputTokens,
-            outputTokens: event.outputTokens,
-          });
-        } else if (event.type === "completed") {
-          finishReason = event.finishReason;
         }
+      } catch (error) {
+        providerFailed = true;
+        providerError = error;
+      }
+      if (!usageReported) {
+        await observer.onUsage({
+          stepSequence,
+          status: "unavailable",
+        });
+      }
+      if (providerFailed) {
+        throw providerError;
       }
 
       for (const toolCall of toolCalls) {

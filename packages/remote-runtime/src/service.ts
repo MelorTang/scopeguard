@@ -250,6 +250,8 @@ export class RemoteRuntimeService {
           allowUserInput: false,
         },
         {
+          // Remote Runtime deliberately does not retain model-visible payloads.
+          onRequestManifest: () => {},
           onTextDelta: (delta) => {
             this.#store.appendEvent(runId, {
               type: "text-delta",
