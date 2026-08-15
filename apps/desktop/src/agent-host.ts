@@ -54,6 +54,7 @@ import type {
   Id,
   SaveRuntimeNodeInput,
   StartRunInput,
+  UpdateThreadSettingsInput,
 } from "@scopeguard/domain";
 
 import { AgentHostManagedExecutionAdapter } from "./agent-host-managed-execution.js";
@@ -325,6 +326,10 @@ async function dispatch(request: AgentHostRequest): Promise<unknown> {
       );
     case "createThread":
       return application.createThread(request.payload as CreateThreadInput);
+    case "updateThreadSettings":
+      return application.updateThreadSettings(
+        request.payload as UpdateThreadSettingsInput,
+      );
     case "listThreadMessages":
       return application.listThreadMessages(request.payload as Id);
     case "startRun":

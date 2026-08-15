@@ -1,4 +1,4 @@
-export const SCOPEGUARD_SCHEMA_VERSION = 7;
+export const SCOPEGUARD_SCHEMA_VERSION = 8;
 
 export type Id = string;
 export type IsoDateTime = string;
@@ -382,6 +382,8 @@ export type AgentThread = {
   agentProfileId: Id;
   title: string;
   status: "active" | "archived";
+  modelOverride: string | null;
+  executionProfile: ConversationExecutionProfile;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 };
@@ -660,6 +662,12 @@ export type CreateThreadInput = {
   projectId: Id;
   agentProfileId: Id;
   title?: string;
+};
+
+export type UpdateThreadSettingsInput = {
+  threadId: Id;
+  modelOverride?: string | null;
+  executionProfile?: ConversationExecutionProfile;
 };
 
 export type StartRunInput = {

@@ -105,6 +105,7 @@ test("persists the first multi-agent workspace slice", () => {
     assert.equal(snapshot.providerProfiles[0]?.apiKeyRef, "provider-secret:test");
     assert.equal(snapshot.agentProfiles[0]?.toolPolicy.writeFiles, "ask");
     assert.equal(snapshot.threads[0]?.status, "active");
+    assert.equal(snapshot.threads[0]?.executionProfile, "request-approval");
     assert.equal(snapshot.activeRuns.length, 0);
     assert.equal(snapshot.recentRuns[0]?.status, "completed");
     assert.deepEqual(
@@ -118,6 +119,48 @@ test("persists the first multi-agent workspace slice", () => {
       runId: contextualRun.id,
       usedAt: contextualRun.createdAt,
     }]);
+  } finally {
+    store.close();
+  }
+});
+
+test("persists model and execution settings per conversation", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const project = store.addProject({ rootPath: "/tmp/thread-settings" });
+    const agent = store.createAgentProfile({
+      projectId: project.id,
+      name: "Analyst",
+      instructions: "Analyze.",
+      modelOverride: "model-default",
+      executionProfile: "request-approval",
+    });
+    const first = store.createThread({
+      projectId: project.id,
+      agentProfileId: agent.id,
+      title: "First",
+    });
+    const second = store.createThread({
+      projectId: project.id,
+      agentProfileId: agent.id,
+      title: "Second",
+    });
+
+    assert.equal(first.modelOverride, "model-default");
+    assert.equal(first.executionProfile, "request-approval");
+    const updated = store.updateThreadSettings({
+      threadId: first.id,
+      modelOverride: "model-specialist",
+      executionProfile: "full-access",
+    });
+
+    assert.equal(updated.modelOverride, "model-specialist");
+    assert.equal(updated.executionProfile, "full-access");
+    assert.equal(store.getThread(second.id)?.modelOverride, "model-default");
+    assert.equal(
+      store.getThread(second.id)?.executionProfile,
+      "request-approval",
+    );
   } finally {
     store.close();
   }
@@ -401,7 +444,7 @@ test("v6 migration adds waiting-input to the active Run index", async () => {
     ).get("idx_one_active_run_per_thread") as { sql: string };
     migrated.close();
 
-    assert.equal(version.value, "7");
+    assert.equal(version.value, "8");
     assert.match(index.sql, /waiting-input/);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -438,6 +481,42 @@ test("v7 migration assigns explicit conversation execution profiles", async () =
     const migrated = new ScopeGuardStore(databasePath);
     assert.equal(migrated.getAgentProfile(native.id)?.executionProfile, "request-approval");
     assert.equal(migrated.getAgentProfile(cli.id)?.executionProfile, "full-access");
+    migrated.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("v8 migration inherits model and execution settings into conversations", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-v8-migration-"));
+  const databasePath = join(directory, "scopeguard.db");
+  try {
+    const initial = new ScopeGuardStore(databasePath);
+    const project = initial.addProject({ rootPath: "/tmp/v8-project" });
+    const agent = initial.createAgentProfile({
+      projectId: project.id,
+      name: "Native",
+      instructions: "",
+      modelOverride: "inherited-model",
+      executionProfile: "auto-approve",
+    });
+    const thread = initial.createThread({
+      projectId: project.id,
+      agentProfileId: agent.id,
+    });
+    initial.close();
+
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      UPDATE agent_threads
+      SET model_override = NULL, execution_profile = 'request-approval';
+      UPDATE schema_metadata SET value = '7' WHERE key = 'schema_version';
+    `);
+    legacy.close();
+
+    const migrated = new ScopeGuardStore(databasePath);
+    assert.equal(migrated.getThread(thread.id)?.modelOverride, "inherited-model");
+    assert.equal(migrated.getThread(thread.id)?.executionProfile, "auto-approve");
     migrated.close();
   } finally {
     await rm(directory, { recursive: true, force: true });

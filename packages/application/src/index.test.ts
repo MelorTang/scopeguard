@@ -252,6 +252,40 @@ test("runs an API Agent without a local folder and exposes no file or command to
   }
 });
 
+test("snapshots model and execution settings from the current conversation", async () => {
+  const provider = new RecordingProvider();
+  const fixture = createApplicationFixture(provider);
+  try {
+    const { project, agent, thread } = await createWorkspace(fixture.application);
+    const sibling = fixture.application.createThread({
+      projectId: project.id,
+      agentProfileId: agent.id,
+      title: "Sibling Thread",
+    });
+
+    fixture.application.updateThreadSettings({
+      threadId: thread.id,
+      modelOverride: "specialist-model",
+      executionProfile: "full-access",
+    });
+    const run = await fixture.application.startRun({
+      threadId: thread.id,
+      prompt: "Use this conversation's settings.",
+    });
+    const completed = await fixture.application.waitForRun(run.id);
+
+    assert.equal(completed.configSnapshot.model, "specialist-model");
+    assert.equal(completed.configSnapshot.executionProfile, "full-access");
+    assert.equal(
+      fixture.store.getThread(sibling.id)?.executionProfile,
+      "request-approval",
+    );
+    assert.equal(fixture.store.getThread(sibling.id)?.modelOverride, null);
+  } finally {
+    fixture.store.close();
+  }
+});
+
 test("completes an isolated three-Agent research, review, and writing workflow", async () => {
   const provider = new RecordingProvider();
   const fixture = createApplicationFixture(provider);

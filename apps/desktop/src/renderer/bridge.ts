@@ -570,6 +570,12 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         rootPath: `/Users/demo/Workspace-${snapshot.projects.length + 1}`,
       };
     },
+    async chooseWorkspaceFiles() {
+      return {
+        canceled: false,
+        files: [{ name: "README.md", relativePath: "README.md" }],
+      };
+    },
     async addProject(input) {
       const timestamp = new Date().toISOString();
       const added: Project = {
@@ -683,11 +689,19 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       return clone(created);
     },
     async createThread(input) {
+      const profile = snapshot.agentProfiles.find(
+        (item) => item.id === input.agentProfileId,
+      );
+      if (!profile) {
+        throw new Error("找不到 Agent 配置。");
+      }
       const created = makeThread(
         crypto.randomUUID(),
         input.agentProfileId,
         input.title || "新对话",
         input.projectId,
+        profile.modelOverride,
+        profile.executionProfile,
       );
       const task: WorkspaceTask = {
         id: created.id,
@@ -728,6 +742,27 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       };
       messages.set(created.id, []);
       return clone(created);
+    },
+    async updateThreadSettings(input) {
+      const current = snapshot.threads.find((item) => item.id === input.threadId);
+      if (!current) {
+        throw new Error("找不到对应的对话。");
+      }
+      const updated: AgentThread = {
+        ...current,
+        modelOverride: input.modelOverride === undefined
+          ? current.modelOverride
+          : input.modelOverride?.trim() || null,
+        executionProfile: input.executionProfile ?? current.executionProfile,
+        updatedAt: new Date().toISOString(),
+      };
+      snapshot = {
+        ...snapshot,
+        threads: snapshot.threads.map((item) =>
+          item.id === updated.id ? updated : item
+        ),
+      };
+      return clone(updated);
     },
     async listThreadMessages(threadId) {
       return clone(messages.get(threadId) ?? []);
@@ -1365,10 +1400,10 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       providerBaseUrl: runProvider?.baseUrl ?? null,
       model:
         agent.runtimeKind === "native"
-          ? agent.modelOverride ?? runProvider?.defaultModel ?? null
+          ? thread.modelOverride ?? runProvider?.defaultModel ?? null
           : null,
       instructions: agent.instructions,
-      executionProfile: agent.executionProfile,
+      executionProfile: thread.executionProfile,
       toolPolicy: clone(agent.toolPolicy),
       cliConfig: agent.runtimeKind === "local-cli" ? clone(agent.cliConfig) : null,
     };
@@ -1552,6 +1587,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     agentProfileId: string,
     title: string,
     projectId = project.id,
+    modelOverride: string | null = null,
+    executionProfile: AgentThread["executionProfile"] = "request-approval",
   ): AgentThread {
     return {
       id,
@@ -1559,6 +1596,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       agentProfileId,
       title,
       status: "active",
+      modelOverride,
+      executionProfile,
       createdAt: now,
       updatedAt: now,
     };

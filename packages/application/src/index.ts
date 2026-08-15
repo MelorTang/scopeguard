@@ -70,6 +70,7 @@ import {
   type ToolApproval,
   type ToolCallRecord,
   type ToolCallStatus,
+  type UpdateThreadSettingsInput,
   type Workspace,
   type WorkspaceSchedule,
   type WorkspaceSnapshot,
@@ -149,6 +150,7 @@ export interface WorkspaceStore {
   listThreads(projectId?: Id): AgentThread[];
   getThread(threadId: Id): AgentThread | null;
   createThread(input: CreateThreadInput): AgentThread;
+  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread;
   listThreadMessages(threadId: Id): ThreadMessage[];
   appendMessage(
     input: Omit<ThreadMessage, "id" | "sequence" | "createdAt">,
@@ -1011,6 +1013,28 @@ export class ScopeGuardApplication {
     return this.#store.createThread(input);
   }
 
+  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread {
+    const thread = this.requireThread(input.threadId);
+    const profile = this.requireAgentProfile(thread.agentProfileId);
+    if (input.modelOverride !== undefined && profile.runtimeKind !== "native") {
+      throw new Error("Local CLI Conversations do not support model selection.");
+    }
+    const modelOverride = input.modelOverride === undefined
+      ? undefined
+      : input.modelOverride?.trim() || null;
+    if (modelOverride) {
+      assertMaximumLength(modelOverride, 512, "Model");
+    }
+    if (input.executionProfile === undefined && modelOverride === undefined) {
+      throw new Error("No Conversation settings were provided.");
+    }
+    return this.#store.updateThreadSettings({
+      threadId: thread.id,
+      modelOverride,
+      executionProfile: input.executionProfile,
+    });
+  }
+
   listThreadMessages(threadId: Id): ThreadMessage[] {
     this.requireThread(threadId);
     return this.#store.listThreadMessages(threadId);
@@ -1085,7 +1109,7 @@ export class ScopeGuardApplication {
     }
 
     const toolPolicy = !useRemoteRuntime && workspace.localRootPath
-      ? effectiveToolPolicy(profile.executionProfile, profile.toolPolicy)
+      ? effectiveToolPolicy(thread.executionProfile, profile.toolPolicy)
       : {
           readFiles: "deny" as const,
           writeFiles: "deny" as const,
@@ -1107,10 +1131,10 @@ export class ScopeGuardApplication {
       providerProtocol: provider?.protocol ?? null,
       providerBaseUrl: provider?.baseUrl ?? null,
       model: provider
-        ? profile.modelOverride ?? provider.defaultModel
+        ? thread.modelOverride ?? provider.defaultModel
         : null,
       instructions: profile.instructions,
-      executionProfile: profile.executionProfile,
+      executionProfile: thread.executionProfile,
       toolPolicy,
       cliConfig: profile.cliConfig,
     };

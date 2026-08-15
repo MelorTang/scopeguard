@@ -36,6 +36,7 @@ import type {
   TaskAssignment,
   TaskStatus,
   ThreadMessage,
+  UpdateThreadSettingsInput,
   Workspace,
   WorkspaceSchedule,
   WorkspaceSnapshot,
@@ -65,12 +66,14 @@ export const IPC_CHANNELS = {
   createSchedule: "scopeguard:schedule:create",
   resolveInboxItem: "scopeguard:inbox:resolve",
   chooseProjectDirectory: "scopeguard:project:choose-directory",
+  chooseWorkspaceFiles: "scopeguard:workspace:choose-files",
   addProject: "scopeguard:project:add",
   saveProviderProfile: "scopeguard:provider:save",
   deleteProviderProfile: "scopeguard:provider:delete",
   testProviderConnection: "scopeguard:provider:test",
   createAgentProfile: "scopeguard:agent-profile:create",
   createThread: "scopeguard:thread:create",
+  updateThreadSettings: "scopeguard:thread:update-settings",
   listThreadMessages: "scopeguard:thread:list-messages",
   startRun: "scopeguard:run:start",
   cancelRun: "scopeguard:run:cancel",
@@ -103,6 +106,7 @@ export type AgentHostMethod =
   | "testProviderConnection"
   | "createAgentProfile"
   | "createThread"
+  | "updateThreadSettings"
   | "listThreadMessages"
   | "startRun"
   | "cancelRun"
@@ -239,6 +243,16 @@ export type ResolveApprovalRequest = {
   decision: ApprovalDecision;
 };
 
+export type WorkspaceFileSelection = {
+  name: string;
+  relativePath: string;
+};
+
+export type ChooseWorkspaceFilesResult = {
+  canceled: boolean;
+  files: WorkspaceFileSelection[];
+};
+
 export type ProviderProfileView = Omit<ProviderProfile, "apiKeyRef"> & {
   hasApiKey: boolean;
 };
@@ -301,6 +315,7 @@ export type ScopeGuardDesktopApi = {
   createSchedule: (input: CreateScheduleInput) => Promise<WorkspaceSchedule>;
   resolveInboxItem: (inboxItemId: Id) => Promise<InboxItem>;
   chooseProjectDirectory: () => Promise<{ canceled: boolean; rootPath?: string }>;
+  chooseWorkspaceFiles: (projectId: Id) => Promise<ChooseWorkspaceFilesResult>;
   addProject: (input: CreateProjectInput) => Promise<Project>;
   saveProviderProfile: (
     input: SaveProviderProfileRequest,
@@ -311,6 +326,9 @@ export type ScopeGuardDesktopApi = {
   ) => Promise<ProviderConnectionResult>;
   createAgentProfile: (input: CreateAgentProfileInput) => Promise<AgentProfile>;
   createThread: (input: CreateThreadInput) => Promise<AgentThread>;
+  updateThreadSettings: (
+    input: UpdateThreadSettingsInput,
+  ) => Promise<AgentThread>;
   listThreadMessages: (threadId: Id) => Promise<ThreadMessage[]>;
   startRun: (input: StartRunInput) => Promise<AgentRun>;
   cancelRun: (runId: Id) => Promise<void>;
@@ -610,6 +628,17 @@ export function parseCreateThreadInput(value: unknown): CreateThreadInput {
     projectId: requireString(record.projectId, "projectId"),
     agentProfileId: requireString(record.agentProfileId, "agentProfileId"),
     title: optionalString(record.title, "title"),
+  };
+}
+
+export function parseUpdateThreadSettingsInput(
+  value: unknown,
+): UpdateThreadSettingsInput {
+  const record = requireRecord(value, "Thread settings input");
+  return {
+    threadId: requireString(record.threadId, "threadId"),
+    modelOverride: optionalNullableString(record.modelOverride, "modelOverride"),
+    executionProfile: parseExecutionProfile(record.executionProfile),
   };
 }
 

@@ -18,6 +18,7 @@ import type {
   SaveRuntimeNodeInput,
   RunEvent,
   ThreadMessage,
+  UpdateThreadSettingsInput,
   Workspace,
   WorkspaceTask,
 } from "@scopeguard/domain";
@@ -25,6 +26,7 @@ import type {
   DesktopWorkspaceSnapshot,
   ProviderProfileView,
   SaveProviderProfileRequest,
+  WorkspaceFileSelection,
 } from "@scopeguard/ipc-contracts";
 
 import { desktopApi } from "./bridge.js";
@@ -121,6 +123,10 @@ export type WorkspaceController = {
     title: string,
   ) => Promise<AgentThread>;
   createTaskThread: (agentInstanceId: string, title: string) => Promise<AgentThread>;
+  updateThreadSettings: (
+    input: UpdateThreadSettingsInput,
+  ) => Promise<AgentThread>;
+  chooseWorkspaceFiles: () => Promise<WorkspaceFileSelection[]>;
   sendMessage: (threadId: string, prompt: string) => Promise<AgentRun>;
   cancelRun: (runId: string) => Promise<void>;
   resolveApproval: (
@@ -615,6 +621,22 @@ export function useWorkspace(): WorkspaceController {
     return thread;
   }, [openThread, refresh, selectedProject, selectedWorkspace, snapshot]);
 
+  const updateThreadSettings = useCallback(async (
+    input: UpdateThreadSettingsInput,
+  ) => {
+    const thread = await desktopApi.updateThreadSettings(input);
+    await refresh();
+    return thread;
+  }, [refresh]);
+
+  const chooseWorkspaceFiles = useCallback(async () => {
+    if (!selectedProject) {
+      throw new Error("请先打开一个 Workspace。");
+    }
+    const result = await desktopApi.chooseWorkspaceFiles(selectedProject.id);
+    return result.canceled ? [] : result.files;
+  }, [selectedProject]);
+
   const sendMessage = useCallback(async (threadId: string, prompt: string) => {
     setStreamingByThread((current) => ({ ...current, [threadId]: "" }));
     const run = await desktopApi.startRun({ threadId, prompt });
@@ -857,6 +879,8 @@ export function useWorkspace(): WorkspaceController {
     updateAgentRuntime,
     createAgentThread,
     createTaskThread,
+    updateThreadSettings,
+    chooseWorkspaceFiles,
     sendMessage,
     cancelRun,
     resolveApproval,

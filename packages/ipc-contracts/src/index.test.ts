@@ -13,6 +13,7 @@ import {
   parseSaveProviderProfileRequest,
   parseUpdateAgentInstanceRuntimeRequest,
   parseUpdateTaskStatusRequest,
+  parseUpdateThreadSettingsInput,
   toProviderProfileView,
 } from "./index.js";
 
@@ -100,6 +101,28 @@ test("rejects malformed permissions and approval decisions", () => {
       decision: "approved-project",
     }),
     /approved-once or denied/,
+  );
+});
+
+test("validates conversation settings at the IPC boundary", () => {
+  assert.deepEqual(
+    parseUpdateThreadSettingsInput({
+      threadId: "thread",
+      modelOverride: "specialist-model",
+      executionProfile: "full-access",
+    }),
+    {
+      threadId: "thread",
+      modelOverride: "specialist-model",
+      executionProfile: "full-access",
+    },
+  );
+  assert.throws(
+    () => parseUpdateThreadSettingsInput({
+      threadId: "thread",
+      executionProfile: "unrestricted",
+    }),
+    /executionProfile/,
   );
 });
 

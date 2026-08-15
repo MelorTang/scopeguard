@@ -18,12 +18,14 @@ const channels = Object.freeze({
   createSchedule: "scopeguard:schedule:create",
   resolveInboxItem: "scopeguard:inbox:resolve",
   chooseProjectDirectory: "scopeguard:project:choose-directory",
+  chooseWorkspaceFiles: "scopeguard:workspace:choose-files",
   addProject: "scopeguard:project:add",
   saveProviderProfile: "scopeguard:provider:save",
   deleteProviderProfile: "scopeguard:provider:delete",
   testProviderConnection: "scopeguard:provider:test",
   createAgentProfile: "scopeguard:agent-profile:create",
   createThread: "scopeguard:thread:create",
+  updateThreadSettings: "scopeguard:thread:update-settings",
   listThreadMessages: "scopeguard:thread:list-messages",
   startRun: "scopeguard:run:start",
   cancelRun: "scopeguard:run:cancel",
@@ -60,6 +62,8 @@ const api = Object.freeze({
   resolveInboxItem: (inboxItemId) =>
     ipcRenderer.invoke(channels.resolveInboxItem, inboxItemId),
   chooseProjectDirectory: () => ipcRenderer.invoke(channels.chooseProjectDirectory),
+  chooseWorkspaceFiles: (projectId) =>
+    ipcRenderer.invoke(channels.chooseWorkspaceFiles, projectId),
   addProject: (input) => ipcRenderer.invoke(channels.addProject, input),
   saveProviderProfile: (input) =>
     ipcRenderer.invoke(channels.saveProviderProfile, input),
@@ -70,6 +74,8 @@ const api = Object.freeze({
   createAgentProfile: (input) =>
     ipcRenderer.invoke(channels.createAgentProfile, input),
   createThread: (input) => ipcRenderer.invoke(channels.createThread, input),
+  updateThreadSettings: (input) =>
+    ipcRenderer.invoke(channels.updateThreadSettings, input),
   listThreadMessages: (threadId) =>
     ipcRenderer.invoke(channels.listThreadMessages, threadId),
   startRun: (input) => ipcRenderer.invoke(channels.startRun, input),

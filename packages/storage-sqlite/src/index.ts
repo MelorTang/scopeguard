@@ -48,6 +48,7 @@ import {
   type ToolApproval,
   type ToolCallRecord,
   type ToolCallStatus,
+  type UpdateThreadSettingsInput,
   type Workspace,
   type WorkspaceSchedule,
   type WorkspaceSnapshot,
@@ -980,26 +981,34 @@ export class ScopeGuardStore {
 
   createThread(input: CreateThreadInput): AgentThread {
     const now = new Date().toISOString();
+    const profile = this.getAgentProfile(input.agentProfileId);
+    if (!profile) {
+      throw new Error("Agent Profile not found.");
+    }
     const thread: AgentThread = {
       id: randomUUID(),
       projectId: input.projectId,
       agentProfileId: input.agentProfileId,
       title: input.title?.trim() || "New conversation",
       status: "active",
+      modelOverride: profile.modelOverride,
+      executionProfile: profile.executionProfile,
       createdAt: now,
       updatedAt: now,
     };
 
     this.#run(
       `INSERT INTO agent_threads (
-        id, project_id, agent_profile_id, title, status,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        id, project_id, agent_profile_id, title, status, model_override,
+        execution_profile, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       thread.id,
       thread.projectId,
       thread.agentProfileId,
       thread.title,
       thread.status,
+      thread.modelOverride,
+      thread.executionProfile,
       thread.createdAt,
       thread.updatedAt,
     );
@@ -1041,6 +1050,31 @@ export class ScopeGuardStore {
     }
 
     return thread;
+  }
+
+  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread {
+    const current = this.getThread(input.threadId);
+    if (!current) {
+      throw new Error("Thread not found.");
+    }
+    const updated: AgentThread = {
+      ...current,
+      modelOverride: input.modelOverride === undefined
+        ? current.modelOverride
+        : input.modelOverride,
+      executionProfile: input.executionProfile ?? current.executionProfile,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#run(
+      `UPDATE agent_threads
+       SET model_override = ?, execution_profile = ?, updated_at = ?
+       WHERE id = ?`,
+      updated.modelOverride,
+      updated.executionProfile,
+      updated.updatedAt,
+      updated.id,
+    );
+    return updated;
   }
 
   listThreadMessages(threadId: Id): ThreadMessage[] {
@@ -2294,6 +2328,39 @@ export class ScopeGuardStore {
            WHERE key = 'schema_version'`,
         );
       });
+      currentVersion = 7;
+    }
+
+    if (currentVersion < 8) {
+      this.#transaction(() => {
+        const threadColumns = this.#all("PRAGMA table_info(agent_threads)");
+        if (!threadColumns.some((column) => column.name === "model_override")) {
+          this.#database.exec(
+            `ALTER TABLE agent_threads ADD COLUMN model_override TEXT`,
+          );
+        }
+        if (!threadColumns.some((column) => column.name === "execution_profile")) {
+          this.#database.exec(
+            `ALTER TABLE agent_threads
+             ADD COLUMN execution_profile TEXT NOT NULL DEFAULT 'request-approval'`,
+          );
+        }
+        this.#database.exec(
+          `UPDATE agent_threads
+           SET model_override = (
+                 SELECT model_override FROM agent_profiles
+                 WHERE agent_profiles.id = agent_threads.agent_profile_id
+               ),
+               execution_profile = COALESCE((
+                 SELECT execution_profile FROM agent_profiles
+                 WHERE agent_profiles.id = agent_threads.agent_profile_id
+               ), 'request-approval')`,
+        );
+        this.#run(
+          `UPDATE schema_metadata SET value = '8'
+           WHERE key = 'schema_version'`,
+        );
+      });
     }
   }
 
@@ -2665,6 +2732,8 @@ function mapAgentThread(row: UnknownRow): AgentThread {
     agentProfileId: asString(row.agent_profile_id),
     title: asString(row.title),
     status: asString(row.status) as AgentThread["status"],
+    modelOverride: asNullableString(row.model_override),
+    executionProfile: parseExecutionProfile(row.execution_profile),
     createdAt: asString(row.created_at),
     updatedAt: asString(row.updated_at),
   };

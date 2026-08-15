@@ -622,6 +622,7 @@ textarea:disabled {
 }
 
 .thread-pane {
+  container-type: inline-size;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -1084,7 +1085,7 @@ textarea:disabled {
 }
 
 .composer-area {
-  padding: 10px max(14px, calc((100% - 740px) / 2)) 12px;
+  padding: 10px max(12px, calc((100% - 740px) / 2)) 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
@@ -1092,8 +1093,9 @@ textarea:disabled {
 .composer {
   position: relative;
   display: flex;
-  min-height: 54px;
-  align-items: flex-end;
+  min-width: 0;
+  min-height: 88px;
+  flex-direction: column;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--surface);
@@ -1111,10 +1113,11 @@ textarea:disabled {
 
 .composer textarea {
   width: 100%;
-  min-height: 52px;
-  max-height: 150px;
+  min-height: 43px;
+  max-height: 180px;
+  flex: 1;
   resize: none;
-  padding: 10px 44px 9px 11px;
+  padding: 10px 11px 5px;
   border: 0;
   outline: 0;
   background: transparent;
@@ -1122,13 +1125,246 @@ textarea:disabled {
   line-height: 1.45;
 }
 
-.composer-send {
+.composer-attachments {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px 9px 0;
+}
+
+.composer-attachment {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 220px;
+  height: 27px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  font-size: 11px;
+}
+
+.composer-attachment > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment > button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--text-faint);
+  background: transparent;
+}
+
+.composer-attachment > button:hover {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.composer-toolbar,
+.composer-toolbar__group {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.composer-toolbar {
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px 6px;
+}
+
+.composer-toolbar__group {
+  gap: 3px;
+}
+
+.composer-toolbar__group--right {
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.composer-icon-button,
+.composer-text-button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.composer-icon-button {
+  width: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+.composer-text-button {
+  min-width: 0;
+  gap: 5px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.composer-icon-button:hover:not(:disabled),
+.composer-text-button:hover:not(:disabled),
+.composer-text-button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.composer-access-button--full-access {
+  color: var(--amber);
+}
+
+.composer-control-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.composer-control-wrap--model {
+  display: flex;
+  min-width: 0;
+  max-width: min(190px, 48%);
+}
+
+.composer-model-button {
+  max-width: 100%;
+}
+
+.composer-model-button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-menu {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  z-index: 30;
+  bottom: calc(100% + 7px);
+  display: flex;
+  width: 288px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.composer-menu--access {
+  left: 0;
+}
+
+.composer-menu--model {
+  right: 0;
+  width: 276px;
+}
+
+.composer-menu > strong {
+  padding: 4px 7px 6px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.composer-menu > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px;
+  border-radius: 6px;
+  text-align: left;
+  background: transparent;
+}
+
+.composer-menu > button:hover,
+.composer-menu > button.is-selected {
+  background: var(--surface-muted);
+}
+
+.composer-menu > button > span:not(.composer-menu__icon) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-menu > button strong,
+.composer-model-form label {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer-menu > button small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.composer-menu__icon {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+}
+
+.composer-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 3px;
+  padding: 8px 7px 5px;
+  border-top: 1px solid var(--border);
+}
+
+.composer-model-form > div {
+  display: flex;
+  gap: 6px;
+}
+
+.composer-model-form input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--surface);
+  font-size: 11px;
+}
+
+.composer-model-form input:focus {
+  border-color: #7cae9e;
+  box-shadow: 0 0 0 2px rgb(23 107 82 / 9%);
+}
+
+.composer-send {
   display: inline-flex;
   width: 30px;
   height: 30px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
@@ -1138,6 +1374,33 @@ textarea:disabled {
 
 .composer-send:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.composer-send--stop {
+  color: #ffffff;
+  background: var(--red);
+}
+
+.composer-send--stop:hover:not(:disabled) {
+  background: #8e3030;
+}
+
+@container (max-width: 420px) {
+  .composer-area {
+    padding-inline: 8px;
+  }
+
+  .composer-access-button > span {
+    display: none;
+  }
+
+  .composer-control-wrap--model {
+    max-width: 96px;
+  }
+
+  .composer-menu--access {
+    width: min(288px, calc(100cqw - 34px));
+  }
 }
 
 .inline-error {

@@ -1,16 +1,21 @@
 import {
   Bot,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   FileText,
   ListTodo,
   Play,
+  Plus,
   RotateCcw,
   Send,
+  ShieldCheck,
   Square,
   Terminal,
+  Unlock,
   X,
+  Zap,
 } from "lucide-react";
 import {
   useEffect,
@@ -22,10 +27,12 @@ import {
 import type {
   AgentThread,
   ApprovalDecision,
+  ConversationExecutionProfile,
   MessageContentBlock,
   PendingApprovalItem,
   ThreadMessage,
 } from "@scopeguard/domain";
+import type { WorkspaceFileSelection } from "@scopeguard/ipc-contracts";
 
 import type { WorkspaceController } from "../useWorkspace.js";
 import { formatRunStatus, formatToolName } from "../uiText.js";
@@ -80,8 +87,20 @@ export function ThreadPane(props: {
     () => localStorage.getItem(`scopeguard.draft.${thread.id}`) ?? "",
   );
   const [sending, setSending] = useState(false);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [addingFiles, setAddingFiles] = useState(false);
+  const [attachments, setAttachments] = useState<WorkspaceFileSelection[]>([]);
+  const [openMenu, setOpenMenu] = useState<"access" | "model" | null>(null);
+  const [modelDraft, setModelDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+
+  const currentModel = thread.modelOverride ?? provider?.defaultModel ?? "未配置模型";
+  const settingsDisabled = Boolean(run) || sending || settingsBusy;
+  const canAddWorkspaceFiles = Boolean(
+    workspace.selectedWorkspace?.localRootPath && !run && !sending,
+  );
 
   useEffect(() => {
     localStorage.setItem(`scopeguard.draft.${thread.id}`, draft);
@@ -130,6 +149,19 @@ export function ThreadPane(props: {
     focusedApprovalAvailable,
   ]);
 
+  useEffect(() => {
+    if (!openMenu) {
+      return;
+    }
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!composerRef.current?.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [openMenu]);
+
   const send = async () => {
     const prompt = draft.trim();
     if (!prompt || (run && !waitingForInput) || sending) {
@@ -138,13 +170,58 @@ export function ThreadPane(props: {
     setSending(true);
     setError(null);
     try {
-      await workspace.sendMessage(thread.id, prompt);
+      await workspace.sendMessage(
+        thread.id,
+        appendWorkspaceFileReferences(prompt, attachments),
+      );
       setDraft("");
+      setAttachments([]);
       localStorage.removeItem(`scopeguard.draft.${thread.id}`);
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : String(sendError));
     } finally {
       setSending(false);
+    }
+  };
+
+  const updateSettings = async (
+    input: {
+      modelOverride?: string | null;
+      executionProfile?: ConversationExecutionProfile;
+    },
+  ) => {
+    setSettingsBusy(true);
+    setError(null);
+    try {
+      await workspace.updateThreadSettings({ threadId: thread.id, ...input });
+      setOpenMenu(null);
+    } catch (settingsError) {
+      setError(
+        settingsError instanceof Error ? settingsError.message : String(settingsError),
+      );
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const addWorkspaceFiles = async () => {
+    setOpenMenu(null);
+    setAddingFiles(true);
+    setError(null);
+    try {
+      const selected = await workspace.chooseWorkspaceFiles();
+      if (selected.length > 0) {
+        setAttachments((current) => deduplicateWorkspaceFiles([
+          ...current,
+          ...selected,
+        ]));
+      }
+    } catch (selectionError) {
+      setError(
+        selectionError instanceof Error ? selectionError.message : String(selectionError),
+      );
+    } finally {
+      setAddingFiles(false);
     }
   };
 
@@ -174,17 +251,6 @@ export function ThreadPane(props: {
           status={run?.status ?? null}
           executionStage={workspace.executionStageByThread[thread.id] ?? null}
         />
-        {run && (
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => void workspace.cancelRun(run.id)}
-            title="停止运行"
-            aria-label="停止运行"
-          >
-            <Square size={15} fill="currentColor" />
-          </button>
-        )}
       </header>
 
       <div className="conversation" ref={conversationRef}>
@@ -273,10 +339,31 @@ export function ThreadPane(props: {
         )}
         <div
           className={`composer ${run && !waitingForInput ? "composer--disabled" : ""}`}
+          ref={composerRef}
         >
+          {attachments.length > 0 && (
+            <div className="composer-attachments" aria-label="已添加的 Workspace 文件">
+              {attachments.map((file) => (
+                <span className="composer-attachment" key={file.relativePath}>
+                  <FileText size={13} />
+                  <span title={file.relativePath}>{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((current) =>
+                      current.filter((item) => item.relativePath !== file.relativePath)
+                    )}
+                    aria-label={`移除 ${file.name}`}
+                    title="移除文件"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             value={draft}
-            rows={2}
+            rows={1}
             maxLength={100_000}
             placeholder={
               waitingForInput
@@ -295,20 +382,208 @@ export function ThreadPane(props: {
             }}
             aria-label={`发送消息给 ${agentDefinition?.name ?? agent?.name ?? "Agent"}`}
           />
-          <button
-            type="button"
-            className="composer-send"
-            disabled={!draft.trim() || Boolean(run && !waitingForInput) || sending}
-            onClick={() => void send()}
-            aria-label="发送消息"
-            title="发送"
-          >
-            <Send size={17} />
-          </button>
+          <div className="composer-toolbar">
+            <div className="composer-toolbar__group">
+              <button
+                type="button"
+                className="composer-icon-button"
+                disabled={!canAddWorkspaceFiles || addingFiles}
+                onClick={() => void addWorkspaceFiles()}
+                aria-label="添加 Workspace 文件"
+                title={canAddWorkspaceFiles
+                  ? "添加 Workspace 文件"
+                  : "当前 Workspace 没有本地文件夹"}
+              >
+                <Plus size={17} />
+              </button>
+              <div className="composer-control-wrap">
+                <button
+                  type="button"
+                  className={`composer-text-button composer-access-button composer-access-button--${thread.executionProfile}`}
+                  disabled={settingsDisabled || agent?.runtimeKind === "local-cli"}
+                  onClick={() => setOpenMenu((current) =>
+                    current === "access" ? null : "access"
+                  )}
+                  aria-haspopup="menu"
+                  aria-expanded={openMenu === "access"}
+                  title="Conversation 执行权限"
+                >
+                  {executionProfileIcon(thread.executionProfile)}
+                  <span>{executionProfileLabel(thread.executionProfile)}</span>
+                  <ChevronDown size={13} />
+                </button>
+                {openMenu === "access" && (
+                  <div className="composer-menu composer-menu--access" role="menu">
+                    <strong>执行权限</strong>
+                    {EXECUTION_PROFILE_OPTIONS.map((option) => (
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={thread.executionProfile === option.value}
+                        className={thread.executionProfile === option.value ? "is-selected" : ""}
+                        key={option.value}
+                        onClick={() => void updateSettings({
+                          executionProfile: option.value,
+                        })}
+                      >
+                        <span className="composer-menu__icon">
+                          {executionProfileIcon(option.value)}
+                        </span>
+                        <span>
+                          <strong>{option.label}</strong>
+                          <small>{option.description}</small>
+                        </span>
+                        {thread.executionProfile === option.value && <Check size={14} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="composer-toolbar__group composer-toolbar__group--right">
+              <div className="composer-control-wrap composer-control-wrap--model">
+                <button
+                  type="button"
+                  className="composer-text-button composer-model-button"
+                  disabled={settingsDisabled || agent?.runtimeKind !== "native" || !provider}
+                  onClick={() => {
+                    setModelDraft(currentModel);
+                    setOpenMenu((current) => current === "model" ? null : "model");
+                  }}
+                  aria-haspopup="dialog"
+                  aria-expanded={openMenu === "model"}
+                  title={`模型：${currentModel}`}
+                >
+                  <span>{currentModel}</span>
+                  <ChevronDown size={13} />
+                </button>
+                {openMenu === "model" && provider && (
+                  <div className="composer-menu composer-menu--model" role="dialog" aria-label="选择模型">
+                    <strong>模型</strong>
+                    <button
+                      type="button"
+                      className={!thread.modelOverride ? "is-selected" : ""}
+                      onClick={() => void updateSettings({ modelOverride: null })}
+                    >
+                      <span>
+                        <strong>{provider.defaultModel}</strong>
+                        <small>{provider.name} 默认模型</small>
+                      </span>
+                      {!thread.modelOverride && <Check size={14} />}
+                    </button>
+                    <form
+                      className="composer-model-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void updateSettings({ modelOverride: modelDraft });
+                      }}
+                    >
+                      <label htmlFor={`model-${thread.id}`}>指定兼容模型</label>
+                      <div>
+                        <input
+                          id={`model-${thread.id}`}
+                          value={modelDraft}
+                          maxLength={512}
+                          onChange={(event) => setModelDraft(event.target.value)}
+                          placeholder={provider.defaultModel}
+                        />
+                        <button
+                          type="submit"
+                          className="button button--secondary button--compact"
+                          disabled={!modelDraft.trim()}
+                        >
+                          应用
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </div>
+              {run && !waitingForInput ? (
+                <button
+                  type="button"
+                  className="composer-send composer-send--stop"
+                  onClick={() => void workspace.cancelRun(run.id)}
+                  aria-label="停止运行"
+                  title="停止运行"
+                >
+                  <Square size={14} fill="currentColor" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="composer-send"
+                  disabled={!draft.trim() || sending}
+                  onClick={() => void send()}
+                  aria-label="发送消息"
+                  title="发送"
+                >
+                  <Send size={16} />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </footer>
     </section>
   );
+}
+
+const EXECUTION_PROFILE_OPTIONS: Array<{
+  value: ConversationExecutionProfile;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "request-approval",
+    label: "请求批准",
+    description: "敏感操作先询问，并始终使用受管沙箱。",
+  },
+  {
+    value: "auto-approve",
+    label: "自动审批",
+    description: "自动处理合规请求，但不放宽沙箱边界。",
+  },
+  {
+    value: "full-access",
+    label: "完全访问",
+    description: "使用当前系统用户权限，不启用受管沙箱。",
+  },
+];
+
+function executionProfileLabel(profile: ConversationExecutionProfile): string {
+  return EXECUTION_PROFILE_OPTIONS.find((option) => option.value === profile)?.label
+    ?? "请求批准";
+}
+
+function executionProfileIcon(
+  profile: ConversationExecutionProfile,
+): JSX.Element {
+  if (profile === "auto-approve") {
+    return <Zap size={14} />;
+  }
+  if (profile === "full-access") {
+    return <Unlock size={14} />;
+  }
+  return <ShieldCheck size={14} />;
+}
+
+function deduplicateWorkspaceFiles(
+  files: WorkspaceFileSelection[],
+): WorkspaceFileSelection[] {
+  return [...new Map(files.map((file) => [file.relativePath, file])).values()];
+}
+
+function appendWorkspaceFileReferences(
+  prompt: string,
+  files: WorkspaceFileSelection[],
+): string {
+  if (files.length === 0) {
+    return prompt;
+  }
+  const references = files.map((file) => `- \`${file.relativePath}\``).join("\n");
+  return `${prompt}\n\nWorkspace files:\n${references}`;
 }
 
 function Message(props: {

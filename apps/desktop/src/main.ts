@@ -35,8 +35,9 @@ import {
   parseUpdateTaskStatusRequest,
   parseUpdateAgentInstanceRuntimeRequest,
   parseUpdateProjectContextRequest,
+  parseUpdateThreadSettingsInput,
 } from "@scopeguard/ipc-contracts";
-import type { RunEvent } from "@scopeguard/domain";
+import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
 import { createDesktopExecutionBroker } from "./main/desktop-execution-broker.js";
@@ -50,6 +51,7 @@ import {
   isTrustedRendererUrl as checkTrustedRendererUrl,
   resolveDevelopmentRendererUrl,
 } from "./main/renderer-security.js";
+import { validateWorkspaceFileSelection } from "./main/workspace-file-selection.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = resolve(moduleDir, "../dist-renderer");
@@ -334,6 +336,35 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       rootPath,
     };
   });
+  ipcMain.handle(IPC_CHANNELS.chooseWorkspaceFiles, async (event, value: unknown) => {
+    assertTrustedSender(event);
+    const projectId = parseId(value, "projectId");
+    const snapshot = await agentHost.request<WorkspaceSnapshot>(
+      "getWorkspaceSnapshot",
+    );
+    const project = snapshot.projects.find((item) => item.id === projectId);
+    if (!project) {
+      throw new Error("Workspace not found.");
+    }
+    const rootPath = await canonicalizeProjectDirectory(project.rootPath);
+    const options: OpenDialogOptions = {
+      title: "添加 Workspace 文件",
+      buttonLabel: "添加",
+      defaultPath: rootPath,
+      properties: ["openFile", "multiSelections"],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true, files: [] };
+    }
+    const files = await validateWorkspaceFileSelection(
+      rootPath,
+      result.filePaths,
+    );
+    return { canceled: false, files };
+  });
   ipcMain.handle(IPC_CHANNELS.addProject, async (event, value: unknown) => {
     assertTrustedSender(event);
     const input = parseCreateProjectInput(value);
@@ -374,6 +405,13 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
   ipcMain.handle(IPC_CHANNELS.createThread, (event, value: unknown) => {
     assertTrustedSender(event);
     return agentHost.request("createThread", parseCreateThreadInput(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.updateThreadSettings, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "updateThreadSettings",
+      parseUpdateThreadSettingsInput(value),
+    );
   });
   ipcMain.handle(IPC_CHANNELS.listThreadMessages, (event, value: unknown) => {
     assertTrustedSender(event);
