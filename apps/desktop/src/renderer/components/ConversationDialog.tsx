@@ -1,44 +1,33 @@
-import { Bot, ListTodo } from "lucide-react";
+import { Bot, MessageSquarePlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { WorkspaceController } from "../useWorkspace.js";
 import { Modal } from "./Modal.js";
 
-export function TaskDialog(props: {
+export function ConversationDialog(props: {
   open: boolean;
   workspace: WorkspaceController;
   onClose: () => void;
   onNewAgent: () => void;
 }): JSX.Element | null {
   const [title, setTitle] = useState("");
-  const [agentInstanceId, setAgentInstanceId] = useState("");
+  const [agentId, setAgentId] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const agents = useMemo(() => {
     const snapshot = props.workspace.snapshot;
-    const workspaceId = props.workspace.selectedWorkspace?.id;
-    if (!snapshot || !workspaceId) {
-      return [];
-    }
-    return snapshot.agentInstances
-      .filter((instance) => instance.workspaceId === workspaceId)
-      .flatMap((instance) => {
-        const definition = snapshot.agentDefinitions.find(
-          (item) => item.id === instance.agentDefinitionId,
-        );
-        const executable = snapshot.agentProfiles.some(
-          (item) => item.id === definition?.id && item.projectId === workspaceId,
-        );
-        return definition && executable ? [{ instance, definition }] : [];
-      });
-  }, [props.workspace.selectedWorkspace?.id, props.workspace.snapshot]);
+    const workspaceId = props.workspace.selectedProject?.id;
+    return snapshot && workspaceId
+      ? snapshot.agentProfiles.filter((agent) => agent.projectId === workspaceId)
+      : [];
+  }, [props.workspace.selectedProject?.id, props.workspace.snapshot]);
 
   useEffect(() => {
     if (!props.open) {
       return;
     }
     setTitle("");
-    setAgentInstanceId(agents[0]?.instance.id ?? "");
+    setAgentId(agents[0]?.id ?? "");
     setError(null);
   }, [agents, props.open]);
 
@@ -47,13 +36,13 @@ export function TaskDialog(props: {
   }
 
   const create = async () => {
-    if (!title.trim() || !agentInstanceId) {
+    if (!title.trim() || !agentId) {
       return;
     }
     setCreating(true);
     setError(null);
     try {
-      await props.workspace.createTaskThread(agentInstanceId, title);
+      await props.workspace.createConversation(agentId, title);
       props.onClose();
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : String(createError));
@@ -63,7 +52,7 @@ export function TaskDialog(props: {
   };
 
   return (
-    <Modal open title="新建任务" onClose={props.onClose}>
+    <Modal open title="新建对话" onClose={props.onClose}>
       {agents.length === 0 ? (
         <div className="dialog-empty">
           <Bot size={22} />
@@ -85,9 +74,9 @@ export function TaskDialog(props: {
           }}
         >
           <label>
-            <span>任务名称</span>
+            <span>对话名称</span>
             <div className="input-with-icon">
-              <ListTodo size={15} />
+              <MessageSquarePlus size={15} />
               <input
                 autoFocus
                 value={title}
@@ -99,16 +88,14 @@ export function TaskDialog(props: {
             </div>
           </label>
           <label>
-            <span>执行 Agent</span>
+            <span>Agent</span>
             <select
-              value={agentInstanceId}
-              onChange={(event) => setAgentInstanceId(event.target.value)}
+              value={agentId}
+              onChange={(event) => setAgentId(event.target.value)}
               required
             >
-              {agents.map(({ instance, definition }) => (
-                <option key={instance.id} value={instance.id}>
-                  {instance.nameOverride ?? definition.name}
-                </option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
               ))}
             </select>
           </label>
@@ -124,9 +111,9 @@ export function TaskDialog(props: {
             <button
               type="submit"
               className="button button--primary"
-              disabled={creating || !title.trim() || !agentInstanceId}
+              disabled={creating || !title.trim() || !agentId}
             >
-              创建任务
+              创建对话
             </button>
           </footer>
         </form>

@@ -2,15 +2,10 @@ import { randomUUID } from "node:crypto";
 import process from "node:process";
 
 import {
-  type PublishWorkspaceContextInput,
   ScopeGuardApplication,
   type SaveProviderProfileInput,
   type SecretVault,
 } from "@scopeguard/application";
-import {
-  runCliAgent,
-  shutdownRunningCliAgents,
-} from "@scopeguard/cli-runtime";
 import {
   createProviderAdapter,
 } from "@scopeguard/provider-adapters";
@@ -26,8 +21,6 @@ import {
 import {
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
-  type UpdateTaskStatusRequest,
-  type UpdateAgentInstanceRuntimeRequest,
   type AgentHostRequest,
   type AgentHostResponse,
   type AgentHostSecretRequest,
@@ -40,19 +33,11 @@ import {
   type UpdateProjectContextRequest,
 } from "@scopeguard/ipc-contracts";
 import type {
-  CreateAgentDefinitionInput,
-  CreateAgentInstanceInput,
   CreateAgentProfileInput,
-  CreateArtifactInput,
-  CreateHandoffInput,
   CreateProjectInput,
-  CreateScheduleInput,
-  CreateTaskAssignmentInput,
-  CreateTaskInput,
   CreateThreadInput,
   CreateWorkspaceInput,
   Id,
-  SaveRuntimeNodeInput,
   StartRunInput,
   UpdateThreadSettingsInput,
 } from "@scopeguard/domain";
@@ -160,19 +145,7 @@ const application = new ScopeGuardApplication({
   secrets,
   providerFactory: (protocol) => createProviderAdapter({ protocol }),
   tools,
-  cliRunner: {
-    run: ({ config, prompt, projectRoot, signal, onOutput }) =>
-      runCliAgent({
-        command: config.command,
-        args: config.args,
-        cwd: projectRoot,
-        env: {},
-        prompt,
-        projectRoot,
-        signal,
-        onOutput,
-      }),
-  },
+  mirrorLegacyControlPlane: false,
   remoteClientFactory: ({ baseUrl, token }) =>
     new HttpRemoteRuntimeClient({ baseUrl, token }),
   publish: (event) => {
@@ -228,10 +201,7 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   try {
     const applicationShutdown = application.shutdown();
-    const runtimeShutdown = Promise.allSettled([
-      tools.shutdown(),
-      shutdownRunningCliAgents(),
-    ]);
+    const runtimeShutdown = tools.shutdown();
     await Promise.allSettled([applicationShutdown, runtimeShutdown]);
   } finally {
     store.close();
@@ -263,49 +233,6 @@ async function dispatch(request: AgentHostRequest): Promise<unknown> {
       return toDesktopWorkspaceSnapshot(application.getWorkspaceSnapshot());
     case "createWorkspace":
       return application.createWorkspace(request.payload as CreateWorkspaceInput);
-    case "saveRuntimeNode":
-      return application.saveRuntimeNode(request.payload as SaveRuntimeNodeInput);
-    case "testRuntimeConnection":
-      return application.testRuntimeConnection(request.payload as Id);
-    case "createAgentDefinition":
-      return application.createAgentDefinition(
-        request.payload as CreateAgentDefinitionInput,
-      );
-    case "createAgentInstance":
-      return application.createAgentInstance(
-        request.payload as CreateAgentInstanceInput,
-      );
-    case "updateAgentInstanceRuntime": {
-      const input = request.payload as UpdateAgentInstanceRuntimeRequest;
-      return application.updateAgentInstanceRuntime(
-        input.agentInstanceId,
-        input.runtimeNodeId,
-      );
-    }
-    case "createTask":
-      return application.createTask(request.payload as CreateTaskInput);
-    case "updateTaskStatus": {
-      const input = request.payload as UpdateTaskStatusRequest;
-      return application.updateTaskStatus(input.taskId, input.status);
-    }
-    case "assignAgentToTask":
-      return application.assignAgentToTask(
-        request.payload as CreateTaskAssignmentInput,
-      );
-    case "createArtifact":
-      return application.createArtifact(request.payload as CreateArtifactInput);
-    case "getWorkspaceContext":
-      return application.getWorkspaceContext(request.payload as Id);
-    case "publishWorkspaceContext":
-      return application.publishWorkspaceContext(
-        request.payload as PublishWorkspaceContextInput,
-      );
-    case "createHandoff":
-      return application.createHandoff(request.payload as CreateHandoffInput);
-    case "createSchedule":
-      return application.createSchedule(request.payload as CreateScheduleInput);
-    case "resolveInboxItem":
-      return application.resolveInboxItem(request.payload as Id);
     case "addProject":
       return application.addProject(request.payload as CreateProjectInput);
     case "saveProviderProfile":

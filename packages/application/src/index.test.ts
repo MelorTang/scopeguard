@@ -260,6 +260,35 @@ test("runs an API Agent without a local folder and exposes no file or command to
   }
 });
 
+test("runs the desktop core without creating Task, Artifact, or Inbox mirrors", async () => {
+  const fixture = createApplicationFixture(
+    new ImmediateProvider(),
+    new FakeRegistry(),
+    undefined,
+    undefined,
+    undefined,
+    false,
+  );
+  try {
+    const workspace = await createWorkspace(fixture.application);
+    const run = await fixture.application.startRun({
+      threadId: workspace.thread.id,
+      prompt: "Complete this conversation.",
+    });
+    const completed = await fixture.application.waitForRun(run.id);
+
+    assert.equal(completed.status, "completed");
+    assert.equal(fixture.store.listAgentDefinitions().length, 0);
+    assert.equal(fixture.store.listAgentInstances().length, 0);
+    assert.equal(fixture.store.listTasks().length, 0);
+    assert.equal(fixture.store.listTaskAssignments().length, 0);
+    assert.equal(fixture.store.listArtifacts().length, 0);
+    assert.equal(fixture.store.listInboxItems().length, 0);
+  } finally {
+    fixture.store.close();
+  }
+});
+
 test("persists local Native request manifests and provider usage without credentials", async () => {
   const provider = new UsageRecordingProvider();
   const fixture = createApplicationFixture(provider);
@@ -2487,6 +2516,7 @@ function createApplicationFixture(
   publish?: (event: RunEvent) => void,
   cliRunner?: CliAgentRunner,
   remoteClientFactory?: RemoteRuntimeClientFactory,
+  mirrorLegacyControlPlane = true,
 ) {
   const store = new ScopeGuardStore(":memory:");
   const vault = new MemoryVault();
@@ -2498,6 +2528,7 @@ function createApplicationFixture(
     publish,
     cliRunner,
     remoteClientFactory,
+    mirrorLegacyControlPlane,
   });
   application.initialize();
   return { application, store, vault, provider };

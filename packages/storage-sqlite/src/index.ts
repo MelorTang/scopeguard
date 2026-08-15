@@ -890,7 +890,10 @@ export class ScopeGuardStore {
     return row ? mapAgentProfile(row) : null;
   }
 
-  createAgentProfile(input: CreateAgentProfileInput): AgentProfile {
+  createAgentProfile(
+    input: CreateAgentProfileInput,
+    options: { mirrorLegacyControlPlane?: boolean } = {},
+  ): AgentProfile {
     const now = new Date().toISOString();
     const profile: AgentProfile = {
       id: randomUUID(),
@@ -929,39 +932,41 @@ export class ScopeGuardStore {
       profile.updatedAt,
     );
 
-    this.#run(
-      `INSERT OR IGNORE INTO agent_definitions (
-        id, name, description, instructions, provider_profile_id,
-        model_override, tool_policy_json, created_at, updated_at
-      ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`,
-      profile.id,
-      profile.name,
-      profile.instructions,
-      profile.providerProfileId,
-      profile.modelOverride,
-      JSON.stringify(profile.toolPolicy),
-      profile.createdAt,
-      profile.updatedAt,
-    );
-    const existingInstance = this.#get(
-      "SELECT id FROM agent_instances WHERE legacy_agent_profile_id = ?",
-      profile.id,
-    );
-    if (!existingInstance) {
+    if (options.mirrorLegacyControlPlane !== false) {
       this.#run(
-        `INSERT INTO agent_instances (
-          id, workspace_id, agent_definition_id, runtime_node_id,
-          name_override, status, legacy_agent_profile_id,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?)`,
-        randomUUID(),
-        profile.projectId,
+        `INSERT OR IGNORE INTO agent_definitions (
+          id, name, description, instructions, provider_profile_id,
+          model_override, tool_policy_json, created_at, updated_at
+        ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`,
         profile.id,
-        input.runtimeNodeId ?? LOCAL_RUNTIME_NODE_ID,
-        profile.id,
+        profile.name,
+        profile.instructions,
+        profile.providerProfileId,
+        profile.modelOverride,
+        JSON.stringify(profile.toolPolicy),
         profile.createdAt,
         profile.updatedAt,
       );
+      const existingInstance = this.#get(
+        "SELECT id FROM agent_instances WHERE legacy_agent_profile_id = ?",
+        profile.id,
+      );
+      if (!existingInstance) {
+        this.#run(
+          `INSERT INTO agent_instances (
+            id, workspace_id, agent_definition_id, runtime_node_id,
+            name_override, status, legacy_agent_profile_id,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, NULL, 'idle', ?, ?, ?)`,
+          randomUUID(),
+          profile.projectId,
+          profile.id,
+          input.runtimeNodeId ?? LOCAL_RUNTIME_NODE_ID,
+          profile.id,
+          profile.createdAt,
+          profile.updatedAt,
+        );
+      }
     }
 
     return profile;
@@ -982,7 +987,10 @@ export class ScopeGuardStore {
     return row ? mapAgentThread(row) : null;
   }
 
-  createThread(input: CreateThreadInput): AgentThread {
+  createThread(
+    input: CreateThreadInput,
+    options: { mirrorLegacyControlPlane?: boolean } = {},
+  ): AgentThread {
     const now = new Date().toISOString();
     const profile = this.getAgentProfile(input.agentProfileId);
     if (!profile) {
@@ -1016,40 +1024,42 @@ export class ScopeGuardStore {
       thread.updatedAt,
     );
 
-    this.#run(
-      `INSERT OR IGNORE INTO workspace_tasks (
-        id, workspace_id, title, description, status, priority,
-        legacy_thread_id, created_at, updated_at, completed_at
-      ) VALUES (?, ?, ?, '', 'ready', 'normal', ?, ?, ?, NULL)`,
-      thread.id,
-      thread.projectId,
-      thread.title,
-      thread.id,
-      thread.createdAt,
-      thread.updatedAt,
-    );
-    const instance = this.#get(
-      `SELECT id FROM agent_instances
-       WHERE legacy_agent_profile_id = ?`,
-      thread.agentProfileId,
-    );
-    const existingAssignment = this.#get(
-      "SELECT id FROM task_assignments WHERE thread_id = ?",
-      thread.id,
-    );
-    if (instance && !existingAssignment) {
+    if (options.mirrorLegacyControlPlane !== false) {
       this.#run(
-        `INSERT INTO task_assignments (
-          id, task_id, agent_instance_id, thread_id, role, position,
-          status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, '', 0, 'pending', ?, ?)`,
-        randomUUID(),
+        `INSERT OR IGNORE INTO workspace_tasks (
+          id, workspace_id, title, description, status, priority,
+          legacy_thread_id, created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, '', 'ready', 'normal', ?, ?, ?, NULL)`,
         thread.id,
-        asString(instance.id),
+        thread.projectId,
+        thread.title,
         thread.id,
         thread.createdAt,
         thread.updatedAt,
       );
+      const instance = this.#get(
+        `SELECT id FROM agent_instances
+         WHERE legacy_agent_profile_id = ?`,
+        thread.agentProfileId,
+      );
+      const existingAssignment = this.#get(
+        "SELECT id FROM task_assignments WHERE thread_id = ?",
+        thread.id,
+      );
+      if (instance && !existingAssignment) {
+        this.#run(
+          `INSERT INTO task_assignments (
+            id, task_id, agent_instance_id, thread_id, role, position,
+            status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, '', 0, 'pending', ?, ?)`,
+          randomUUID(),
+          thread.id,
+          asString(instance.id),
+          thread.id,
+          thread.createdAt,
+          thread.updatedAt,
+        );
+      }
     }
 
     return thread;

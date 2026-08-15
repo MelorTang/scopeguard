@@ -147,11 +147,17 @@ export interface WorkspaceStore {
 
   listAgentProfiles(projectId?: Id): AgentProfile[];
   getAgentProfile(agentProfileId: Id): AgentProfile | null;
-  createAgentProfile(input: CreateAgentProfileInput): AgentProfile;
+  createAgentProfile(
+    input: CreateAgentProfileInput,
+    options?: { mirrorLegacyControlPlane?: boolean },
+  ): AgentProfile;
 
   listThreads(projectId?: Id): AgentThread[];
   getThread(threadId: Id): AgentThread | null;
-  createThread(input: CreateThreadInput): AgentThread;
+  createThread(
+    input: CreateThreadInput,
+    options?: { mirrorLegacyControlPlane?: boolean },
+  ): AgentThread;
   updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread;
   listThreadMessages(threadId: Id): ThreadMessage[];
   appendMessage(
@@ -322,6 +328,7 @@ export class ScopeGuardApplication {
   readonly #cliRunner: CliAgentRunner | null;
   readonly #remoteClientFactory: RemoteRuntimeClientFactory | null;
   readonly #publish: RunEventPublisher;
+  readonly #mirrorLegacyControlPlane: boolean;
   readonly #activeRuns = new Map<Id, ActiveRun>();
   readonly #approvals = new ApprovalWaiters();
   readonly #inputs = new InputWaiters();
@@ -334,6 +341,7 @@ export class ScopeGuardApplication {
     cliRunner?: CliAgentRunner;
     remoteClientFactory?: RemoteRuntimeClientFactory;
     publish?: RunEventPublisher;
+    mirrorLegacyControlPlane?: boolean;
   }) {
     this.#store = options.store;
     this.#secrets = options.secrets;
@@ -342,6 +350,7 @@ export class ScopeGuardApplication {
     this.#cliRunner = options.cliRunner ?? null;
     this.#remoteClientFactory = options.remoteClientFactory ?? null;
     this.#publish = options.publish ?? (() => {});
+    this.#mirrorLegacyControlPlane = options.mirrorLegacyControlPlane ?? true;
   }
 
   initialize(): { interruptedRuns: number } {
@@ -1024,7 +1033,7 @@ export class ScopeGuardApplication {
       projectId: project.id,
       runtimeKind,
       runtimeNodeId: runtimeNode.id,
-    });
+    }, { mirrorLegacyControlPlane: this.#mirrorLegacyControlPlane });
   }
 
   createThread(input: CreateThreadInput): AgentThread {
@@ -1036,7 +1045,9 @@ export class ScopeGuardApplication {
     if (input.title) {
       assertMaximumLength(input.title.trim(), 300, "Thread title");
     }
-    return this.#store.createThread(input);
+    return this.#store.createThread(input, {
+      mirrorLegacyControlPlane: this.#mirrorLegacyControlPlane,
+    });
   }
 
   updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread {

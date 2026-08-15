@@ -6,12 +6,10 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  Terminal,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type {
-  AgentRuntimeKind,
   AgentToolPolicy,
   ConversationExecutionProfile,
   ToolPermission,
@@ -71,23 +69,14 @@ export function AgentDialog(props: {
   onNeedProvider: () => void;
 }): JSX.Element | null {
   const providers = props.workspace.snapshot?.providerProfiles ?? [];
-  const runtimeNodes = props.workspace.snapshot?.runtimeNodes ?? [];
-  const localRuntime = runtimeNodes.find((runtime) => runtime.kind === "local");
-  const hasLocalFolder = Boolean(
-    props.workspace.selectedWorkspace?.localRootPath,
-  );
   const [templateId, setTemplateId] = useState("general");
   const [name, setName] = useState("通用");
-  const [title, setTitle] = useState("首次任务");
+  const [title, setTitle] = useState("首次对话");
   const [instructions, setInstructions] = useState<string>(
     TEMPLATES[0].instructions,
   );
-  const [runtimeKind, setRuntimeKind] = useState<AgentRuntimeKind>("native");
   const [providerId, setProviderId] = useState(providers[0]?.id ?? "");
-  const [runtimeNodeId, setRuntimeNodeId] = useState(localRuntime?.id ?? "");
   const [modelOverride, setModelOverride] = useState("");
-  const [cliCommand, setCliCommand] = useState("");
-  const [cliArgs, setCliArgs] = useState("{prompt}");
   const [policy, setPolicy] = useState<AgentToolPolicy>(DEFAULT_TOOL_POLICY);
   const [executionProfile, setExecutionProfile] =
     useState<ConversationExecutionProfile>("request-approval");
@@ -96,27 +85,16 @@ export function AgentDialog(props: {
   );
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const selectedRuntime = runtimeNodes.find(
-    (runtime) => runtime.id === runtimeNodeId,
-  );
-  const exposesLocalTools = runtimeKind === "native"
-    && selectedRuntime?.kind === "local"
-    && hasLocalFolder;
-
   useEffect(() => {
     if (!props.open) {
       return;
     }
     setTemplateId("general");
     setName("通用");
-    setTitle("首次任务");
+    setTitle("首次对话");
     setInstructions(TEMPLATES[0].instructions);
-    setRuntimeKind("native");
     setProviderId(providers[0]?.id ?? "");
-    setRuntimeNodeId(localRuntime?.id ?? runtimeNodes[0]?.id ?? "");
     setModelOverride("");
-    setCliCommand("");
-    setCliArgs("{prompt}");
     setPolicy({ ...DEFAULT_TOOL_POLICY });
     setExecutionProfile("request-approval");
     setTechnicalOpen(props.workspace.professionalMode);
@@ -134,27 +112,12 @@ export function AgentDialog(props: {
     setTemplateId(template.id);
     setName(template.name);
     setInstructions(template.instructions);
-    setTitle(`${template.name}任务`);
+    setTitle(`${template.name}对话`);
   };
 
   const create = async () => {
-    if (runtimeKind === "native" && !providerId) {
+    if (!providerId) {
       props.onNeedProvider();
-      return;
-    }
-    if (runtimeKind === "native" && !runtimeNodeId) {
-      setTechnicalOpen(true);
-      setError("请选择运行节点。");
-      return;
-    }
-    if (runtimeKind === "local-cli" && !cliCommand.trim()) {
-      setTechnicalOpen(true);
-      setError("请输入本地 CLI 命令。");
-      return;
-    }
-    if (runtimeKind === "local-cli" && !hasLocalFolder) {
-      setTechnicalOpen(true);
-      setError("本地 CLI 需要先为工作区打开本地文件夹。");
       return;
     }
     setCreating(true);
@@ -163,29 +126,13 @@ export function AgentDialog(props: {
       await props.workspace.createAgentThread(
         {
           name,
-          runtimeKind,
-          runtimeNodeId: runtimeKind === "native"
-            ? runtimeNodeId
-            : localRuntime?.id,
+          runtimeKind: "native",
           instructions,
-          providerProfileId: runtimeKind === "native" ? providerId : null,
-          modelOverride:
-            runtimeKind === "native" ? modelOverride.trim() || null : null,
-          executionProfile: runtimeKind === "local-cli"
-            ? "full-access"
-            : executionProfile,
+          providerProfileId: providerId,
+          modelOverride: modelOverride.trim() || null,
+          executionProfile,
           toolPolicy: policy,
-          cliConfig: runtimeKind === "local-cli"
-            ? {
-                command: cliCommand.trim(),
-                args: cliArgs
-                  .split(/\r?\n/)
-                  .map((argument) => argument.trim())
-                  .filter(Boolean),
-                cwd: null,
-                env: {},
-              }
-            : null,
+          cliConfig: null,
         },
         title,
       );
@@ -242,7 +189,7 @@ export function AgentDialog(props: {
               />
             </label>
             <label>
-              <span>首个任务</span>
+              <span>首个对话</span>
               <input
                 value={title}
                 maxLength={300}
@@ -258,107 +205,32 @@ export function AgentDialog(props: {
           >
             <summary>技术设置</summary>
             <div className="advanced-fields__content">
-              <fieldset className="form-fieldset">
-                <legend>运行方式</legend>
-                <div className="segmented-control">
-                  <button
-                    type="button"
-                    className={runtimeKind === "native" ? "is-active" : ""}
-                    onClick={() => {
-                      setRuntimeKind("native");
-                      setError(null);
-                    }}
+              <div className="form-grid form-grid--two">
+                <label>
+                  <span>模型服务</span>
+                  <select
+                    value={providerId}
+                    onChange={(event) => setProviderId(event.target.value)}
+                    required
                   >
-                    <Bot size={14} />
-                    API 模式
-                  </button>
-                  <button
-                    type="button"
-                    className={runtimeKind === "local-cli" ? "is-active" : ""}
-                    disabled={!hasLocalFolder}
-                    title={hasLocalFolder ? undefined : "需要先为工作区打开本地文件夹"}
-                    onClick={() => {
-                      setRuntimeKind("local-cli");
-                      setError(null);
-                    }}
-                  >
-                    <Terminal size={14} />
-                    本地 CLI
-                  </button>
-                </div>
-              </fieldset>
-
-              {runtimeKind === "native" ? (
-                <>
-                  <div className="form-grid form-grid--two">
-                    <label>
-                      <span>运行节点</span>
-                      <select
-                        value={runtimeNodeId}
-                        onChange={(event) => setRuntimeNodeId(event.target.value)}
-                        required
-                      >
-                        {runtimeNodes.map((runtime) => (
-                          <option value={runtime.id} key={runtime.id}>
-                            {runtime.name} · {runtime.kind === "local" ? "本机" : "远端"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>模型服务</span>
-                      <select
-                        value={providerId}
-                        onChange={(event) => setProviderId(event.target.value)}
-                        required
-                      >
-                        <option value="" disabled>请选择模型服务</option>
-                        {providers.map((provider) => (
-                          <option value={provider.id} key={provider.id}>
-                            {provider.name} · {provider.defaultModel}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <label>
-                    <span>指定模型</span>
-                    <input
-                      value={modelOverride}
-                      maxLength={512}
-                      onChange={(event) => setModelOverride(event.target.value)}
-                      placeholder="使用服务默认模型"
-                    />
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label>
-                    <span>命令</span>
-                    <input
-                      value={cliCommand}
-                      maxLength={4096}
-                      onChange={(event) => setCliCommand(event.target.value)}
-                      placeholder="codex"
-                      required
-                    />
-                  </label>
-                  <label>
-                    <span>参数（每行一个）</span>
-                    <textarea
-                      rows={4}
-                      maxLength={65_536}
-                      value={cliArgs}
-                      onChange={(event) => setCliArgs(event.target.value)}
-                      placeholder={"exec\n{prompt}\n--cd\n{projectRoot}"}
-                    />
-                    <small className="field-help">
-                      支持 {"{prompt}"} 和 {"{projectRoot}"}。如果参数中没有
-                      prompt，将通过标准输入发送。
-                    </small>
-                  </label>
-                </>
-              )}
+                    <option value="" disabled>请选择模型服务</option>
+                    {providers.map((provider) => (
+                      <option value={provider.id} key={provider.id}>
+                        {provider.name} · {provider.defaultModel}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>指定模型</span>
+                  <input
+                    value={modelOverride}
+                    maxLength={512}
+                    onChange={(event) => setModelOverride(event.target.value)}
+                    placeholder="使用服务默认模型"
+                  />
+                </label>
+              </div>
 
               <label>
                 <span>系统指令</span>
@@ -370,8 +242,7 @@ export function AgentDialog(props: {
                 />
               </label>
 
-              {exposesLocalTools && (
-                <fieldset className="form-fieldset">
+              <fieldset className="form-fieldset">
                   <legend>执行权限</legend>
                   <div className="segmented-control segmented-control--three">
                     <button
@@ -402,11 +273,9 @@ export function AgentDialog(props: {
                       完全访问
                     </button>
                   </div>
-                </fieldset>
-              )}
+              </fieldset>
 
-              {exposesLocalTools && (
-                <fieldset className="permission-fields">
+              <fieldset className="permission-fields">
                   <legend>工具权限</legend>
                   <PermissionSelect
                     label="读取文件"
@@ -429,8 +298,7 @@ export function AgentDialog(props: {
                       setPolicy((current) => ({ ...current, runCommands }))
                     }
                   />
-                </fieldset>
-              )}
+              </fieldset>
             </div>
           </details>
 
@@ -438,7 +306,7 @@ export function AgentDialog(props: {
           <footer className="agent-form-footer">
             <span className="runtime-label">
               <Bot size={14} />
-              {runtimeKind === "native" ? "API 模式" : "本地 CLI"}
+              内置 Agent
             </span>
             <button
               type="submit"

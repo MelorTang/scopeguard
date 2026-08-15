@@ -6,7 +6,7 @@
   "main": "dist/main.js",
   "types": "dist/main.d.ts",
   "scripts": {
-    "build:deps": "pnpm --filter @scopeguard/application build && pnpm --filter @scopeguard/cli-runtime build && pnpm --filter @scopeguard/provider-adapters build && pnpm --filter @scopeguard/tool-runtime build && pnpm --filter @scopeguard/ipc-contracts build",
+    "build:deps": "pnpm --filter @scopeguard/application build && pnpm --filter @scopeguard/provider-adapters build && pnpm --filter @scopeguard/tool-runtime build && pnpm --filter @scopeguard/ipc-contracts build",
     "build:main": "pnpm run build:deps && tsc -p tsconfig.json && node scripts/copy-preload.mjs",
     "build:renderer": "vite build",
     "build": "pnpm run build:main && pnpm run build:renderer",
@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@scopeguard/application": "workspace:*",
-    "@scopeguard/cli-runtime": "workspace:*",
     "@scopeguard/domain": "workspace:*",
     "@scopeguard/ipc-contracts": "workspace:*",
     "@scopeguard/managed-execution": "workspace:*",

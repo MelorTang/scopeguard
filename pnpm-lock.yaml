@@ -20,9 +20,6 @@ importers:
       '@scopeguard/application':
         specifier: workspace:*
         version: link:../../packages/application
-      '@scopeguard/cli-runtime':
-        specifier: workspace:*
-        version: link:../../packages/cli-runtime
       '@scopeguard/domain':
         specifier: workspace:*
         version: link:../../packages/domain

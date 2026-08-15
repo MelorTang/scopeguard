@@ -7,6 +7,38 @@ import { DatabaseSync } from "node:sqlite";
 
 import { ScopeGuardStore } from "./index.js";
 
+test("can create the desktop core without legacy control-plane mirrors", () => {
+    const store = new ScopeGuardStore(":memory:");
+  try {
+    const workspace = store.createWorkspace({ name: "Core workspace" });
+    const provider = store.saveProviderProfile({
+      name: "Provider",
+      protocol: "openai-compatible",
+      baseUrl: "https://provider.example.com/v1",
+      defaultModel: "model",
+    }, null);
+    const agent = store.createAgentProfile({
+      projectId: workspace.id,
+      name: "General",
+      instructions: "Help with the current conversation.",
+      providerProfileId: provider.id,
+    }, { mirrorLegacyControlPlane: false });
+    const conversation = store.createThread({
+      projectId: workspace.id,
+      agentProfileId: agent.id,
+      title: "First conversation",
+    }, { mirrorLegacyControlPlane: false });
+
+    assert.equal(store.listAgentDefinitions().length, 0);
+    assert.equal(store.listAgentInstances().length, 0);
+    assert.equal(store.listTasks().length, 0);
+    assert.equal(store.listTaskAssignments().length, 0);
+    assert.equal(store.getThread(conversation.id)?.agentProfileId, agent.id);
+  } finally {
+    store.close();
+  }
+});
+
 test("persists the first multi-agent workspace slice", () => {
   const store = new ScopeGuardStore(":memory:");
   try {

@@ -14,6 +14,7 @@ import {
   parseUpdateAgentInstanceRuntimeRequest,
   parseUpdateTaskStatusRequest,
   parseUpdateThreadSettingsInput,
+  toDesktopWorkspaceSnapshot,
   toProviderProfileView,
 } from "./index.js";
 
@@ -32,6 +33,33 @@ test("removes secret references from Provider profiles returned to Renderer", ()
 
   assert.equal(view.hasApiKey, true);
   assert.equal("apiKeyRef" in view, false);
+});
+
+test("projects only the desktop core collections to the Renderer", () => {
+  const snapshot = toDesktopWorkspaceSnapshot({
+    workspaces: [],
+    projects: [],
+    providerProfiles: [],
+    agentProfiles: [],
+    threads: [],
+    activeRuns: [],
+    recentRuns: [],
+    pendingApprovals: [],
+    runtimeNodes: [{ id: "runtime" } as never],
+    agentDefinitions: [{ id: "definition" } as never],
+    agentInstances: [{ id: "instance" } as never],
+    tasks: [{ id: "task" } as never],
+    assignments: [{ id: "assignment" } as never],
+    artifacts: [{ id: "artifact" } as never],
+    handoffs: [{ id: "handoff" } as never],
+    schedules: [{ id: "schedule" } as never],
+    inboxItems: [{ id: "inbox" } as never],
+  });
+
+  assert.deepEqual(snapshot.runtimeNodes, []);
+  assert.deepEqual(snapshot.tasks, []);
+  assert.deepEqual(snapshot.artifacts, []);
+  assert.deepEqual(snapshot.inboxItems, []);
 });
 
 test("validates provider settings at the IPC boundary", () => {
