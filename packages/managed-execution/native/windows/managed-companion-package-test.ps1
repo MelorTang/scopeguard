@@ -10,6 +10,7 @@ if (-not $IsWindows) {
     throw "The managed companion package matrix must run on Windows."
 }
 
+$PackageRoot = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $PackageRoot).Path).TrimEnd('\')
 $verifier = Join-Path $PSScriptRoot "verify-managed-companion.ps1"
 $manifestPath = Join-Path $PackageRoot "managed-companion-manifest.json"
 $scriptPath = Join-Path $PackageRoot "payload\scripts\provisioner-service-worker.ps1"
