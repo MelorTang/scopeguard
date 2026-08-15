@@ -215,7 +215,7 @@ link, and a junction. Use `-RequireTrustedSignature` only for a release
 candidate; the current native ScopeGuard binaries are intentionally unsigned
 development artifacts.
 
-[Windows Server 2022 run 31890770764](https://github.com/MelorTang/scopeguard/actions/runs/31890770764)
+[Windows Server 2022 run 31890924391](https://github.com/MelorTang/scopeguard/actions/runs/31890924391)
 passed the complete 9/9 package matrix and a fresh archive extraction. Windows
 11 25H2 x64 build `26200.9168` reproduced the same contract. This package is not
 yet an installer and must not be copied into the per-user Desktop installation

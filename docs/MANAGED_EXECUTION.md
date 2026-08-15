@@ -139,7 +139,7 @@ the bounded profiles' fail-closed status.
 
 The machine companion payload is independently repeatable as well. Windows
 Server 2022 run
-[31890770764](https://github.com/MelorTang/scopeguard/actions/runs/31890770764)
+[31890924391](https://github.com/MelorTang/scopeguard/actions/runs/31890924391)
 built and freshly extracted a 996-file closed payload containing Node `24.18.1`
 and PowerShell `7.6.4`. The uncompressed payload was 390,140,217 bytes. All
 all 9 package checks passed: one valid package plus release-signature, extra
@@ -147,7 +147,8 @@ file, payload tamper, schema drift, duplicate property, alternate-data-stream,
 external-hard-link, and reparse-point rejection cases. The official Node and
 PowerShell entrypoints had valid Authenticode signatures; the three ScopeGuard
 native entrypoints were intentionally unsigned and therefore remain blocked by
-release verification.
+release verification. All five native/runtime entrypoints also passed direct
+AMD64 PE-header validation without executing package code during verification.
 
 Windows 11 build `26200.9168` repeated the build with Node `24.19.0`, verified
 the same 996-file contract and 9/9 package matrix, then expanded the ZIP
