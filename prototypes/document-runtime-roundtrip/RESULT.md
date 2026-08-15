@@ -51,6 +51,28 @@ This run used only the public corpus and LibreOffice rendering. It does not
 satisfy the private company fixture or Microsoft Office desktop acceptance
 gates.
 
+## Microsoft Office 2024 public reopen checkpoint
+
+On 2026-08-15, the six edited OOXML outputs from the Windows 11 public run were
+checked in the logged-in Member session with Microsoft Office Home 2024 x64,
+version `16.0.20228.20190` (`zh-cn`). The repeatable check is implemented in
+`office-reopen-check.ps1`.
+
+All six files passed:
+
+| Application | Fixtures | Read-only open | Source hash unchanged | Preserved structure observed |
+| --- | ---: | ---: | ---: | --- |
+| Word | 2 | 2/2 | 2/2 | 11-page complex document; revision fixture reopened |
+| Excel | 2 | 2/2 | 2/2 | 3 worksheets in each file; 3 pivot tables in the pivot fixture |
+| PowerPoint | 2 | 2/2 | 2/2 | chart/animation fixture retained one animation; SmartArt fixture reopened |
+
+The check disables macros and Excel link updates, does not request Office
+repair mode, closes without saving, and emits no document text. This evidence
+means that the installed Word, Excel, and PowerPoint versions could open the
+edited public files without an automation error. It does not prove that Office
+performed no in-memory compatibility normalization, that the rendering is
+visually equivalent, or that company documents meet the same boundary.
+
 ## Preliminary V1 boundary
 
 Evidence currently supports these narrow operations:
