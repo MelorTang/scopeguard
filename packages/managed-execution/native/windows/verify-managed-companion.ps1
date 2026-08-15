@@ -149,10 +149,12 @@ foreach ($item in $items) {
     if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Companion package contains a reparse point: $($item.FullName)"
     }
-    $streams = @(Get-Item -LiteralPath $item.FullName -Stream * -ErrorAction Stop |
-        Where-Object Stream -CNE ':$DATA')
-    if ($streams.Count -gt 0) {
-        throw "Companion package contains an alternate data stream: $($item.FullName)"
+    if (-not $item.PSIsContainer) {
+        $streams = @(Get-Item -LiteralPath $item.FullName -Stream * -ErrorAction Stop |
+            Where-Object Stream -CNE ':$DATA')
+        if ($streams.Count -gt 0) {
+            throw "Companion package contains an alternate data stream: $($item.FullName)"
+        }
     }
 }
 
