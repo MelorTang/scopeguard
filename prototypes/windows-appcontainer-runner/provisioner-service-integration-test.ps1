@@ -186,6 +186,7 @@ $requestRoot = Join-Path $fixtureRoot "requests"
 $workspace = Join-Path $fixtureRoot "workspace"
 $outside = Join-Path $fixtureRoot "outside"
 $resultPath = Join-Path $fixtureRoot "result.json"
+$diagnosticsPath = Join-Path $fixtureRoot "service-diagnostics.log"
 $checks = [System.Collections.Generic.List[object]]::new()
 $cleanupPassed = $false
 
@@ -304,7 +305,8 @@ $serviceArguments = @(
     "--state-root", $stateRoot,
     "--request-root", $requestRoot,
     "--launcher", $launcher,
-    "--launcher-sha256", $hashes.launcher
+    "--launcher-sha256", $hashes.launcher,
+    "--diagnostics", $diagnosticsPath
 )
 $binaryPath = (Quote-ServiceArgument -Value $serviceExe) + " " +
     (($serviceArguments | ForEach-Object { Quote-ServiceArgument -Value $_ }) -join " ")

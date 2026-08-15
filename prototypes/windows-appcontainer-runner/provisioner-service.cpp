@@ -95,6 +95,7 @@ struct Config {
     std::wstring request_root;
     std::wstring launcher;
     std::wstring launcher_sha256;
+    std::wstring diagnostics;
 };
 
 Config g_config;
@@ -212,9 +213,19 @@ Config ParseServiceConfig(const std::vector<std::wstring>& args) {
         RequireOption(args, L"--request-root"),
         RequireOption(args, L"--launcher"),
         ToLower(RequireOption(args, L"--launcher-sha256")),
+        RequireOption(args, L"--diagnostics"),
     };
     ValidatePipeName(config.pipe_name);
     return config;
+}
+
+void LogDiagnostic(const std::string& message) {
+    std::ofstream output(
+        std::filesystem::path(g_config.diagnostics),
+        std::ios::out | std::ios::app);
+    if (output) {
+        output << GetTickCount64() << ' ' << message << '\n';
+    }
 }
 
 std::wstring CanonicalFilePath(const std::wstring& path) {
@@ -770,6 +781,7 @@ bool WaitForClient(HANDLE pipe) {
 void Serve() {
     const std::vector<std::byte> empty_request;
     (void)RunWorker(nullptr, true);
+    LogDiagnostic("startup recovery completed");
     SetServiceState(SERVICE_RUNNING);
     while (WaitForSingleObject(g_stop_event.get(), 0) == WAIT_TIMEOUT) {
         Handle pipe = CreatePipeInstance();
@@ -778,11 +790,15 @@ void Serve() {
         }
         try {
             VerifyClient(pipe.get());
+            LogDiagnostic("client identity verified");
             const auto request = ReadFrame(pipe.get(), kMaximumRequestBytes);
+            LogDiagnostic("request frame accepted");
             const auto response = RunWorker(&request, false);
+            LogDiagnostic("request worker completed");
             WriteFrame(pipe.get(), response);
             FlushFileBuffers(pipe.get());
-        } catch (...) {
+        } catch (const std::exception& error) {
+            LogDiagnostic(std::string("request failed: ") + error.what());
             // Authentication and framing failures are intentionally silent.
         }
         DisconnectNamedPipe(pipe.get());
@@ -802,9 +818,11 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
             ThrowLastError("CreateEventW(stop)");
         }
         VerifyPinnedFiles();
+        LogDiagnostic("pinned startup files verified");
         Serve();
         SetServiceState(SERVICE_STOPPED);
-    } catch (...) {
+    } catch (const std::exception& error) {
+        LogDiagnostic(std::string("service startup failed: ") + error.what());
         SetServiceState(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR);
     }
 }
