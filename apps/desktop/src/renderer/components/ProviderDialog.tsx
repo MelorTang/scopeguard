@@ -36,6 +36,83 @@ const EMPTY_FORM: ProviderForm = {
   clearApiKey: false,
 };
 
+type ProviderPreset = {
+  id: string;
+  name: string;
+  description: string;
+  protocol: ProviderForm["protocol"];
+  baseUrl: string;
+  defaultModel: string;
+  apiKeyPlaceholder: string;
+};
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    description: "GPT 系列模型",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.openai.com/v1",
+    defaultModel: "gpt-4o",
+    apiKeyPlaceholder: "sk-…",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    description: "Claude 系列模型",
+    protocol: "anthropic-compatible",
+    baseUrl: "https://api.anthropic.com",
+    defaultModel: "claude-sonnet-4-5",
+    apiKeyPlaceholder: "sk-ant-…",
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    description: "DeepSeek 官方接口",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.deepseek.com/v1",
+    defaultModel: "deepseek-v4-flash",
+    apiKeyPlaceholder: "sk-…",
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    description: "月之暗面开放平台",
+    protocol: "openai-compatible",
+    baseUrl: "https://api.moonshot.cn/v1",
+    defaultModel: "kimi-k3",
+    apiKeyPlaceholder: "sk-…",
+  },
+  {
+    id: "qwen",
+    name: "通义千问",
+    description: "阿里云百炼兼容模式",
+    protocol: "openai-compatible",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    defaultModel: "qwen-plus",
+    apiKeyPlaceholder: "sk-…",
+  },
+  {
+    id: "custom",
+    name: "自定义中转",
+    description: "公司自建或第三方中转",
+    protocol: "openai-compatible",
+    baseUrl: "",
+    defaultModel: "",
+    apiKeyPlaceholder: "本地接口可以留空",
+  },
+];
+
+function formFromPreset(preset: ProviderPreset): ProviderForm {
+  return {
+    ...EMPTY_FORM,
+    name: preset.id === "custom" ? "" : preset.name,
+    protocol: preset.protocol,
+    baseUrl: preset.baseUrl,
+    defaultModel: preset.defaultModel,
+  };
+}
+
 export function ProviderDialog(props: {
   open: boolean;
   workspace: WorkspaceController;
@@ -46,6 +123,7 @@ export function ProviderDialog(props: {
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [creatingNew, setCreatingNew] = useState(false);
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [status, setStatus] = useState<{
     kind: "success" | "error";
     message: string;
@@ -60,6 +138,10 @@ export function ProviderDialog(props: {
       setStatus(null);
     }
   }, [props.open, providers, form.id, creatingNew]);
+
+  const activePreset = PROVIDER_PRESETS.find(
+    (preset) => preset.id === activePresetId,
+  ) ?? null;
 
   const request = useMemo(() => ({
     value: {
@@ -77,8 +159,12 @@ export function ProviderDialog(props: {
 
   const updateForm = (
     update: (current: ProviderForm) => ProviderForm,
+    preservePreset = false,
   ) => {
     formRevision.current += 1;
+    if (!preservePreset) {
+      setActivePresetId(null);
+    }
     setForm(update);
     setStatus(null);
   };
@@ -121,6 +207,7 @@ export function ProviderDialog(props: {
     try {
       const saved = await props.workspace.saveProvider(request.value);
       setCreatingNew(false);
+      setActivePresetId(null);
       setForm(fromProvider(saved));
       setStatus({ kind: "success", message: "模型服务已保存。" });
     } catch (error) {
@@ -155,6 +242,7 @@ export function ProviderDialog(props: {
             onClick={() => {
               formRevision.current += 1;
               setCreatingNew(true);
+              setActivePresetId(null);
               setForm({ ...EMPTY_FORM });
               setStatus(null);
             }}
@@ -171,6 +259,7 @@ export function ProviderDialog(props: {
                 onClick={() => {
                   formRevision.current += 1;
                   setCreatingNew(false);
+                  setActivePresetId(null);
                   setForm(fromProvider(provider));
                   setStatus(null);
                 }}
@@ -195,6 +284,27 @@ export function ProviderDialog(props: {
             void save();
           }}
         >
+          {creatingNew && (
+            <div className="provider-presets" role="group" aria-label="选择服务预设">
+              {PROVIDER_PRESETS.map((preset) => (
+                <button
+                  type="button"
+                  key={preset.id}
+                  className={preset.id === activePresetId ? "is-selected" : ""}
+                  aria-pressed={preset.id === activePresetId}
+                  onClick={() => {
+                    formRevision.current += 1;
+                    setActivePresetId(preset.id);
+                    setForm(formFromPreset(preset));
+                    setStatus(null);
+                  }}
+                >
+                  <strong>{preset.name}</strong>
+                  <small>{preset.description}</small>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="form-grid form-grid--two">
             <label>
               <span>服务名称</span>
@@ -288,10 +398,12 @@ export function ProviderDialog(props: {
                     ...current,
                     apiKey: event.target.value,
                     clearApiKey: false,
-                  }))
+                  }), true)
                 }
                 placeholder={
-                  form.id ? "留空则保留现有 Key" : "本地接口可以留空"
+                  form.id
+                    ? "留空则保留现有 Key"
+                    : (activePreset?.apiKeyPlaceholder ?? "本地接口可以留空")
                 }
                 autoComplete="off"
               />
@@ -307,7 +419,7 @@ export function ProviderDialog(props: {
                     ...current,
                     clearApiKey: event.target.checked,
                     apiKey: event.target.checked ? "" : current.apiKey,
-                  }))
+                  }), true)
                 }
               />
               <span>保存时删除现有 API Key</span>
