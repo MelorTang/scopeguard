@@ -84,8 +84,8 @@ present in both the service registry and Broker manifest.
 
 The current per-user Desktop NSIS installer remains separate from the machine
 trust boundary. It does not contain managed-execution resources. The companion
-package built by `pnpm package:managed:win` is a development distribution input
-for a future elevated machine installer, not a user-writable Desktop resource.
+package built by `pnpm package:managed:win` is consumed by the separate elevated
+machine installation script, not copied into a user-writable Desktop resource.
 Its manifest fixes these deployment rules:
 
 - immutable binaries and runtimes belong below
@@ -105,6 +105,20 @@ bound into one content digest. Verification rejects unlisted files, content or
 schema changes, duplicate JSON fields, reparse points, alternate data streams,
 and multiple hard links. Release-mode verification also rejects the unsigned
 development artifact.
+
+An elevated administrator installs one explicitly registered Workspace with:
+
+```powershell
+pwsh -File packages/managed-execution/native/windows/install-managed-companion.ps1 `
+  -PackageRoot <verified-extracted-package> `
+  -WorkspaceRoot <workspace>
+```
+
+Release installation requires trusted signatures. The explicit
+`-AllowUnsignedDevelopmentPackage` switch exists only for isolated development
+validation. Re-running the installer repairs the payload and service. The
+uninstaller preserves state unless `-PurgeCleanState` is requested and every
+strict lifecycle ledger proves cleanup.
 
 ## Validation Evidence
 
@@ -156,6 +170,23 @@ into a fresh directory and reproduced its content digest. This is supply-chain
 and layout evidence only. No service was installed and no bounded execution
 path was enabled from this artifact.
 
+The elevated machine lifecycle is now repeatable from that artifact. Windows
+Server 2022 run
+[31892864395](https://github.com/MelorTang/scopeguard/actions/runs/31892864395)
+builds the closed payload, runs the package rejection matrix, then installs a
+LocalSystem service into protected Program Files/ProgramData roots and executes
+the product LPAC adapter. The lifecycle matrix covers a fresh install, ACLs,
+real command streaming and cleanup, tamper repair, injected upgrade rollback,
+unsigned-package refusal, pre-created junction refusal, unclean-state uninstall
+refusal, clean uninstall, and idempotent uninstall.
+
+Windows 11 build `26200.9168` passed the same 10/10 lifecycle checks from the
+logged-in user's interactive Session 2. The LPAC command completed with exit 0,
+confirmed termination, clean cleanup, and `effect=confirmed`. The final audit
+found zero test services, installation roots, or state roots. This validates the
+administrator installation prototype for one explicit Workspace; it does not
+provide dynamic registration or a signed end-user installer.
+
 ## Remaining Release Gates
 
 - Signed ScopeGuard service, lifetime Broker, launcher, and signed companion
@@ -163,8 +194,6 @@ path was enabled from this artifact.
   ScopeGuard native entrypoints remain unsigned.
 - Broker-only authenticated session or inherited-handle bootstrap for the
   Provisioner transport.
-- Elevated machine installer for the fixed Program Files/ProgramData layout,
-  plus upgrade, rollback, repair, and uninstall recovery.
 - Desktop discovery and validation of the installed machine companion without
   trusting the per-user application directory.
 - A clean packaged Windows 11 Desktop end-to-end run after signing.
