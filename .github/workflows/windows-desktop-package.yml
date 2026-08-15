@@ -36,7 +36,13 @@ jobs:
       - run: corepack enable
       - run: corepack prepare pnpm@10.0.0 --activate
       - run: pnpm install --frozen-lockfile
-      - run: pnpm package:win:dir
+      - run: pnpm package:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scopeguard-windows-installer
+          path: apps/desktop/release/ScopeGuard-*-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: scopeguard-windows-unpacked
