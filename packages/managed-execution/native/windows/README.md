@@ -208,16 +208,18 @@ pwsh -File packages/managed-execution/native/windows/managed-companion-package-t
   -PackageRoot packages/managed-execution/native/windows/release/ScopeGuard-ManagedExecution-0.5.0-dev-windows-x64
 ```
 
-The matrix accepts the valid package and rejects seven unsafe variants:
+The matrix accepts the valid package and rejects eight unsafe variants:
 unsigned release verification, an extra file, payload tampering, schema drift,
-duplicate JSON properties, an NTFS alternate data stream, and a junction. Use
-`-RequireTrustedSignature` only for a release candidate; the current native
-ScopeGuard binaries are intentionally unsigned development artifacts.
+duplicate JSON properties, an NTFS alternate data stream, an external hard
+link, and a junction. Use `-RequireTrustedSignature` only for a release
+candidate; the current native ScopeGuard binaries are intentionally unsigned
+development artifacts.
 
-[Windows Server 2022 run 31890549547](https://github.com/MelorTang/scopeguard/actions/runs/31890549547)
-passed the complete 8/8 matrix and a fresh archive extraction. Windows 11 25H2
-x64 build `26200.9168` reproduced the same contract. This package is not yet an
-installer and must not be copied into the per-user Desktop installation root.
+[Windows Server 2022 run 31890770764](https://github.com/MelorTang/scopeguard/actions/runs/31890770764)
+passed the complete 9/9 package matrix and a fresh archive extraction. Windows
+11 25H2 x64 build `26200.9168` reproduced the same contract. This package is not
+yet an installer and must not be copied into the per-user Desktop installation
+root.
 
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the

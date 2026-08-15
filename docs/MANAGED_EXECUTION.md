@@ -102,9 +102,9 @@ The closed payload contains the native service/client, LPAC launcher, lifetime
 Broker, Provisioner scripts, copied Node runtime, and the complete PowerShell
 runtime required by the service Worker. Every payload path, size, and SHA-256 is
 bound into one content digest. Verification rejects unlisted files, content or
-schema changes, duplicate JSON fields, reparse points, and alternate data
-streams. Release-mode verification also rejects the unsigned development
-artifact.
+schema changes, duplicate JSON fields, reparse points, alternate data streams,
+and multiple hard links. Release-mode verification also rejects the unsigned
+development artifact.
 
 ## Validation Evidence
 
@@ -139,20 +139,21 @@ the bounded profiles' fail-closed status.
 
 The machine companion payload is independently repeatable as well. Windows
 Server 2022 run
-[31890549547](https://github.com/MelorTang/scopeguard/actions/runs/31890549547)
+[31890770764](https://github.com/MelorTang/scopeguard/actions/runs/31890770764)
 built and freshly extracted a 996-file closed payload containing Node `24.18.1`
 and PowerShell `7.6.4`. The uncompressed payload was 390,140,217 bytes. All
-eight package checks passed: one valid package plus release-signature, extra
+all 9 package checks passed: one valid package plus release-signature, extra
 file, payload tamper, schema drift, duplicate property, alternate-data-stream,
-and reparse-point rejection cases. The official Node and PowerShell entrypoints
-had valid Authenticode signatures; the three ScopeGuard native entrypoints were
-intentionally unsigned and therefore remain blocked by release verification.
+external-hard-link, and reparse-point rejection cases. The official Node and
+PowerShell entrypoints had valid Authenticode signatures; the three ScopeGuard
+native entrypoints were intentionally unsigned and therefore remain blocked by
+release verification.
 
 Windows 11 build `26200.9168` repeated the build with Node `24.19.0`, verified
-the same 996-file contract and 8/8 rejection matrix, then expanded the ZIP into
-a fresh directory and reproduced its content digest. This is supply-chain and
-layout evidence only. No service was installed and no bounded execution path was
-enabled from this artifact.
+the same 996-file contract and 9/9 package matrix, then expanded the ZIP
+into a fresh directory and reproduced its content digest. This is supply-chain
+and layout evidence only. No service was installed and no bounded execution
+path was enabled from this artifact.
 
 ## Remaining Release Gates
 
