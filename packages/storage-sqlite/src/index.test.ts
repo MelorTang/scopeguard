@@ -51,6 +51,7 @@ test("persists the first multi-agent workspace slice", () => {
       providerBaseUrl: provider.baseUrl,
       model: provider.defaultModel,
       instructions: agent.instructions,
+      executionProfile: agent.executionProfile,
       toolPolicy: agent.toolPolicy,
       cliConfig: null,
     });
@@ -91,6 +92,7 @@ test("persists the first multi-agent workspace slice", () => {
       providerBaseUrl: provider.baseUrl,
       model: provider.defaultModel,
       instructions: agent.instructions,
+      executionProfile: agent.executionProfile,
       toolPolicy: agent.toolPolicy,
       cliConfig: null,
     });
@@ -292,6 +294,7 @@ test("rejects invalid run transitions", () => {
       providerBaseUrl: provider.baseUrl,
       model: provider.defaultModel,
       instructions: agent.instructions,
+      executionProfile: agent.executionProfile,
       toolPolicy: agent.toolPolicy,
       cliConfig: null,
     });
@@ -344,6 +347,7 @@ test("treats waiting-input as an active Run in storage constraints", () => {
       providerBaseUrl: provider.baseUrl,
       model: provider.defaultModel,
       instructions: agent.instructions,
+      executionProfile: agent.executionProfile,
       toolPolicy: agent.toolPolicy,
       cliConfig: null,
     };
@@ -397,8 +401,44 @@ test("v6 migration adds waiting-input to the active Run index", async () => {
     ).get("idx_one_active_run_per_thread") as { sql: string };
     migrated.close();
 
-    assert.equal(version.value, "6");
+    assert.equal(version.value, "7");
     assert.match(index.sql, /waiting-input/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("v7 migration assigns explicit conversation execution profiles", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-v7-migration-"));
+  const databasePath = join(directory, "scopeguard.db");
+  try {
+    const initial = new ScopeGuardStore(databasePath);
+    const project = initial.addProject({ rootPath: "/tmp/v7-project" });
+    const native = initial.createAgentProfile({
+      projectId: project.id,
+      name: "Native",
+      instructions: "",
+    });
+    const cli = initial.createAgentProfile({
+      projectId: project.id,
+      name: "CLI",
+      runtimeKind: "local-cli",
+      instructions: "",
+      cliConfig: { command: "codex", args: [], cwd: null, env: {} },
+    });
+    initial.close();
+
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      UPDATE agent_profiles SET execution_profile = 'request-approval';
+      UPDATE schema_metadata SET value = '6' WHERE key = 'schema_version';
+    `);
+    legacy.close();
+
+    const migrated = new ScopeGuardStore(databasePath);
+    assert.equal(migrated.getAgentProfile(native.id)?.executionProfile, "request-approval");
+    assert.equal(migrated.getAgentProfile(cli.id)?.executionProfile, "full-access");
+    migrated.close();
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -645,6 +685,7 @@ test("expires approvals that belong to interrupted Runs", () => {
       providerBaseUrl: provider.baseUrl,
       model: provider.defaultModel,
       instructions: agent.instructions,
+      executionProfile: agent.executionProfile,
       toolPolicy: agent.toolPolicy,
       cliConfig: null,
     });
@@ -816,6 +857,7 @@ function createRunningWorkspace(store: ScopeGuardStore, rootPath: string) {
     providerBaseUrl: provider.baseUrl,
     model: provider.defaultModel,
     instructions: agent.instructions,
+    executionProfile: agent.executionProfile,
     toolPolicy: agent.toolPolicy,
     cliConfig: null,
   });

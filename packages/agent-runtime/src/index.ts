@@ -1,6 +1,8 @@
 import type {
   AgentToolPolicy,
+  ConversationExecutionProfile,
   Id,
+  ManagedExecutionProgress,
   ProviderConnectionResult,
   ProviderProtocol,
 } from "@scopeguard/domain";
@@ -92,7 +94,9 @@ export type ToolExecutionContext = {
   projectRoot: string;
   threadId: Id;
   runId: Id;
+  executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
+  onManagedExecutionEvent?: (event: ManagedExecutionProgress) => void;
   signal: AbortSignal;
 };
 

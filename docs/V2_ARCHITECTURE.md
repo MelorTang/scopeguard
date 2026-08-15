@@ -85,6 +85,19 @@ to the same Thread resolves the Inbox item and resumes the same provider loop.
 Successful `write_file` results also create a file Artifact from the persisted
 tool arguments, after path and provenance checks.
 
+Every Conversation has an immutable execution profile. Request Approval forces
+mutating tools through user review; Auto Approve skips review; both route
+`run_command` through the same Windows LPAC Managed Execution adapter. Full
+Access routes to a current-user adapter. Bounded adapter unavailability never
+falls back to Full Access. Execution progress is a typed Run event and output
+chunks are streamed without persisting every chunk in SQLite.
+
+Electron Main owns the Desktop Execution Broker. Agent Host sends typed private
+request/event/response/cancel messages over its utility-process channel. The
+Windows adapter uses a registered Workspace ID, installed Provisioner service,
+durable current-user Profile intent, parent-monitoring outer Job, LPAC launcher
+inner Job, and a fixed Node/CMD worker. See `docs/MANAGED_EXECUTION.md`.
+
 ### Remote Runtime
 
 The remote Runtime exposes a versioned Bearer-authenticated HTTP API for
@@ -107,10 +120,10 @@ for affected Agents, and redact credentials from errors.
 
 | Process | Owns |
 | --- | --- |
-| Electron Main | Window lifecycle, directory picker, navigation policy, SecretVault, Agent-host supervision, sender validation |
+| Electron Main | Window lifecycle, directory picker, navigation policy, SecretVault, Agent-host supervision, sender validation, Desktop Execution Broker |
 | Preload | Fixed typed API and Run-event subscription; no generic IPC |
 | Renderer | Workspace navigation, panes, dialogs, Inbox, Artifact/Context views, local layout and drafts |
-| Agent host | The only desktop SQLite writer, use cases, Provider requests, local tools, CLI adapter, remote polling |
+| Agent host | The only desktop SQLite writer, use cases, Provider requests, tool orchestration, CLI adapter, remote polling |
 | Remote Runtime | Durable remote jobs, events, cancellation, and final Artifacts |
 
 Renderer payloads never contain Provider API keys, Runtime tokens, or SQLite
@@ -124,6 +137,7 @@ packages/application      Use cases and local/remote orchestration ports
 packages/agent-runtime    Native Provider/tool loop
 packages/provider-adapters
 packages/tool-runtime     Path confinement, approval policy, process control
+packages/managed-execution Typed execution contract, Full Access adapter, Windows LPAC Broker adapter
 packages/cli-runtime      Optional local CLI adapter
 packages/remote-runtime   Protocol, HTTP client, service, remote job store
 packages/storage-sqlite   Desktop repositories and migrations
@@ -145,6 +159,8 @@ imports Node APIs, storage, Provider adapters, or tool implementations.
 - v5 added durable remote Run bindings and event cursors.
 - v6 treats `waiting-input` as an active Run and rebuilds the per-Thread
   uniqueness index so paused Runs cannot be bypassed after migration.
+- v7 persists the immutable Conversation execution profile and assigns legacy
+  Local CLI Profiles to Full Access while native Profiles default to Request Approval.
 
 Migrations are sequential and transactional. Databases from a newer schema are
 rejected. Legacy work is retained and mapped to ready/archived state rather

@@ -8,12 +8,19 @@ import type {
 import type {
   AgentHostMethod,
   AgentHostRequest,
+  AgentHostManagedExecutionCancel,
+  AgentHostManagedExecutionRequest,
   AgentHostSecretRequest,
   AgentHostSecretResponse,
   AgentHostToMainMessage,
   MainToAgentHostMessage,
 } from "@scopeguard/ipc-contracts";
+import { parseManagedExecutionRequest } from "@scopeguard/ipc-contracts";
 import type { RunEvent } from "@scopeguard/domain";
+import {
+  type ManagedExecutionAdapter,
+  UnavailableManagedExecutionAdapter,
+} from "@scopeguard/managed-execution";
 
 import { EncryptedSecretVault } from "./encrypted-secret-vault.js";
 
@@ -42,12 +49,17 @@ export class AgentHostClient {
   readonly #fork: AgentHostFork;
   readonly #onRunEvent: (event: RunEvent) => void;
   readonly #onReady: () => void;
+  readonly #managedExecution: ManagedExecutionAdapter;
   readonly #readyTimeoutMs: number;
   readonly #requestTimeoutMs: number;
   readonly #shutdownTimeoutMs: number;
   readonly #restartBaseDelayMs: number;
   readonly #restartMaxDelayMs: number;
   readonly #pending = new Map<string, PendingRequest>();
+  readonly #managedExecutions = new Map<
+    string,
+    { child: UtilityProcess; controller: AbortController }
+  >();
   #child: UtilityProcess | null = null;
   #readyPromise: Promise<void> | null = null;
   #resolveReady: (() => void) | null = null;
@@ -65,6 +77,7 @@ export class AgentHostClient {
     fork: AgentHostFork;
     onRunEvent: (event: RunEvent) => void;
     onReady?: () => void;
+    managedExecution?: ManagedExecutionAdapter;
     readyTimeoutMs?: number;
     requestTimeoutMs?: number;
     shutdownTimeoutMs?: number;
@@ -77,6 +90,8 @@ export class AgentHostClient {
     this.#fork = options.fork;
     this.#onRunEvent = options.onRunEvent;
     this.#onReady = options.onReady ?? (() => {});
+    this.#managedExecution = options.managedExecution
+      ?? new UnavailableManagedExecutionAdapter();
     this.#readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.#shutdownTimeoutMs =
@@ -215,8 +230,10 @@ export class AgentHostClient {
     this.#rejectPending(error);
     const child = this.#child;
     if (!child) {
+      await this.#managedExecution.shutdown();
       return;
     }
+    this.#cancelManagedExecutions(child);
 
     await new Promise<void>((resolve) => {
       let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -257,6 +274,7 @@ export class AgentHostClient {
         }
       }
     });
+    await this.#managedExecution.shutdown();
   }
 
   async #handleMessage(
@@ -301,7 +319,75 @@ export class AgentHostClient {
       }
       return;
     }
+    if (message.type === "host-managed-execution-request") {
+      void this.#handleManagedExecution(child, message);
+      return;
+    }
+    if (message.type === "host-managed-execution-cancel") {
+      this.#handleManagedExecutionCancel(child, message);
+      return;
+    }
     await this.#handleSecretRequest(child, message);
+  }
+
+  async #handleManagedExecution(
+    child: UtilityProcess,
+    message: AgentHostManagedExecutionRequest,
+  ): Promise<void> {
+    if (this.#managedExecutions.has(message.requestId)) {
+      return;
+    }
+    const controller = new AbortController();
+    this.#managedExecutions.set(message.requestId, { child, controller });
+    try {
+      const result = await this.#managedExecution.execute(
+        parseManagedExecutionRequest(message.request),
+        {
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (child === this.#child) {
+              child.postMessage({
+                type: "host-managed-execution-event",
+                requestId: message.requestId,
+                event,
+              } satisfies MainToAgentHostMessage);
+            }
+          },
+        },
+      );
+      if (child === this.#child) {
+        child.postMessage({
+          type: "host-managed-execution-response",
+          requestId: message.requestId,
+          ok: true,
+          result,
+        } satisfies MainToAgentHostMessage);
+      }
+    } catch (error) {
+      if (child === this.#child) {
+        child.postMessage({
+          type: "host-managed-execution-response",
+          requestId: message.requestId,
+          ok: false,
+          error: asError(error, "Managed execution failed.").message,
+        } satisfies MainToAgentHostMessage);
+      }
+    } finally {
+      const active = this.#managedExecutions.get(message.requestId);
+      if (active?.child === child) {
+        this.#managedExecutions.delete(message.requestId);
+      }
+    }
+  }
+
+  #handleManagedExecutionCancel(
+    child: UtilityProcess,
+    message: AgentHostManagedExecutionCancel,
+  ): void {
+    const active = this.#managedExecutions.get(message.requestId);
+    if (active?.child === child) {
+      active.controller.abort(new DOMException("Execution cancelled.", "AbortError"));
+    }
   }
 
   async #handleSecretRequest(
@@ -341,6 +427,7 @@ export class AgentHostClient {
       return;
     }
     const error = new Error(`Agent host exited with code ${code}.`);
+    this.#cancelManagedExecutions(child);
     this.#child = null;
     this.#rejectReadyState(error);
     this.#rejectPending(error);
@@ -361,6 +448,14 @@ export class AgentHostClient {
       pending.reject(error);
     }
     this.#pending.clear();
+  }
+
+  #cancelManagedExecutions(child: UtilityProcess): void {
+    for (const [requestId, active] of this.#managedExecutions) {
+      if (active.child !== child) continue;
+      active.controller.abort(new DOMException("Agent Host exited.", "AbortError"));
+      this.#managedExecutions.delete(requestId);
+    }
   }
 
   #scheduleRestart(): void {

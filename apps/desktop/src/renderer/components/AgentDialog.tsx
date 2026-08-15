@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import type {
   AgentRuntimeKind,
   AgentToolPolicy,
+  ConversationExecutionProfile,
   ToolPermission,
 } from "@scopeguard/domain";
 
@@ -88,6 +89,8 @@ export function AgentDialog(props: {
   const [cliCommand, setCliCommand] = useState("");
   const [cliArgs, setCliArgs] = useState("{prompt}");
   const [policy, setPolicy] = useState<AgentToolPolicy>(DEFAULT_TOOL_POLICY);
+  const [executionProfile, setExecutionProfile] =
+    useState<ConversationExecutionProfile>("request-approval");
   const [technicalOpen, setTechnicalOpen] = useState(
     props.workspace.professionalMode,
   );
@@ -115,6 +118,7 @@ export function AgentDialog(props: {
     setCliCommand("");
     setCliArgs("{prompt}");
     setPolicy({ ...DEFAULT_TOOL_POLICY });
+    setExecutionProfile("request-approval");
     setTechnicalOpen(props.workspace.professionalMode);
     setError(null);
   }, [props.open, props.workspace.professionalMode]);
@@ -167,6 +171,9 @@ export function AgentDialog(props: {
           providerProfileId: runtimeKind === "native" ? providerId : null,
           modelOverride:
             runtimeKind === "native" ? modelOverride.trim() || null : null,
+          executionProfile: runtimeKind === "local-cli"
+            ? "full-access"
+            : executionProfile,
           toolPolicy: policy,
           cliConfig: runtimeKind === "local-cli"
             ? {
@@ -362,6 +369,41 @@ export function AgentDialog(props: {
                   onChange={(event) => setInstructions(event.target.value)}
                 />
               </label>
+
+              {exposesLocalTools && (
+                <fieldset className="form-fieldset">
+                  <legend>执行权限</legend>
+                  <div className="segmented-control segmented-control--three">
+                    <button
+                      type="button"
+                      className={
+                        executionProfile === "request-approval" ? "is-active" : ""
+                      }
+                      onClick={() => setExecutionProfile("request-approval")}
+                    >
+                      请求批准
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        executionProfile === "auto-approve" ? "is-active" : ""
+                      }
+                      onClick={() => setExecutionProfile("auto-approve")}
+                    >
+                      自动审批
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        executionProfile === "full-access" ? "is-active" : ""
+                      }
+                      onClick={() => setExecutionProfile("full-access")}
+                    >
+                      完全访问
+                    </button>
+                  </div>
+                </fieldset>
+              )}
 
               {exposesLocalTools && (
                 <fieldset className="permission-fields">

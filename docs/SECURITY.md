@@ -1,8 +1,9 @@
 # Security Model
 
-ScopeGuard runs trusted tools and sends user-selected context to model services.
-It reduces accidental authority and credential exposure; it is not a container
-or hostile-code sandbox.
+ScopeGuard sends user-selected context to model services and offers explicit
+local execution profiles. On Windows, the two bounded profiles use a selected
+LPAC sandbox. Full Access and Local CLI are not sandboxed. ScopeGuard is not a
+general defense against arbitrary malware already running as the desktop user.
 
 ## Trust Boundaries
 
@@ -10,7 +11,9 @@ or hostile-code sandbox.
 - Preload exposes a fixed API. Main validates sender URL and every IPC payload.
 - Opening a local folder requires a one-time native picker authorization bound
   to the requesting WebContents.
-- Agent host is the only desktop SQLite writer and owns Provider/tool execution.
+- Agent host is the only desktop SQLite writer and owns Provider/tool orchestration.
+- Bounded commands cross a private typed Agent Host/Main channel to the Desktop
+  Execution Broker. No matching method exists in Preload or Renderer IPC.
 - Remote Runtime is a separate execution boundary authenticated with a Bearer token.
 
 ## Context Boundary
@@ -27,9 +30,14 @@ or hostile-code sandbox.
 - `read_file` and `write_file` resolve canonical paths beneath `localRootPath`
   and reject traversal and symlink escapes.
 - `write_file` rejects symlink targets, limits content, and uses same-directory atomic replacement.
-- `run_command` shows the exact command and requires approval by default.
-- Denial does not execute the tool. Cancellation terminates the process group
-  with bounded escalation.
+- Request Approval shows the exact mutating tool call. Auto Approve removes the
+  prompt but uses the same Windows LPAC policy. Full Access is explicitly unsandboxed.
+- Bounded `run_command` fails closed when any Broker, Provisioner, Runtime,
+  Profile, ACL, Job, identity, or cleanup check is unavailable or invalid.
+- Each bounded execution has an outer parent-monitoring Job and inner LPAC Job.
+  Cancellation is per execution; Desktop exit clears all managed process trees.
+- Durable Profile intents and service ACL ledgers recover interrupted lifecycle
+  work. Unconfirmed cleanup or termination is reported as an unknown effect.
 - Local CLI Agents require a local folder, use argument arrays rather than shell
   interpolation, receive a minimal environment, and cannot bind to remote Runtime nodes.
 
@@ -56,6 +64,7 @@ or hostile-code sandbox.
 
 ## User Responsibility
 
-Use trusted Provider and Runtime endpoints, open only trusted local folders,
-and inspect command approvals before accepting them. An approved command or
-Local CLI Agent has the operating-system permissions of the current user.
+Use trusted Provider and Runtime endpoints and open only trusted local folders.
+Full Access commands and Local CLI Agents have the operating-system permissions
+of the current user. Bounded execution is currently Windows-only and requires a
+properly installed and registered sandbox service; missing setup is an error.

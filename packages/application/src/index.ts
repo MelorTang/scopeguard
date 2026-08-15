@@ -28,6 +28,7 @@ import {
   type AgentProfile,
   type AgentRun,
   type AgentThread,
+  type AgentToolPolicy,
   type AssignmentStatus,
   type ApprovalDecision,
   type Artifact,
@@ -48,6 +49,7 @@ import {
   type Id,
   type InboxItem,
   type MessageContentBlock,
+  type ManagedExecutionProgress,
   type Project,
   type ProviderConnectionResult,
   type ProviderProfile,
@@ -1083,7 +1085,7 @@ export class ScopeGuardApplication {
     }
 
     const toolPolicy = !useRemoteRuntime && workspace.localRootPath
-      ? profile.toolPolicy
+      ? effectiveToolPolicy(profile.executionProfile, profile.toolPolicy)
       : {
           readFiles: "deny" as const,
           writeFiles: "deny" as const,
@@ -1108,6 +1110,7 @@ export class ScopeGuardApplication {
         ? profile.modelOverride ?? provider.defaultModel
         : null,
       instructions: profile.instructions,
+      executionProfile: profile.executionProfile,
       toolPolicy,
       cliConfig: profile.cliConfig,
     };
@@ -1945,7 +1948,11 @@ export class ScopeGuardApplication {
           runId: run.id,
           credentials,
           messages: history,
+          executionProfile: run.configSnapshot.executionProfile,
           toolPolicy: run.configSnapshot.toolPolicy,
+          onManagedExecutionEvent: (progress) => {
+            this.emitManagedExecution(run, thread, progress);
+          },
           signal: controller.signal,
         },
         this.createObserver(run, thread, controller.signal, partial),
@@ -2636,6 +2643,24 @@ export class ScopeGuardApplication {
     this.#store.appendRunEvent(event);
     this.#publish(event);
   }
+
+  emitManagedExecution(
+    run: AgentRun,
+    thread: AgentThread,
+    progress: ManagedExecutionProgress,
+  ): void {
+    const event: RunEvent = {
+      type: "managed-execution",
+      runId: run.id,
+      threadId: thread.id,
+      progress,
+      at: progress.at,
+    };
+    if (!progress.chunk) {
+      this.#store.appendRunEvent(event);
+    }
+    this.#publish(event);
+  }
 }
 
 class ApprovalWaiters {
@@ -3043,6 +3068,21 @@ function assertMaximumLength(
   if (value.length > maximum) {
     throw new Error(`${field} must not exceed ${maximum} characters.`);
   }
+}
+
+function effectiveToolPolicy(
+  profile: AgentProfile["executionProfile"],
+  configured: AgentToolPolicy,
+): AgentToolPolicy {
+  const permission = (value: AgentToolPolicy["writeFiles"]) => {
+    if (value === "deny") return "deny" as const;
+    return profile === "request-approval" ? "ask" as const : "allow" as const;
+  };
+  return {
+    readFiles: configured.readFiles,
+    writeFiles: permission(configured.writeFiles),
+    runCommands: permission(configured.runCommands),
+  };
 }
 
 function throwIfAborted(signal: AbortSignal): void {

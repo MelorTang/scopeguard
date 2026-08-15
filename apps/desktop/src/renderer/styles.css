@@ -721,6 +721,16 @@ textarea:disabled {
   color: var(--red);
 }
 
+.run-state--provisioning,
+.run-state--cleaning {
+  color: var(--amber);
+}
+
+.run-state--stopping,
+.run-state--failed {
+  color: var(--red);
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -1959,6 +1969,10 @@ textarea:disabled {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.segmented-control--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .segmented-control button:hover,

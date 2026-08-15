@@ -18,8 +18,11 @@ import { HttpRemoteRuntimeClient } from "@scopeguard/remote-runtime";
 import { ScopeGuardStore } from "@scopeguard/storage-sqlite";
 import {
   ScopeGuardToolRegistry,
-  shutdownRunningCommands,
 } from "@scopeguard/tool-runtime";
+import {
+  CurrentUserManagedExecutionAdapter,
+  ManagedExecutionRouter,
+} from "@scopeguard/managed-execution";
 import {
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
@@ -29,6 +32,8 @@ import {
   type AgentHostResponse,
   type AgentHostSecretRequest,
   type AgentHostSecretResponse,
+  type AgentHostManagedExecutionEvent,
+  type AgentHostManagedExecutionResponse,
   type AgentHostToMainMessage,
   type MainToAgentHostMessage,
   type ResolveApprovalRequest,
@@ -50,6 +55,8 @@ import type {
   SaveRuntimeNodeInput,
   StartRunInput,
 } from "@scopeguard/domain";
+
+import { AgentHostManagedExecutionAdapter } from "./agent-host-managed-execution.js";
 
 class MainProcessSecretVault implements SecretVault {
   readonly #port: Electron.ParentPort;
@@ -139,11 +146,19 @@ if (!databasePath) {
 
 const store = new ScopeGuardStore(databasePath);
 const secrets = new MainProcessSecretVault(parentPort);
+const boundedExecution = new AgentHostManagedExecutionAdapter(parentPort);
+const tools = new ScopeGuardToolRegistry(
+  undefined,
+  new ManagedExecutionRouter({
+    bounded: boundedExecution,
+    fullAccess: new CurrentUserManagedExecutionAdapter(),
+  }),
+);
 const application = new ScopeGuardApplication({
   store,
   secrets,
   providerFactory: (protocol) => createProviderAdapter({ protocol }),
-  tools: new ScopeGuardToolRegistry(),
+  tools,
   cliRunner: {
     run: ({ config, prompt, projectRoot, signal, onOutput }) =>
       runCliAgent({
@@ -178,6 +193,14 @@ parentPort.on("message", (messageEvent) => {
     secrets.handleResponse(message);
     return;
   }
+  if (message?.type === "host-managed-execution-event") {
+    boundedExecution.handleEvent(message as AgentHostManagedExecutionEvent);
+    return;
+  }
+  if (message?.type === "host-managed-execution-response") {
+    boundedExecution.handleResponse(message as AgentHostManagedExecutionResponse);
+    return;
+  }
   if (message?.type === "host-request") {
     void handleRequest(message);
   }
@@ -205,7 +228,7 @@ async function shutdown(): Promise<void> {
   try {
     const applicationShutdown = application.shutdown();
     const runtimeShutdown = Promise.allSettled([
-      shutdownRunningCommands(),
+      tools.shutdown(),
       shutdownRunningCliAgents(),
     ]);
     await Promise.allSettled([applicationShutdown, runtimeShutdown]);

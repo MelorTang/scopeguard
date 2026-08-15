@@ -6,6 +6,7 @@ import {
   parseCreateArtifactInput,
   parseCreateAgentProfileInput,
   parseCreateTaskInput,
+  parseManagedExecutionRequest,
   parsePublishWorkspaceContextRequest,
   parseResolveApprovalRequest,
   parseSaveRuntimeNodeInput,
@@ -65,6 +66,15 @@ test("validates provider settings at the IPC boundary", () => {
 });
 
 test("rejects malformed permissions and approval decisions", () => {
+  assert.equal(
+    parseCreateAgentProfileInput({
+      projectId: "project",
+      name: "Agent",
+      instructions: "",
+      executionProfile: "auto-approve",
+    }).executionProfile,
+    "auto-approve",
+  );
   assert.throws(
     () => parseCreateAgentProfileInput({
       projectId: "project",
@@ -74,6 +84,15 @@ test("rejects malformed permissions and approval decisions", () => {
       toolPolicy: { runCommands: "always" },
     }),
     /runCommands/,
+  );
+  assert.throws(
+    () => parseCreateAgentProfileInput({
+      projectId: "project",
+      name: "Agent",
+      instructions: "",
+      executionProfile: "unrestricted",
+    }),
+    /executionProfile/,
   );
   assert.throws(
     () => parseResolveApprovalRequest({
@@ -167,4 +186,26 @@ test("accepts only known run event envelopes", () => {
     threadId: "thread",
     at: new Date().toISOString(),
   }), false);
+});
+
+test("validates managed execution requests at the private IPC boundary", () => {
+  const request = parseManagedExecutionRequest({
+    executionId: "execution",
+    projectId: "project",
+    threadId: "thread",
+    runId: "run",
+    workspaceRoot: "C:\\work",
+    command: "echo ready",
+    timeoutMs: 30_000,
+    environment: { PATH: "C:\\Windows\\System32" },
+  });
+  assert.equal(request.command, "echo ready");
+  assert.throws(
+    () => parseManagedExecutionRequest({ ...request, timeoutMs: 999 }),
+    /timeoutMs/,
+  );
+  assert.throws(
+    () => parseManagedExecutionRequest({ ...request, command: " " }),
+    /command/,
+  );
 });

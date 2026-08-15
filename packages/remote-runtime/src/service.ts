@@ -244,6 +244,7 @@ export class RemoteRuntimeService {
             customHeaders: {},
           },
           messages: input.messages,
+          executionProfile: "request-approval",
           toolPolicy: NO_TOOLS_POLICY,
           signal: controller.signal,
           allowUserInput: false,

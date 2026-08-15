@@ -221,6 +221,24 @@ test("runs an approved command in the project root", async () => {
   }
 });
 
+test("bounded command execution fails closed without a Desktop Broker", async () => {
+  const fixture = await createFixture();
+  try {
+    await assert.rejects(
+      new RunCommandTool().execute(
+        { command: process.platform === "win32" ? "cd" : "pwd" },
+        {
+          ...context(fixture.project),
+          executionProfile: "request-approval",
+        },
+      ),
+      /Managed execution is unavailable/,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test(
   "cancellation terminates a SIGTERM-resistant parent and child process",
   { skip: process.platform === "win32" },
@@ -325,6 +343,7 @@ function context(
     projectRoot,
     threadId: "thread",
     runId: "run",
+    executionProfile: "full-access",
     toolPolicy: {
       readFiles: "allow",
       writeFiles: "ask",

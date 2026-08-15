@@ -18,7 +18,7 @@ git diff --check
 
 Required coverage includes:
 
-- Workspace/Agent/Task/Artifact/Handoff/Inbox transitions and schema v1-v6 migration.
+- Workspace/Agent/Task/Artifact/Handoff/Inbox transitions and schema v1-v7 migration.
 - two concurrent Runs with independent cancellation.
 - three-Agent transcript isolation and explicit Context/Handoff sharing.
 - Context and Artifact provenance rejection for forged source relationships.
@@ -31,6 +31,15 @@ Required coverage includes:
 - Desktop shutdown/restart reconnection to a still-running remote Run.
 - IPC payload validation, sender trust, picker authorization, Renderer navigation,
   and Agent-host supervision.
+- managed-execution routing, private Agent Host/Broker IPC, per-execution cancel,
+  durable Profile intent, LPAC lifecycle cleanup, and unknown-effect projection.
+
+The Windows Server 2022 gate is defined in
+`.github/workflows/managed-execution-windows.yml`. It runs the TypeScript gate,
+the complete AppContainer/LPAC denial matrices, runtime Capability and runtime
+pack checks, Provisioner request/startup/service recovery, Desktop parent Job
+cleanup, and the real product `WindowsLpacManagedExecutionAdapter` against the
+installed fixture service.
 
 ## 2. Deterministic Services
 
@@ -139,6 +148,19 @@ Use a separate Workspace opened from a disposable local folder:
    resolves, and the reply is returned to the Agent without entering another Thread.
 8. Send `[tool:command]`; verify the exact command appears in Inbox before execution.
 9. Remove the disposable folder after the test.
+
+On Windows, repeat `run_command` once in each execution profile:
+
+1. Request Approval must wait for the user, then show `准备沙箱`, `沙箱运行中`,
+   and `正在清理` before completion.
+2. Auto Approve must not prompt, but must show the same sandbox stages and policy.
+3. Full Access must run through the explicit current-user path and must not be
+   presented as sandboxed.
+4. Stop command A while command B runs in another pane; B must remain active.
+5. Quit Desktop with a bounded command tree running; every Broker, launcher,
+   Node, CMD, and descendant PID must be absent afterward.
+6. Stop/restart the Provisioner service with prepared ACL state and restart
+   Desktop with a Profile intent; both recovery paths must converge to clean.
 
 ## 8. Restart And Recovery Gate
 

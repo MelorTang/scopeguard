@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "pipeName": "ScopeGuardProvisioner",
+  "serviceClient": "scopeguard-provisioner-service.exe",
+  "launcher": "scopeguard-appcontainer.exe",
+  "lifetimeBroker": "scopeguard-lifetime-broker.exe",
+  "runtimeId": "scopeguard.node",
+  "workspaces": [
+    {
+      "id": "workspace.primary",
+      "root": "C:\\Users\\Example\\ScopeGuardWorkspace"
+    }
+  ]
+}

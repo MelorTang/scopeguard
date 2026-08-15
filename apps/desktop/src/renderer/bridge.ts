@@ -641,6 +641,9 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         instructions: input.instructions,
         providerProfileId: input.providerProfileId ?? null,
         modelOverride: input.modelOverride ?? null,
+        executionProfile: input.executionProfile ?? (
+          input.runtimeKind === "local-cli" ? "full-access" : "request-approval"
+        ),
         toolPolicy: {
           readFiles: input.toolPolicy?.readFiles ?? "allow",
           writeFiles: input.toolPolicy?.writeFiles ?? "ask",
@@ -1365,6 +1368,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
           ? agent.modelOverride ?? runProvider?.defaultModel ?? null
           : null,
       instructions: agent.instructions,
+      executionProfile: agent.executionProfile,
       toolPolicy: clone(agent.toolPolicy),
       cliConfig: agent.runtimeKind === "local-cli" ? clone(agent.cliConfig) : null,
     };
@@ -1531,6 +1535,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       instructions,
       providerProfileId: provider.id,
       modelOverride: null,
+      executionProfile: "request-approval",
       toolPolicy: {
         readFiles: "allow",
         writeFiles: "ask",

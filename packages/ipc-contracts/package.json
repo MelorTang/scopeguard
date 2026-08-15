@@ -15,11 +15,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @scopeguard/domain build && tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @scopeguard/domain build && tsc -p tsconfig.json --noEmit",
+    "build": "pnpm --filter @scopeguard/managed-execution build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @scopeguard/managed-execution build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/*.test.js"
   },
   "dependencies": {
-    "@scopeguard/domain": "workspace:*"
+    "@scopeguard/domain": "workspace:*",
+    "@scopeguard/managed-execution": "workspace:*"
   }
 }

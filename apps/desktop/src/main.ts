@@ -39,6 +39,7 @@ import {
 import type { RunEvent } from "@scopeguard/domain";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
+import { createDesktopExecutionBroker } from "./main/desktop-execution-broker.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
 import { preparePrivateDataDirectory } from "./main/private-data-directory.js";
 import {
@@ -139,6 +140,11 @@ async function startApplication(): Promise<void> {
       safeStorage,
     },
   );
+  const managedExecution = await createDesktopExecutionBroker({
+    resourcesPath: process.resourcesPath,
+    userDataPath,
+    isPackaged: app.isPackaged,
+  });
   host = new AgentHostClient({
     modulePath: join(moduleDir, "agent-host.js"),
     databasePath: join(userDataPath, "scopeguard.db"),
@@ -147,6 +153,7 @@ async function startApplication(): Promise<void> {
       utilityProcess.fork(modulePath, args, options),
     onRunEvent: forwardRunEvent,
     onReady: refreshRendererAfterHostReady,
+    managedExecution,
   });
   registerIpcHandlers(host);
   await host.start();

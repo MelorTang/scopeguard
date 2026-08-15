@@ -41,6 +41,11 @@ import type {
   WorkspaceSnapshot,
   WorkspaceTask,
 } from "@scopeguard/domain";
+import type {
+  ManagedExecutionEvent,
+  ManagedExecutionRequest,
+  ManagedExecutionResult,
+} from "@scopeguard/managed-execution";
 
 export const IPC_CHANNELS = {
   getWorkspaceSnapshot: "scopeguard:workspace:get-snapshot",
@@ -150,6 +155,31 @@ export type AgentHostSecretResponse = {
   error?: string;
 };
 
+export type AgentHostManagedExecutionRequest = {
+  type: "host-managed-execution-request";
+  requestId: string;
+  request: ManagedExecutionRequest;
+};
+
+export type AgentHostManagedExecutionCancel = {
+  type: "host-managed-execution-cancel";
+  requestId: string;
+};
+
+export type AgentHostManagedExecutionEvent = {
+  type: "host-managed-execution-event";
+  requestId: string;
+  event: ManagedExecutionEvent;
+};
+
+export type AgentHostManagedExecutionResponse = {
+  type: "host-managed-execution-response";
+  requestId: string;
+  ok: boolean;
+  result?: ManagedExecutionResult;
+  error?: string;
+};
+
 export type AgentHostShutdownRequest = {
   type: "host-shutdown";
 };
@@ -158,11 +188,15 @@ export type AgentHostToMainMessage =
   | AgentHostResponse
   | AgentHostRunEvent
   | AgentHostReady
-  | AgentHostSecretRequest;
+  | AgentHostSecretRequest
+  | AgentHostManagedExecutionRequest
+  | AgentHostManagedExecutionCancel;
 
 export type MainToAgentHostMessage =
   | AgentHostRequest
   | AgentHostSecretResponse
+  | AgentHostManagedExecutionEvent
+  | AgentHostManagedExecutionResponse
   | AgentHostShutdownRequest;
 
 export type SaveProviderProfileRequest = ProviderProfileInput & {
@@ -333,6 +367,24 @@ export function parseCreateAgentDefinitionInput(
     modelOverride: optionalNullableString(record.modelOverride, "modelOverride"),
     toolPolicy: parsePartialToolPolicy(record.toolPolicy),
   };
+}
+
+function parseExecutionProfile(
+  value: unknown,
+): CreateAgentProfileInput["executionProfile"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    value === "request-approval" ||
+    value === "auto-approve" ||
+    value === "full-access"
+  ) {
+    return value;
+  }
+  return invalid(
+    "executionProfile must be request-approval, auto-approve, or full-access.",
+  );
 }
 
 export function parseCreateAgentInstanceInput(
@@ -546,6 +598,7 @@ export function parseCreateAgentProfileInput(
       "providerProfileId",
     ),
     modelOverride: optionalNullableString(record.modelOverride, "modelOverride"),
+    executionProfile: parseExecutionProfile(record.executionProfile),
     toolPolicy: parsePartialToolPolicy(record.toolPolicy),
     cliConfig: parseCliConfig(record.cliConfig),
   };
@@ -598,6 +651,39 @@ export function parseId(value: unknown, field = "id"): Id {
   return requireNonEmptyString(value, field);
 }
 
+export function parseManagedExecutionRequest(
+  value: unknown,
+): ManagedExecutionRequest {
+  const record = requireRecord(value, "Managed execution request");
+  const timeoutMs = record.timeoutMs;
+  if (
+    typeof timeoutMs !== "number" ||
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1_000 ||
+    timeoutMs > 300_000
+  ) {
+    throw new Error("timeoutMs must be an integer between 1000 and 300000.");
+  }
+  const command = requireNonEmptyString(record.command, "command");
+  if (command.length > 100_000) {
+    throw new Error("command exceeds 100000 characters.");
+  }
+  const environment = parseStringRecord(record.environment, "environment") ?? {};
+  if (Object.keys(environment).length > 64) {
+    throw new Error("environment exceeds 64 entries.");
+  }
+  return {
+    executionId: requireNonEmptyString(record.executionId, "executionId"),
+    projectId: requireNonEmptyString(record.projectId, "projectId"),
+    threadId: requireNonEmptyString(record.threadId, "threadId"),
+    runId: requireNonEmptyString(record.runId, "runId"),
+    workspaceRoot: requireNonEmptyString(record.workspaceRoot, "workspaceRoot"),
+    command,
+    timeoutMs,
+    environment,
+  };
+}
+
 export function isRunEvent(value: unknown): value is RunEvent {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
@@ -611,6 +697,7 @@ export function isRunEvent(value: unknown): value is RunEvent {
       "message-created",
       "tool-call",
       "approval-required",
+      "managed-execution",
     ].includes(record.type) &&
     typeof record.runId === "string" &&
     typeof record.threadId === "string" &&

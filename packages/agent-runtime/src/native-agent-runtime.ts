@@ -1,7 +1,9 @@
 import type {
   AgentToolPolicy,
   ApprovalDecision,
+  ConversationExecutionProfile,
   Id,
+  ManagedExecutionProgress,
   ToolCallStatus,
 } from "@scopeguard/domain";
 
@@ -45,7 +47,9 @@ export type NativeAgentRunInput = {
   runId: Id;
   credentials: ProviderCredentials;
   messages: ModelMessage[];
+  executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
+  onManagedExecutionEvent?: (event: ManagedExecutionProgress) => void;
   signal: AbortSignal;
   maxToolRounds?: number;
   maxOutputTokens?: number;
@@ -359,7 +363,9 @@ function toolContext(input: NativeAgentRunInput): ToolExecutionContext {
     projectRoot: input.projectRoot,
     threadId: input.threadId,
     runId: input.runId,
+    executionProfile: input.executionProfile,
     toolPolicy: input.toolPolicy,
+    onManagedExecutionEvent: input.onManagedExecutionEvent,
     signal: input.signal,
   };
 }

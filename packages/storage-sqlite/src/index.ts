@@ -896,6 +896,9 @@ export class ScopeGuardStore {
       instructions: input.instructions.trim(),
       providerProfileId: input.providerProfileId ?? null,
       modelOverride: input.modelOverride?.trim() || null,
+      executionProfile: input.executionProfile ?? (
+        input.runtimeKind === "local-cli" ? "full-access" : "request-approval"
+      ),
       toolPolicy: mergeToolPolicy(input.toolPolicy),
       cliConfig: input.cliConfig ?? null,
       createdAt: now,
@@ -905,8 +908,9 @@ export class ScopeGuardStore {
     this.#run(
       `INSERT INTO agent_profiles (
         id, project_id, name, runtime_kind, instructions, provider_profile_id,
-        model_override, tool_policy_json, cli_config_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        model_override, execution_profile, tool_policy_json, cli_config_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       profile.id,
       profile.projectId,
       profile.name,
@@ -914,6 +918,7 @@ export class ScopeGuardStore {
       profile.instructions,
       profile.providerProfileId,
       profile.modelOverride,
+      profile.executionProfile,
       JSON.stringify(profile.toolPolicy),
       profile.cliConfig ? JSON.stringify(profile.cliConfig) : null,
       profile.createdAt,
@@ -2267,6 +2272,28 @@ export class ScopeGuardStore {
            WHERE key = 'schema_version'`,
         );
       });
+      currentVersion = 6;
+    }
+
+    if (currentVersion < 7) {
+      this.#transaction(() => {
+        const profileColumns = this.#all("PRAGMA table_info(agent_profiles)");
+        if (!profileColumns.some((column) => column.name === "execution_profile")) {
+          this.#database.exec(
+            `ALTER TABLE agent_profiles
+             ADD COLUMN execution_profile TEXT NOT NULL DEFAULT 'request-approval'`,
+          );
+        }
+        this.#run(
+          `UPDATE agent_profiles
+           SET execution_profile = 'full-access'
+           WHERE runtime_kind = 'local-cli'`,
+        );
+        this.#run(
+          `UPDATE schema_metadata SET value = '7'
+           WHERE key = 'schema_version'`,
+        );
+      });
     }
   }
 
@@ -2489,6 +2516,19 @@ function mapAgentDefinition(row: UnknownRow): AgentDefinition {
   };
 }
 
+function parseExecutionProfile(
+  value: unknown,
+): AgentProfile["executionProfile"] {
+  if (
+    value === "request-approval" ||
+    value === "auto-approve" ||
+    value === "full-access"
+  ) {
+    return value;
+  }
+  return "request-approval";
+}
+
 function mapAgentInstance(row: UnknownRow): AgentInstance {
   return {
     id: asString(row.id),
@@ -2607,6 +2647,7 @@ function mapAgentProfile(row: UnknownRow): AgentProfile {
     instructions: asString(row.instructions),
     providerProfileId: asNullableString(row.provider_profile_id),
     modelOverride: asNullableString(row.model_override),
+    executionProfile: parseExecutionProfile(row.execution_profile),
     toolPolicy: {
       ...mergeToolPolicy(undefined),
       ...parseJsonObject(row.tool_policy_json),

@@ -1,4 +1,4 @@
-export const SCOPEGUARD_SCHEMA_VERSION = 6;
+export const SCOPEGUARD_SCHEMA_VERSION = 7;
 
 export type Id = string;
 export type IsoDateTime = string;
@@ -60,6 +60,28 @@ export type ProviderConnectionResult = {
 
 export type ToolPermission = "allow" | "ask" | "deny";
 
+export type ConversationExecutionProfile =
+  | "request-approval"
+  | "auto-approve"
+  | "full-access";
+
+export type ManagedExecutionStage =
+  | "accepted"
+  | "provisioning"
+  | "running"
+  | "stopping"
+  | "cleaning"
+  | "completed"
+  | "failed";
+
+export type ManagedExecutionProgress = {
+  executionId: Id;
+  stage: ManagedExecutionStage;
+  at: IsoDateTime;
+  stream?: "stdout" | "stderr";
+  chunk?: string;
+};
+
 export type AgentToolPolicy = {
   readFiles: ToolPermission;
   writeFiles: ToolPermission;
@@ -89,6 +111,7 @@ export type AgentProfile = {
   instructions: string;
   providerProfileId: Id | null;
   modelOverride: string | null;
+  executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
   cliConfig: CliAgentConfig | null;
   createdAt: IsoDateTime;
@@ -418,6 +441,7 @@ export type RunConfigSnapshot = {
   providerBaseUrl: string | null;
   model: string | null;
   instructions: string;
+  executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
   cliConfig: CliAgentConfig | null;
 };
@@ -548,6 +572,13 @@ export type RunEvent =
       approval: ToolApproval;
       toolCall: ToolCallRecord;
       at: IsoDateTime;
+    }
+  | {
+      type: "managed-execution";
+      runId: Id;
+      threadId: Id;
+      progress: ManagedExecutionProgress;
+      at: IsoDateTime;
     };
 
 export type WorkspaceSnapshot = {
@@ -620,6 +651,7 @@ export type CreateAgentProfileInput = {
   instructions: string;
   providerProfileId?: Id | null;
   modelOverride?: string | null;
+  executionProfile?: ConversationExecutionProfile;
   toolPolicy?: Partial<AgentToolPolicy>;
   cliConfig?: CliAgentConfig | null;
 };

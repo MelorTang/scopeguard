@@ -17,6 +17,7 @@ import type {
 } from "@scopeguard/agent-runtime";
 import type {
   ApprovalDecision,
+  ConversationExecutionProfile,
   RunEvent,
 } from "@scopeguard/domain";
 import { ScopeGuardStore } from "@scopeguard/storage-sqlite";
@@ -631,6 +632,41 @@ test("persists a command approval and never executes after denial", async () => 
         "The user denied this tool call.",
       ),
       true,
+    );
+  } finally {
+    fixture.store.close();
+  }
+});
+
+test("auto approve skips the prompt but preserves managed execution progress", async () => {
+  const provider = new ToolCallingProvider();
+  const command = new CountingTool();
+  const events: RunEvent[] = [];
+  const fixture = createApplicationFixture(
+    provider,
+    new FakeRegistry([command]),
+    (event) => events.push(event),
+  );
+  try {
+    const workspace = await createWorkspace(
+      fixture.application,
+      "auto-approve",
+    );
+    const run = await fixture.application.startRun({
+      threadId: workspace.thread.id,
+      prompt: "Run without another prompt",
+    });
+    assert.equal((await fixture.application.waitForRun(run.id)).status, "completed");
+    assert.equal(command.executeCount, 1);
+    assert.equal(
+      events.some((event) => event.type === "approval-required"),
+      false,
+    );
+    assert.deepEqual(
+      events
+        .filter((event) => event.type === "managed-execution")
+        .map((event) => event.progress.stage),
+      ["provisioning", "running", "cleaning"],
     );
   } finally {
     fixture.store.close();
@@ -2115,9 +2151,16 @@ class CountingTool implements AgentTool {
 
   async execute(
     _input: Record<string, unknown>,
-    _context: ToolExecutionContext,
+    context: ToolExecutionContext,
   ): Promise<ToolExecutionResult> {
     this.executeCount += 1;
+    for (const stage of ["provisioning", "running", "cleaning"] as const) {
+      context.onManagedExecutionEvent?.({
+        executionId: "test-execution",
+        stage,
+        at: new Date().toISOString(),
+      });
+    }
     return { output: "executed", isError: false };
   }
 }
@@ -2232,7 +2275,10 @@ class ControlledCliRunner implements CliAgentRunner {
   }
 }
 
-async function createWorkspace(application: ScopeGuardApplication) {
+async function createWorkspace(
+  application: ScopeGuardApplication,
+  executionProfile: ConversationExecutionProfile = "request-approval",
+) {
   const provider = await application.saveProviderProfile({
     name: "Test provider",
     protocol: "openai-compatible",
@@ -2248,6 +2294,7 @@ async function createWorkspace(application: ScopeGuardApplication) {
     name: "General",
     instructions: "Be concise.",
     providerProfileId: provider.id,
+    executionProfile,
   });
   const thread = application.createThread({
     projectId: project.id,

@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@scopeguard/agent-runtime": "workspace:*",
-    "@scopeguard/domain": "workspace:*"
+    "@scopeguard/domain": "workspace:*",
+    "@scopeguard/managed-execution": "workspace:*"
   }
 }

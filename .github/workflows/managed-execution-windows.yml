@@ -1,0 +1,158 @@
+name: Managed Execution Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - codex/managed-execution-desktop-slice
+    paths:
+      - .github/workflows/managed-execution-windows.yml
+      - apps/desktop/**
+      - packages/agent-runtime/**
+      - packages/application/**
+      - packages/domain/**
+      - packages/ipc-contracts/**
+      - packages/managed-execution/**
+      - packages/tool-runtime/**
+      - pnpm-lock.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  windows-server-2022:
+    runs-on: windows-2022
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out ScopeGuard
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: corepack enable
+
+      - name: Install dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate TypeScript contracts
+        shell: pwsh
+        run: pnpm typecheck
+
+      - name: Run managed execution and Desktop tests
+        shell: pwsh
+        run: |
+          pnpm --filter @scopeguard/managed-execution test
+          pnpm --filter @scopeguard/tool-runtime test
+          pnpm --filter @scopeguard/desktop test
+
+      - name: Run AppContainer boundary matrix
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/run.ps1 -Mode appcontainer -KeepFixture
+
+      - name: Run LPAC boundary matrix
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/run.ps1 -Mode lpac -KeepFixture
+
+      - name: Minimize runtime Capability manifests
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/runtime-capability-matrix.ps1 -KeepFixture
+
+      - name: Validate bundled Node runtime pack
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/runtime-pack-integration-test.ps1 -KeepFixture
+
+      - name: Validate narrow Sandbox Provisioner contract
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/provisioner-integration-test.ps1 -KeepFixture
+
+      - name: Validate Provisioner startup recovery
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/provisioner-startup-recovery-test.ps1 -KeepFixture
+
+      - name: Validate installed Provisioner service transport
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/provisioner-service-integration-test.ps1 -KeepFixture
+
+      - name: Run lifecycle crash recovery matrix
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/lifecycle-recovery-test.ps1 -KeepFixture
+
+      - name: Run Desktop broker lifecycle matrix
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/desktop-broker-integration-test.ps1 -KeepFixture
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scopeguard-appcontainer-diagnostics
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\policy-parity.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\cleanup-result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\boundary-result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\launcher-diagnostics.log
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\launcher-diagnostics.log.child-output.log
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\*-result.json
+            ${{ runner.temp }}\scopeguard-appcontainer-fixture\workspace\cmd-result.txt
+            ${{ runner.temp }}\scopeguard-lpac-fixture\result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\policy-parity.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\cleanup-result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\boundary-result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\launcher-diagnostics.log.child-output.log
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\*-result.json
+            ${{ runner.temp }}\scopeguard-lpac-fixture\workspace\cmd-result.txt
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\result.json
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\cleanup-result.json
+            ${{ runner.temp }}\scopeguard-runtime-capability-fixture\diagnostics\*.log
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\result.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\cleanup-result.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\metadata\*.json
+            ${{ runner.temp }}\scopeguard-runtime-pack-fixture\diagnostics\*.log
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\result.json
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\state\*\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\launcher-diagnostics.log
+            ${{ runner.temp }}\scopeguard-provisioner-fixture\launcher-diagnostics.log.child-output.log
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\result.json
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\*-ready.json
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\state\*\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\state\*\recovery-tombstone.json
+            ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\result.json
+            ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\recovery-*.json
+            ${{ runner.temp }}\scopeguard-desktop-broker-fixture\result.json
+            ${{ runner.temp }}\scopeguard-desktop-broker-fixture\desktop-parent-ready.json
+            ${{ runner.temp }}\scopeguard-desktop-broker-fixture\desktop-host-ready.json
+            ${{ runner.temp }}\scopeguard-desktop-broker-fixture\lifecycle-*.json
+            ${{ runner.temp }}\scopeguard-desktop-broker-fixture\workspace-*\conversation-result.json
+            ${{ runner.temp }}\scopeguard-desktop-broker-fixture\workspace-*\launcher-diagnostics.log
+
+      - name: Upload Provisioner service diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scopeguard-provisioner-service-diagnostics
+          if-no-files-found: warn
+          path: |
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\result.json
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\product-adapter-result.json
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\prepare-client.json
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\service-diagnostics.log
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\broker-launch-diagnostics.log
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\requests\*.log
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\state\*\lifecycle-ledger.json
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\state\*\recovery-tombstone.json

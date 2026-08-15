@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
@@ -30,14 +29,15 @@ import type {
   AgentToolPolicy,
   ToolPermission,
 } from "@scopeguard/domain";
+import {
+  CurrentUserManagedExecutionAdapter,
+  ManagedExecutionRouter,
+  UnavailableManagedExecutionAdapter,
+} from "@scopeguard/managed-execution";
 
 const MAX_FILE_BYTES = 1_000_000;
-const MAX_COMMAND_OUTPUT_BYTES = 100_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const MAX_COMMAND_TIMEOUT_MS = 300_000;
-const TERMINATION_GRACE_MS = 500;
-const TERMINATION_KILL_WAIT_MS = 2_000;
-const TERMINATION_POLL_MS = 20;
 
 export type ToolCancellationReason = "cancelled" | "timeout" | "shutdown";
 
@@ -64,25 +64,33 @@ export function isToolExecutionCancelledError(
   );
 }
 
-const runningCommands = new Set<ManagedCommand>();
+const defaultExecutionRouter = new ManagedExecutionRouter({
+  bounded: new UnavailableManagedExecutionAdapter(),
+  fullAccess: new CurrentUserManagedExecutionAdapter(),
+});
 
 export async function shutdownRunningCommands(): Promise<void> {
-  await Promise.all(
-    [...runningCommands].map((command) => command.terminate("shutdown")),
-  );
+  await defaultExecutionRouter.shutdown();
 }
 
 export class ScopeGuardToolRegistry implements ToolRegistry {
   readonly #tools: Map<string, AgentTool>;
 
+  readonly #executionRouter: ManagedExecutionRouter;
+
   constructor(
-    tools: AgentTool[] = [
+    tools?: AgentTool[],
+    executionRouter: ManagedExecutionRouter = defaultExecutionRouter,
+  ) {
+    const registeredTools = tools ?? [
       new ReadFileTool(),
       new WriteFileTool(),
-      new RunCommandTool(),
-    ],
-  ) {
-    this.#tools = new Map(tools.map((tool) => [tool.definition.name, tool]));
+      new RunCommandTool(executionRouter),
+    ];
+    this.#executionRouter = executionRouter;
+    this.#tools = new Map(
+      registeredTools.map((tool) => [tool.definition.name, tool]),
+    );
   }
 
   definitions(policy: AgentToolPolicy) {
@@ -93,6 +101,10 @@ export class ScopeGuardToolRegistry implements ToolRegistry {
 
   get(name: string): AgentTool | null {
     return this.#tools.get(name) ?? null;
+  }
+
+  shutdown(): Promise<void> {
+    return this.#executionRouter.shutdown();
   }
 }
 
@@ -295,11 +307,17 @@ export class WriteFileTool implements AgentTool {
 }
 
 export class RunCommandTool implements AgentTool {
+  readonly #executionRouter: ManagedExecutionRouter;
+
+  constructor(executionRouter: ManagedExecutionRouter = defaultExecutionRouter) {
+    this.#executionRouter = executionRouter;
+  }
+
   readonly permission = "runCommands" as const;
   readonly definition = {
     name: "run_command",
     description:
-      "Run a shell command in the current project after the user approves the exact command.",
+      "Run a shell command in the current project under the Conversation execution profile.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -333,7 +351,41 @@ export class RunCommandTool implements AgentTool {
     }
     const projectRoot = await realpath(context.projectRoot);
     const timeoutMs = clampTimeout(input.timeoutMs);
-    return runShellCommand(command, projectRoot, timeoutMs, context.signal);
+    const result = await this.#executionRouter.execute(
+      context.executionProfile,
+      {
+        executionId: randomUUID().replaceAll("-", ""),
+        projectId: context.projectId,
+        threadId: context.threadId,
+        runId: context.runId,
+        workspaceRoot: projectRoot,
+        command,
+        timeoutMs,
+        environment: safeToolEnvironment(),
+      },
+      {
+        signal: context.signal,
+        onEvent: context.onManagedExecutionEvent,
+      },
+    );
+    if (
+      result.status === "cancelled" ||
+      result.status === "timed-out" ||
+      result.status === "shut-down"
+    ) {
+      const reason: ToolCancellationReason = result.status === "timed-out"
+        ? "timeout"
+        : result.status === "shut-down"
+          ? "shutdown"
+          : "cancelled";
+      throw new ToolExecutionCancelledError(reason, result.output);
+    }
+    return {
+      output: result.error
+        ? `${result.output}${result.output ? "\n" : ""}${result.error}`
+        : result.output,
+      isError: result.status === "failed" || result.exitCode !== 0,
+    };
   }
 }
 
@@ -356,7 +408,7 @@ export async function resolveExistingProjectPath(
 
 export function safeToolEnvironment(
   source: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
+): Record<string, string> {
   const names = [
     "PATH",
     "HOME",
@@ -412,261 +464,6 @@ function clampTimeout(value: unknown): number {
   return Math.max(1000, Math.min(value, MAX_COMMAND_TIMEOUT_MS));
 }
 
-async function runShellCommand(
-  command: string,
-  cwd: string,
-  timeoutMs: number,
-  signal: AbortSignal,
-): Promise<ToolExecutionResult> {
-  throwIfCancelled(signal);
-  const shell = resolveShell();
-  const args = process.platform === "win32"
-    ? ["/d", "/s", "/c", command]
-    : ["-lc", command];
-
-  let output = "";
-  let outputBytes = 0;
-  let truncated = false;
-  const child = spawn(shell, args, {
-    cwd,
-    env: safeToolEnvironment(),
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  const commandHandle = new ManagedCommand(child);
-  runningCommands.add(commandHandle);
-
-  const append = (chunk: Buffer) => {
-    if (outputBytes >= MAX_COMMAND_OUTPUT_BYTES) {
-      truncated = true;
-      return;
-    }
-    const remaining = MAX_COMMAND_OUTPUT_BYTES - outputBytes;
-    const accepted = chunk.subarray(0, remaining);
-    output += accepted.toString("utf8");
-    outputBytes += accepted.byteLength;
-    if (accepted.byteLength < chunk.byteLength) {
-      truncated = true;
-    }
-  };
-  child.stdout?.on("data", append);
-  child.stderr?.on("data", append);
-
-  const abort = () => {
-    void commandHandle.terminate("cancelled").catch(() => {});
-  };
-  if (signal.aborted) {
-    abort();
-  } else {
-    signal.addEventListener("abort", abort, { once: true });
-  }
-  const timeout = setTimeout(() => {
-    void commandHandle.terminate("timeout").catch(() => {});
-  }, timeoutMs);
-
-  try {
-    const outcome = await Promise.race([
-      commandHandle.exit.then((exit) => ({ type: "exit" as const, exit })),
-      commandHandle.cancellation.then((reason) => ({
-        type: "cancellation" as const,
-        reason,
-      })),
-    ]);
-
-    if (outcome.type === "cancellation") {
-      await commandHandle.terminate(outcome.reason);
-      throw new ToolExecutionCancelledError(
-        outcome.reason,
-        appendTruncationNotice(output, truncated, cancellationMessage(outcome.reason)),
-      );
-    }
-
-    const detail = outcome.exit.signal
-      ? `Command stopped by signal ${outcome.exit.signal}.`
-      : `Command exited with code ${outcome.exit.code ?? "unknown"}.`;
-    return {
-      output: appendTruncationNotice(output, truncated, detail),
-      isError: outcome.exit.code !== 0,
-    };
-  } finally {
-    clearTimeout(timeout);
-    signal.removeEventListener("abort", abort);
-    runningCommands.delete(commandHandle);
-  }
-}
-
-function resolveShell(): string {
-  if (process.platform === "win32") {
-    return process.env.ComSpec || "cmd.exe";
-  }
-  return process.env.SHELL || "/bin/sh";
-}
-
-type CommandExit = {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-};
-
-class ManagedCommand {
-  readonly exit: Promise<CommandExit>;
-  readonly cancellation: Promise<ToolCancellationReason>;
-
-  readonly #child: ChildProcess;
-  #exited = false;
-  #resolveCancellation!: (reason: ToolCancellationReason) => void;
-  #termination?: Promise<void>;
-  #reason?: ToolCancellationReason;
-
-  constructor(child: ChildProcess) {
-    this.#child = child;
-    this.cancellation = new Promise((resolvePromise) => {
-      this.#resolveCancellation = resolvePromise;
-    });
-    this.exit = new Promise((resolvePromise, reject) => {
-      child.once("error", (error) => {
-        this.#exited = true;
-        reject(error);
-      });
-      child.once("close", (code, signal) => {
-        this.#exited = true;
-        resolvePromise({ code, signal });
-      });
-    });
-  }
-
-  terminate(reason: ToolCancellationReason): Promise<void> {
-    if (!this.#reason) {
-      this.#reason = reason;
-      this.#resolveCancellation(reason);
-    }
-    this.#termination ??= this.#terminate();
-    return this.#termination;
-  }
-
-  async #terminate(): Promise<void> {
-    if (this.#exited || !this.#child.pid) {
-      return;
-    }
-    if (process.platform === "win32") {
-      await terminateWindowsProcessTree(this.#child);
-      return;
-    }
-    await terminatePosixProcessGroup(this.#child);
-  }
-}
-
-async function terminatePosixProcessGroup(child: ChildProcess): Promise<void> {
-  const pid = child.pid;
-  if (!pid) {
-    return;
-  }
-
-  signalPosixProcessGroup(pid, "SIGTERM", child);
-  if (await waitForPosixProcessGroupExit(pid, TERMINATION_GRACE_MS)) {
-    return;
-  }
-
-  signalPosixProcessGroup(pid, "SIGKILL", child);
-  if (await waitForPosixProcessGroupExit(pid, TERMINATION_KILL_WAIT_MS)) {
-    return;
-  }
-  throw new Error(`Failed to terminate command process group ${pid}.`);
-}
-
-function signalPosixProcessGroup(
-  pid: number,
-  signal: NodeJS.Signals,
-  child: ChildProcess,
-): void {
-  try {
-    process.kill(-pid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-      return;
-    }
-    if (!child.kill(signal)) {
-      throw error;
-    }
-  }
-}
-
-async function waitForPosixProcessGroupExit(
-  pid: number,
-  timeoutMs: number,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (isPosixProcessGroupAlive(pid)) {
-    if (Date.now() >= deadline) {
-      return false;
-    }
-    await delay(TERMINATION_POLL_MS);
-  }
-  return true;
-}
-
-function isPosixProcessGroupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
-async function terminateWindowsProcessTree(child: ChildProcess): Promise<void> {
-  const pid = child.pid;
-  if (!pid) {
-    return;
-  }
-
-  await runTaskkill(pid, false);
-  if (await waitForChildExit(child, TERMINATION_GRACE_MS)) {
-    return;
-  }
-  await runTaskkill(pid, true);
-  if (await waitForChildExit(child, TERMINATION_KILL_WAIT_MS)) {
-    return;
-  }
-  throw new Error(`Failed to terminate command process tree ${pid}.`);
-}
-
-async function runTaskkill(pid: number, force: boolean): Promise<void> {
-  const args = ["/pid", String(pid), "/t"];
-  if (force) {
-    args.push("/f");
-  }
-  const taskkill = spawn("taskkill", args, {
-    shell: false,
-    windowsHide: true,
-    stdio: "ignore",
-  });
-  await new Promise<void>((resolvePromise, reject) => {
-    taskkill.once("error", reject);
-    taskkill.once("close", () => resolvePromise());
-  });
-}
-
-async function waitForChildExit(
-  child: ChildProcess,
-  timeoutMs: number,
-): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return true;
-  }
-  return new Promise((resolvePromise) => {
-    const timeout = setTimeout(() => {
-      child.removeListener("close", exited);
-      resolvePromise(false);
-    }, timeoutMs);
-    const exited = () => {
-      clearTimeout(timeout);
-      resolvePromise(true);
-    };
-    child.once("close", exited);
-  });
-}
-
 function throwIfCancelled(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new ToolExecutionCancelledError("cancelled");
@@ -694,21 +491,4 @@ function cancellationMessage(reason: ToolCancellationReason): string {
     case "shutdown":
       return "Command stopped because the tool runtime shut down.";
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-}
-
-function appendTruncationNotice(
-  output: string,
-  truncated: boolean,
-  detail: string,
-): string {
-  const notices = [
-    truncated ? `[Output truncated at ${MAX_COMMAND_OUTPUT_BYTES} bytes.]` : "",
-    detail,
-  ].filter(Boolean);
-  const separator = output && !output.endsWith("\n") ? "\n" : "";
-  return `${output}${separator}${notices.join("\n")}`;
 }

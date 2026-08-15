@@ -334,6 +334,7 @@ function runInput() {
       customHeaders: {},
     },
     messages: [{ role: "user" as const, content: "Hello" }],
+    executionProfile: "request-approval" as const,
     toolPolicy: {
       readFiles: "allow" as const,
       writeFiles: "ask" as const,

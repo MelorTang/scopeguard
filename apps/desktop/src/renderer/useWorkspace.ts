@@ -10,6 +10,7 @@ import type {
   ApprovalDecision,
   ContextRevision,
   CreateAgentProfileInput,
+  ManagedExecutionStage,
   Project,
   ProviderConnectionResult,
   RuntimeConnectionResult,
@@ -83,6 +84,7 @@ export type WorkspaceController = {
   visibleThreads: AgentThread[];
   messagesByThread: Record<string, ThreadMessage[]>;
   streamingByThread: Record<string, string>;
+  executionStageByThread: Record<string, ManagedExecutionStage>;
   requestedSplitCount: number;
   effectiveSplitCount: number;
   maxSplitCount: number;
@@ -148,6 +150,9 @@ export function useWorkspace(): WorkspaceController {
   const [streamingByThread, setStreamingByThread] = useState<
     Record<string, string>
   >({});
+  const [executionStageByThread, setExecutionStageByThread] = useState<
+    Record<string, ManagedExecutionStage>
+  >({});
   const [contextsByProject, setContextsByProject] = useState<
     Record<string, ContextRevision | null>
   >({});
@@ -179,6 +184,7 @@ export function useWorkspace(): WorkspaceController {
         setSnapshot,
         setMessagesByThread,
         setStreamingByThread,
+        setExecutionStageByThread,
       );
       if (
         event.type === "run-status" &&
@@ -789,6 +795,7 @@ export function useWorkspace(): WorkspaceController {
     visibleThreads,
     messagesByThread,
     streamingByThread,
+    executionStageByThread,
     requestedSplitCount: ui.requestedSplitCount,
     effectiveSplitCount,
     maxSplitCount,
@@ -872,7 +879,17 @@ function applyRunEvent(
     React.SetStateAction<Record<string, ThreadMessage[]>>
   >,
   setStreaming: React.Dispatch<React.SetStateAction<Record<string, string>>>,
+  setExecutionStage: React.Dispatch<
+    React.SetStateAction<Record<string, ManagedExecutionStage>>
+  >,
 ): void {
+  if (event.type === "managed-execution") {
+    setExecutionStage((current) => ({
+      ...current,
+      [event.threadId]: event.progress.stage,
+    }));
+    return;
+  }
   if (event.type === "assistant-delta") {
     setStreaming((current) => ({
       ...current,
@@ -904,6 +921,11 @@ function applyRunEvent(
     ].includes(event.status);
     if (terminal) {
       setStreaming((current) => ({ ...current, [event.threadId]: "" }));
+      setExecutionStage((current) => {
+        const next = { ...current };
+        delete next[event.threadId];
+        return next;
+      });
     }
     setSnapshot((current) => {
       if (!current) {

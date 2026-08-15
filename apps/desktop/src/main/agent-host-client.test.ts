@@ -7,6 +7,12 @@ import test from "node:test";
 
 import type { UtilityProcess } from "electron";
 import type { AgentHostRequest } from "@scopeguard/ipc-contracts";
+import type {
+  ManagedExecutionAdapter,
+  ManagedExecutionContext,
+  ManagedExecutionRequest,
+  ManagedExecutionResult,
+} from "@scopeguard/managed-execution";
 
 import {
   AgentHostClient,
@@ -160,6 +166,37 @@ test("forces termination when the Agent host does not shut down in time", async 
   }
 });
 
+test("cancels only the addressed managed execution", async () => {
+  const managedExecution = new ConcurrentManagedExecutionAdapter();
+  const fixture = await createClientFixture({ managedExecution });
+  try {
+    const starting = fixture.client.start();
+    const child = fixture.children[0]!;
+    child.emit("message", { type: "host-ready", interruptedRuns: 0 });
+    await starting;
+
+    child.emit("message", executionRequest("request-a", "execution-a"));
+    child.emit("message", executionRequest("request-b", "execution-b"));
+    await waitFor(() => managedExecution.active.size === 2);
+
+    child.emit("message", {
+      type: "host-managed-execution-cancel",
+      requestId: "request-a",
+    });
+    await waitFor(() => managedExecution.cancelled.has("execution-a"));
+    assert.equal(managedExecution.cancelled.has("execution-b"), false);
+
+    managedExecution.finish("execution-b");
+    await waitFor(() => child.messages.some((message) =>
+      (message as { type?: string; requestId?: string }).type ===
+        "host-managed-execution-response" &&
+      (message as { requestId?: string }).requestId === "request-b"));
+  } finally {
+    await fixture.client.stop();
+    await fixture.cleanup();
+  }
+});
+
 class MockUtilityProcess extends EventEmitter {
   readonly messages: unknown[] = [];
   readonly stderr = null;
@@ -195,6 +232,7 @@ async function createClientFixture(options: {
   shutdownTimeoutMs?: number;
   autoExitOnShutdown?: boolean;
   onReady?: () => void;
+  managedExecution?: ManagedExecutionAdapter;
 } = {}): Promise<{
   children: MockUtilityProcess[];
   client: AgentHostClient;
@@ -226,11 +264,81 @@ async function createClientFixture(options: {
     restartBaseDelayMs: options.restartBaseDelayMs ?? 100,
     restartMaxDelayMs: options.restartMaxDelayMs ?? 200,
     onReady: options.onReady,
+    managedExecution: options.managedExecution,
   });
   return {
     children,
     client,
     cleanup: () => rm(directory, { recursive: true, force: true }),
+  };
+}
+
+function executionRequest(requestId: string, executionId: string) {
+  return {
+    type: "host-managed-execution-request",
+    requestId,
+    request: {
+      executionId,
+      projectId: "project",
+      threadId: `thread-${executionId}`,
+      runId: `run-${executionId}`,
+      workspaceRoot: process.cwd(),
+      command: "echo ready",
+      timeoutMs: 30_000,
+      environment: {},
+    },
+  };
+}
+
+class ConcurrentManagedExecutionAdapter implements ManagedExecutionAdapter {
+  readonly active = new Map<
+    string,
+    { resolve: (result: ManagedExecutionResult) => void }
+  >();
+  readonly cancelled = new Set<string>();
+
+  execute(
+    request: ManagedExecutionRequest,
+    context: ManagedExecutionContext,
+  ): Promise<ManagedExecutionResult> {
+    context.onEvent?.({
+      executionId: request.executionId,
+      stage: "running",
+      at: new Date().toISOString(),
+    });
+    return new Promise((resolve) => {
+      this.active.set(request.executionId, { resolve });
+      context.signal.addEventListener("abort", () => {
+        this.cancelled.add(request.executionId);
+        this.active.delete(request.executionId);
+        resolve(resultFor(request.executionId, "cancelled"));
+      }, { once: true });
+    });
+  }
+
+  finish(executionId: string): void {
+    const active = this.active.get(executionId);
+    if (!active) throw new Error(`Execution is not active: ${executionId}`);
+    this.active.delete(executionId);
+    active.resolve(resultFor(executionId, "exited"));
+  }
+
+  async shutdown(): Promise<void> {}
+}
+
+function resultFor(
+  executionId: string,
+  status: "exited" | "cancelled",
+): ManagedExecutionResult {
+  return {
+    executionId,
+    status,
+    exitCode: status === "exited" ? 0 : null,
+    output: "",
+    outputTruncated: false,
+    termination: "confirmed",
+    cleanup: "clean",
+    effect: status === "exited" ? "confirmed" : "unknown",
   };
 }
 
