@@ -21,12 +21,14 @@ function Invoke-Check {
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][bool]$ShouldPass,
         [Parameter(Mandatory)][scriptblock]$Mutation,
-        [Parameter(Mandatory)][scriptblock]$Restore
+        [Parameter(Mandatory)][scriptblock]$Restore,
+        [string[]]$VerifierArguments = @()
     )
 
     try {
         & $Mutation
-        $output = @(& pwsh.exe -NoLogo -NoProfile -File $verifier -PackageRoot $PackageRoot 2>&1)
+        $output = @(& pwsh.exe -NoLogo -NoProfile -File $verifier `
+            -PackageRoot $PackageRoot @VerifierArguments 2>&1)
         $passed = $LASTEXITCODE -eq 0
         $checks.Add([pscustomobject][ordered]@{
             name = $Name
@@ -44,8 +46,16 @@ $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
 $scriptBytes = [IO.File]::ReadAllBytes($scriptPath)
 $extraPath = Join-Path $PackageRoot "payload\unexpected.txt"
 $linkPath = Join-Path $PackageRoot "payload\scripts-link"
+$streamName = "scopeguard-package-test"
+$streamPath = "${scriptPath}:$streamName"
 
 Invoke-Check -Name "valid-package" -ShouldPass $true -Mutation {} -Restore {}
+Invoke-Check `
+    -Name "unsigned-release-rejected" `
+    -ShouldPass $false `
+    -Mutation {} `
+    -Restore {} `
+    -VerifierArguments @("-RequireTrustedSignature")
 Invoke-Check -Name "extra-file-rejected" -ShouldPass $false -Mutation {
     [IO.File]::WriteAllText($extraPath, "unexpected", [Text.UTF8Encoding]::new($false))
 } -Restore {
@@ -66,6 +76,21 @@ Invoke-Check -Name "manifest-schema-drift-rejected" -ShouldPass $false -Mutation
     )
 } -Restore {
     [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+}
+Invoke-Check -Name "duplicate-manifest-property-rejected" -ShouldPass $false -Mutation {
+    $json = [IO.File]::ReadAllText($manifestPath)
+    [IO.File]::WriteAllText(
+        $manifestPath,
+        $json.Insert(1, '"schemaVersion":1,'),
+        [Text.UTF8Encoding]::new($false)
+    )
+} -Restore {
+    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+}
+Invoke-Check -Name "alternate-data-stream-rejected" -ShouldPass $false -Mutation {
+    [IO.File]::WriteAllText($streamPath, "unexpected", [Text.UTF8Encoding]::new($false))
+} -Restore {
+    Remove-Item -LiteralPath $scriptPath -Stream $streamName -Force -ErrorAction SilentlyContinue
 }
 
 $linkCreated = $false
