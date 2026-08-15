@@ -48,6 +48,12 @@ $StateRoot = Assert-ManagedChildPath `
     -Path $StateRoot `
     -Parent (Join-Path $env:ProgramData "ScopeGuard") `
     -Context "StateRoot"
+$installParent = Join-Path $env:ProgramFiles "ScopeGuard"
+$stateParent = Join-Path $env:ProgramData "ScopeGuard"
+Assert-ManagedExistingDirectoryNotReparse -Path $installParent -Context "Install parent"
+Assert-ManagedExistingDirectoryNotReparse -Path $stateParent -Context "State parent"
+Assert-ManagedExistingDirectoryNotReparse -Path $InstallRoot -Context "InstallRoot"
+Assert-ManagedExistingDirectoryNotReparse -Path $StateRoot -Context "StateRoot"
 if ($PackageRoot.StartsWith("$InstallRoot\", [StringComparison]::OrdinalIgnoreCase)) {
     throw "PackageRoot cannot be inside InstallRoot."
 }
@@ -93,8 +99,10 @@ $payloadCommitted = $false
 $newServiceRegistered = $false
 
 try {
-    Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ((Test-Path -LiteralPath $stageRoot) -or
+        (Test-Path -LiteralPath $backupRoot)) {
+        throw "Installer transaction paths already exist."
+    }
     Copy-ManagedDirectoryContents -Source $PackageRoot -Destination $stageRoot
     Set-ManagedInstallAcl -Path $stageRoot
     $stagedVerifierArguments = @{ PackageRoot = $stageRoot }

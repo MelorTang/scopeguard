@@ -20,6 +20,14 @@ $StateRoot = Assert-ManagedChildPath `
     -Path $StateRoot `
     -Parent (Join-Path $env:ProgramData "ScopeGuard") `
     -Context "StateRoot"
+Assert-ManagedExistingDirectoryNotReparse `
+    -Path (Join-Path $env:ProgramFiles "ScopeGuard") `
+    -Context "Install parent"
+Assert-ManagedExistingDirectoryNotReparse `
+    -Path (Join-Path $env:ProgramData "ScopeGuard") `
+    -Context "State parent"
+Assert-ManagedExistingDirectoryNotReparse -Path $InstallRoot -Context "InstallRoot"
+Assert-ManagedExistingDirectoryNotReparse -Path $StateRoot -Context "StateRoot"
 if ($RegistryRoot -notmatch '^HKLM:\\SOFTWARE\\ScopeGuard\\[A-Za-z0-9._\\-]+$' -or
     $ServiceName -notmatch '^ScopeGuardProvisioner[A-Za-z0-9._-]{0,64}$') {
     throw "RegistryRoot or ServiceName is invalid."
@@ -40,20 +48,19 @@ if ($service -and $service.Status -ne [ServiceProcess.ServiceControllerStatus]::
     Start-Service -Name $ServiceName
     Wait-ManagedServiceState -Name $ServiceName -State "Running"
 }
+$executionStateRoot = Join-Path $StateRoot "executions"
+$stateClean = Test-ManagedStateClean -ExecutionStateRoot $executionStateRoot
+if ($PurgeCleanState -and -not $stateClean) {
+    throw "Managed state is not fully cleaned; installation was preserved."
+}
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
     Remove-ManagedService -Name $ServiceName
 }
-
-$executionStateRoot = Join-Path $StateRoot "executions"
-$stateClean = Test-ManagedStateClean -ExecutionStateRoot $executionStateRoot
 if (Test-Path -LiteralPath $InstallRoot) {
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force
 }
 Remove-Item -LiteralPath $RegistryRoot -Recurse -Force -ErrorAction SilentlyContinue
 if ($PurgeCleanState) {
-    if (-not $stateClean) {
-        throw "Managed state is not fully cleaned; state root was preserved."
-    }
     Remove-Item -LiteralPath $StateRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

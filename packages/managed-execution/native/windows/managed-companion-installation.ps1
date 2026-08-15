@@ -48,6 +48,19 @@ function Assert-ManagedNoReparsePoint {
     return $item
 }
 
+function Assert-ManagedExistingDirectoryNotReparse {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Context
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Assert-ManagedNoReparsePoint -Path $Path -Context $Context
+    if (-not $item.PSIsContainer) {
+        throw "$Context must be a directory."
+    }
+}
+
 function Get-ManagedSha256 {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -218,13 +231,36 @@ function Test-ManagedStateClean {
     param([Parameter(Mandatory)][string]$ExecutionStateRoot)
 
     if (-not (Test-Path -LiteralPath $ExecutionStateRoot)) { return $true }
-    foreach ($directory in Get-ChildItem -LiteralPath $ExecutionStateRoot -Directory -Force) {
+    try {
+        $root = Assert-ManagedNoReparsePoint `
+            -Path $ExecutionStateRoot `
+            -Context "Managed execution state root"
+    }
+    catch { return $false }
+    if (-not $root.PSIsContainer) { return $false }
+    foreach ($directory in Get-ChildItem -LiteralPath $ExecutionStateRoot -Force) {
+        if (-not $directory.PSIsContainer -or
+            ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            return $false
+        }
         if ($directory.Name -notmatch '^[0-9a-f]{32}$') { return $false }
+        $entries = @(Get-ChildItem -LiteralPath $directory.FullName -Force)
+        if ($entries.Count -ne 1 -or
+            $entries[0].Name -cne "lifecycle-ledger.json" -or
+            ($entries[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            return $false
+        }
         $ledgerPath = Join-Path $directory.FullName "lifecycle-ledger.json"
         if (-not (Test-Path -LiteralPath $ledgerPath -PathType Leaf)) { return $false }
         try {
             $ledger = Get-Content -LiteralPath $ledgerPath -Raw | ConvertFrom-Json -Depth 12
-            if ($ledger.state -cne "cleaned") { return $false }
+            if ($ledger.schemaVersion -ne 1 -or
+                $ledger.executionId -cne $directory.Name -or
+                $ledger.profileName -cne "ScopeGuardExec_$($directory.Name)" -or
+                $ledger.state -cne "cleaned" -or
+                @($ledger.lastCleanupErrors).Count -ne 0) {
+                return $false
+            }
         }
         catch { return $false }
     }

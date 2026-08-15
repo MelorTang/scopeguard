@@ -81,6 +81,38 @@ Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyConti
 New-Item -ItemType Directory -Path $workspace -Force | Out-Null
 
 try {
+    $junctionTarget = Join-Path $fixtureRoot "junction-target"
+    New-Item -ItemType Directory -Path $junctionTarget -Force | Out-Null
+    $junctionMarker = Join-Path $junctionTarget "must-survive.txt"
+    Set-Content -LiteralPath $junctionMarker -Value "preserve"
+    New-Item -ItemType Junction -Path $stateRoot -Target $junctionTarget | Out-Null
+    $junctionRejected = $false
+    try {
+        & $installer `
+            -PackageRoot $PackageRoot `
+            -WorkspaceRoot $workspace `
+            -BrokerSid $currentSid `
+            -InstallRoot $installRoot `
+            -StateRoot $stateRoot `
+            -RegistryRoot $registryRoot `
+            -ServiceName $serviceName `
+            -PipeName $pipeName `
+            -AllowUnsignedDevelopmentPackage | Out-Null
+    }
+    catch {
+        $junctionRejected = $_.Exception.Message -match "reparse point"
+    }
+    Add-InstallationCheck `
+        -Name "precreated-state-junction-is-rejected-without-target-mutation" `
+        -Passed (
+            $junctionRejected -and
+            (Test-Path -LiteralPath $junctionMarker -PathType Leaf) -and
+            -not (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) -and
+            -not (Test-Path -LiteralPath $installRoot)
+        ) `
+        -Detail "rejected=$junctionRejected; marker=$(Test-Path $junctionMarker)"
+    Remove-Item -LiteralPath $stateRoot -Force
+
     $installJson = & $installer `
         -PackageRoot $PackageRoot `
         -WorkspaceRoot $workspace `
@@ -238,6 +270,32 @@ try {
             (Get-ManagedSha256 -Path $worker) -ceq $beforeRollbackHash
         ) `
         -Detail "rejected=$unsignedRejected"
+
+    $unexpectedState = Join-Path $stateRoot "executions\unexpected.txt"
+    Set-Content -LiteralPath $unexpectedState -Value "must-preserve"
+    $uncleanRejected = $false
+    try {
+        & $uninstaller `
+            -InstallRoot $installRoot `
+            -StateRoot $stateRoot `
+            -RegistryRoot $registryRoot `
+            -ServiceName $serviceName `
+            -PurgeCleanState | Out-Null
+    }
+    catch {
+        $uncleanRejected = $_.Exception.Message -match "not fully cleaned"
+    }
+    Add-InstallationCheck `
+        -Name "unclean-state-refuses-uninstall-without-removing-installation" `
+        -Passed (
+            $uncleanRejected -and
+            (Test-Path -LiteralPath $unexpectedState -PathType Leaf) -and
+            (Test-Path -LiteralPath $installRoot -PathType Container) -and
+            (Get-Service -Name $serviceName).Status -eq
+                [ServiceProcess.ServiceControllerStatus]::Running
+        ) `
+        -Detail "rejected=$uncleanRejected; statePreserved=$(Test-Path $unexpectedState)"
+    Remove-Item -LiteralPath $unexpectedState -Force
 
     $uninstallJson = & $uninstaller `
         -InstallRoot $installRoot `
