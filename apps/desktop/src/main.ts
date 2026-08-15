@@ -128,6 +128,9 @@ async function stopAgentHostAndQuit(): Promise<void> {
 
 async function startApplication(): Promise<void> {
   app.setName("ScopeGuard");
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.melortang.scopeguard");
+  }
   configureSessionSecurity();
   developmentRendererUrl = resolveDevelopmentRendererUrl({
     configuredUrl: process.env.SCOPEGUARD_RENDERER_URL,

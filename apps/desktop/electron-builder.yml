@@ -1,0 +1,34 @@
+appId: com.melortang.scopeguard
+productName: ScopeGuard
+copyright: Copyright (c) 2026 MelorTang
+electronVersion: 42.0.1
+
+directories:
+  output: ../../release
+
+files:
+  - "**/*"
+
+asar: true
+npmRebuild: false
+compression: maximum
+artifactName: "${productName}-${version}-${arch}-setup.${ext}"
+
+win:
+  executableName: ScopeGuard
+  requestedExecutionLevel: asInvoker
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
+  runAfterFinish: false
+
+publish: null

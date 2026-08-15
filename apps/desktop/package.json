@@ -14,6 +14,9 @@
     "test": "pnpm run build:main && node --test dist/main/*.test.js",
     "dev": "pnpm run build:main && concurrently -k -s first \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env SCOPEGUARD_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
     "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "package:prepare": "pnpm run build && node scripts/prepare-package.mjs && node scripts/verify-package.mjs",
+    "package:win:dir": "pnpm run package:prepare && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --projectDir .package/app --config ../../electron-builder.yml --win --x64 --dir --publish never && node scripts/verify-built-package.mjs",
+    "package:win": "pnpm run package:prepare && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --projectDir .package/app --config ../../electron-builder.yml --win nsis --x64 --publish never",
     "smoke:provider": "node scripts/mock-provider.mjs",
     "start": "electron ."
   },
@@ -34,6 +37,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@scopeguard/agent-runtime": "workspace:*",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
@@ -41,6 +45,8 @@
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "electron": "^42.0.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.25.12",
     "vite": "^6.0.7",
     "wait-on": "^8.0.1"
   }
