@@ -189,6 +189,8 @@ The hard-exit matrix passed 9/9 on Windows 11 25H2 build `26200.9168`, including
 all four transition windows, idempotent restart, replay rejection, and
 malformed-state preservation. This is crash-consistency evidence for the state
 machine, not evidence for the production service channel or filesystem ACLs.
+Windows Server 2022 build `20348` produced the same 9/9 result and retained the
+existing 20/20 request validation and 7/7 lifecycle result.
 
 This validates request semantics, not the production transport. The fixture's
 HMAC key exists only in process memory and its registry/state roots are test

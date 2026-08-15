@@ -227,6 +227,16 @@ channel. The prototype does not make user-writable lifecycle state trustworthy.
 
 ## Passing evidence
 
+[GitHub Actions run 31861864156](https://github.com/MelorTang/scopeguard/actions/runs/31861864156)
+passed the complete Windows Server 2022 matrix from commit `8275fa0`. The new
+Provisioner startup-recovery result records 9/9 checks across all four hard-exit
+windows, four recovered states on both startup scans, and no recovery errors.
+Downloaded evidence contains three strict recovery tombstones plus one cleaned
+ledger with one cleanup attempt and no cleanup error. The same run retained the
+Provisioner's 20/20 request validation and 7/7 real lifecycle result, as well as
+all earlier AppContainer, LPAC, Capability, runtime-pack, lifecycle, and Desktop
+Broker matrices.
+
 [GitHub Actions run 31824339077](https://github.com/MelorTang/scopeguard/actions/runs/31824339077)
 passed the complete Windows Server 2022 matrix from commit `d4317b1`, including
 the new narrow Provisioner's 20 request/registry checks and 7 real lifecycle

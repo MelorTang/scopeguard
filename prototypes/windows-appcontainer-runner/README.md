@@ -142,6 +142,8 @@ tombstone for intent-only recovery, and leaves cleaned ledgers and tombstones
 idempotent. The Windows 11 checkpoint passed all 9 hard-exit, recovery, replay,
 and fail-closed checks across four windows: after intent, after unrecorded
 Profile creation, after recording the Profile, and after ledger persistence.
+Windows Server 2022 CI produced the same 9/9 result while retaining the original
+20/20 request validation and 7/7 Profile/ACL lifecycle result.
 
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
