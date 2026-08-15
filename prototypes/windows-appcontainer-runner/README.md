@@ -168,9 +168,13 @@ The integration fixture installs the service and runtime under a protected
 `ProgramData` root, exercises Broker-owned Profile launch, service ACL
 prepare/cleanup and restart recovery, rejects a copied client image and malformed
 request, and proves pinned Worker tampering fails before dispatch. This remains
-a prototype: production still requires
-signed service/Broker/runtime distribution, a real installer and upgrade model,
-the Desktop Broker adapter, and Windows 10 x64 validation.
+a prototype. The Windows Server 2022 fixture passed all 13 checks in
+[GitHub Actions run 31864779339](https://github.com/MelorTang/scopeguard/actions/runs/31864779339).
+The image pin does not stop another same-user process from launching the
+legitimate installed client, so production still requires a Broker-only session
+or handle bootstrap, signed service/Broker/runtime distribution, a real
+installer and upgrade model, the Desktop Broker adapter, and Windows 10 x64
+validation.
 
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the

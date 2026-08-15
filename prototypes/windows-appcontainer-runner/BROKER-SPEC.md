@@ -121,8 +121,10 @@ general-purpose commands. It must enforce all of these constraints itself:
   canonical ancestors are rejected before any mutation.
 - Every `icacls` result is verified from the resulting DACL. Exit code zero is
   insufficient.
-- The ledger and recovery directory are writable only by the Desktop user,
-  provisioner identity, and administrators.
+- The service ACL ledger and recovery directory are writable only by the
+  provisioner identity and administrators. The Broker keeps its separate
+  per-user Profile intent in a current-user state root that is not accepted as
+  privileged ACL input.
 
 Production should bundle managed runtimes under a fixed ScopeGuard-owned root
 and provision its traversal/read-execute ACL at install time. Recursively
@@ -228,10 +230,13 @@ in a kill-on-close Job with a fixed timeout and bounded response.
 Authentication/framing failures close the pipe without a diagnostic oracle.
 
 This closes the prototype's shared-secret bootstrap problem, but image hashing
-is not a substitute for code signing. Production must install signed service,
-Broker, launcher, Worker, and runtime artifacts below protected roots, define
-upgrade/rollback and service recovery, and connect the client mode to the real
-Execution Broker rather than exposing it as a test executable.
+is not a substitute for code signing or Broker possession. Another process with
+the registered Desktop user's token can launch the legitimate installed client
+and satisfy the current image check. Production must add a Broker-only session
+or inherited-handle bootstrap, install signed service, Broker, launcher, Worker,
+and runtime artifacts below protected roots, define upgrade/rollback and
+service recovery, and connect the client mode to the real Execution Broker
+rather than exposing it as a test executable.
 
 ## Capability and metadata threat decision
 

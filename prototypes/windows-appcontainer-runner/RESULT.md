@@ -220,12 +220,58 @@ On Windows 11 25H2 build `26200.9168`, all 9 checks passed:
   deleting the deliberately retained Profile.
 
 The same machine reran the existing Provisioner matrix after this change and
-retained its 20/20 request/registry and 7/7 real lifecycle result. Production
-still requires an installed service to invoke recovery before accepting
-requests, an administrator-owned state root, and an OS-authenticated Broker
-channel. The prototype does not make user-writable lifecycle state trustworthy.
+retained its 20/20 request/registry and 7/7 real lifecycle result. At this
+checkpoint, an installed service, administrator-owned state root, and
+OS-authenticated Broker channel were still missing. The subsequent service
+checkpoint below moves ACL recovery into that protected service boundary.
+
+## Installed Provisioner service checkpoint
+
+Commit `edcce7e` installs a native SCM service under a protected `ProgramData`
+fixture and replaces the test HMAC envelope with a local named pipe. The service
+runs as LocalSystem, completes ACL-ledger recovery before reporting
+`SERVICE_RUNNING`, permits only LocalSystem and the registered Desktop user SID
+on the pipe, and verifies the connected client process image by canonical path
+and SHA-256 before dispatch. It re-verifies every pinned Worker, script,
+registry, runtime verifier, and launcher artifact for each request.
+
+The service boundary is intentionally ACL-only. The current-user Broker creates
+and deletes the AppContainer Profile; LocalSystem derives the matching Package
+SID from the execution ID and owns a separate protected ACL ledger. This avoids
+creating the Profile below LocalSystem's `systemprofile`, which cannot be used
+as the interactive Broker user's Profile. Service startup recovery removes
+interrupted ACLs without deleting the Broker-owned Profile.
+
+[GitHub Actions run 31864779339](https://github.com/MelorTang/scopeguard/actions/runs/31864779339)
+passed all 13 installed-service checks on Windows Server 2022 build `20348`:
+
+- the SCM service and Worker retained LocalSystem identity;
+- the Desktop user had read/execute access to installed client files and no
+  access rule on the service state root;
+- the pinned client prepared ACLs and the Broker-owned Profile launched the
+  bundled Node runtime in LPAC with the exact `registryRead` Capability;
+- malformed payload fields, a copied client image, and pinned Worker tampering
+  were rejected before privileged dispatch;
+- explicit cleanup and service-restart recovery removed every recorded ACL,
+  preserved the Broker Profile for user-context deletion, and left the request
+  spool empty.
+
+The full workflow also retained all earlier AppContainer, LPAC, runtime,
+Provisioner, startup-recovery, crash-recovery, and Desktop Broker matrices.
+This result remains `productionReady=false`. Image path and digest pinning does
+not prevent another process running as the same Desktop user from launching the
+legitimate installed client. Production still needs a Broker-only session or
+handle bootstrap, signed distribution, installer upgrade/recovery behavior,
+concurrent request handling, and supported-client validation.
 
 ## Passing evidence
+
+[GitHub Actions run 31864779339](https://github.com/MelorTang/scopeguard/actions/runs/31864779339)
+passed the complete Windows Server 2022 matrix from commit `edcce7e`, including
+13/13 installed-service transport, identity, tamper, Broker-Profile launch,
+cleanup, and restart-recovery checks. Downloaded service evidence records three
+cleaned ACL ledgers, no retained request spool, and no service request contents
+in diagnostics.
 
 [GitHub Actions run 31861864156](https://github.com/MelorTang/scopeguard/actions/runs/31861864156)
 passed the complete Windows Server 2022 matrix from commit `8275fa0`. The new
@@ -309,14 +355,15 @@ The run verified:
    their recorded versions/digests, signatures, installer ACLs, and pinned
    manifests. The copied-Node checkpoint still requires documented
    `registryRead` exposure and is not a production distribution artifact.
-3. Move the passing Provisioner request/state contract behind an installed
-   Windows service with an OS-authenticated Broker channel, protected
-   registry/state roots, and signed identities. Wire the now-passing pre-profile
-   intent/startup-recovery protocol into service startup before accepting
-   requests. The in-memory HMAC fixture is not the production trust boundary.
+3. Replace the installed service prototype's same-user/image-pin check with a
+   Broker-only session or inherited-handle bootstrap that a renderer cannot
+   invoke by launching the legitimate client. Ship signed service, Broker,
+   launcher, Worker, and runtime artifacts through an installer-owned
+   upgrade/rollback model, then rerun the installed-service matrix.
 4. Adapt the passing Broker lifecycle matrix to the eventual Desktop module
-   interface. The native prototype proves parent-exit and concurrent-Run Job
-   behavior, but product code remains disabled while Wayfinder decisions are
-   open.
+   interface, persist and recover the Broker user's Profile intents, and define
+   bounded concurrent service dispatch. The native prototype proves parent-exit
+   and concurrent-Run Job behavior, but product code remains disabled while
+   Wayfinder decisions are open.
 
 Until these gates pass, Request Approval and Auto Approve must reject arbitrary local execution rather than fall back to a normal process.
