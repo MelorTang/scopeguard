@@ -789,10 +789,10 @@ void Serve() {
             break;
         }
         try {
+            const auto request = ReadFrame(pipe.get(), kMaximumRequestBytes);
+            LogDiagnostic("bounded request frame read");
             VerifyClient(pipe.get());
             LogDiagnostic("client identity verified");
-            const auto request = ReadFrame(pipe.get(), kMaximumRequestBytes);
-            LogDiagnostic("request frame accepted");
             const auto response = RunWorker(&request, false);
             LogDiagnostic("request worker completed");
             WriteFrame(pipe.get(), response);

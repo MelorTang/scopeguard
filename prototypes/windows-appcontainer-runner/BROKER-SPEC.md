@@ -208,7 +208,9 @@ local-only named pipe. The pipe DACL permits only LocalSystem and the registered
 Desktop user SID. After connection, the service impersonates the client to
 verify its token user, resolves the named-pipe client process ID, and requires
 the canonical client image path and SHA-256 to match the administrator-installed
-Broker image.
+Broker image. The server first reads one length-bounded frame because Windows
+establishes the impersonation context from the last pipe read; it does not parse
+or dispatch that frame until client authentication succeeds.
 
 The service re-verifies SHA-256 pins for PowerShell, the service Worker,
 Provisioner and lifecycle scripts, runtime-pack verifier, registry, and native
