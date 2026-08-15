@@ -12,6 +12,7 @@ output/
 *.tsbuildinfo
 apps/desktop/.package/
 apps/desktop/release/
+packages/managed-execution/native/windows/release/
 
 # Legacy local runtime data is not imported by Desktop v2.
 .scopeguard/

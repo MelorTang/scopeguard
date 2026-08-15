@@ -1,0 +1,60 @@
+name: Windows Managed Companion Package
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-managed-companion.yml"
+      - "packages/managed-execution/native/windows/**"
+      - "package.json"
+  push:
+    branches:
+      - "main"
+      - "codex/windows-managed-companion-package"
+    paths:
+      - ".github/workflows/windows-managed-companion.yml"
+      - "packages/managed-execution/native/windows/**"
+      - "package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Build closed managed companion payload
+        shell: pwsh
+        run: pwsh -File packages/managed-execution/native/windows/build-managed-companion.ps1
+      - name: Run package rejection matrix
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem packages/managed-execution/native/windows/release -Directory |
+            Select-Object -First 1 -ExpandProperty FullName
+          pwsh -File packages/managed-execution/native/windows/managed-companion-package-test.ps1 `
+            -PackageRoot $root
+      - name: Verify fresh archive extraction
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem packages/managed-execution/native/windows/release/*.zip |
+            Select-Object -First 1 -ExpandProperty FullName
+          $extractRoot = Join-Path $env:RUNNER_TEMP "scopeguard-managed-companion"
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
+          $root = Get-ChildItem $extractRoot -Directory |
+            Select-Object -First 1 -ExpandProperty FullName
+          pwsh -File packages/managed-execution/native/windows/verify-managed-companion.ps1 `
+            -PackageRoot $root
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scopeguard-windows-managed-companion
+          path: |
+            packages/managed-execution/native/windows/release/*.zip
+            packages/managed-execution/native/windows/release/*/managed-companion-manifest.json
+          if-no-files-found: error
+          retention-days: 7

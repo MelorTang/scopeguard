@@ -12,6 +12,7 @@
     "start": "pnpm --filter @scopeguard/desktop start",
     "package:win:dir": "pnpm --filter @scopeguard/desktop package:win:dir",
     "package:win": "pnpm --filter @scopeguard/desktop package:win",
+    "package:managed:win": "pwsh -File packages/managed-execution/native/windows/build-managed-companion.ps1",
     "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider",
     "runtime:build": "pnpm --filter @scopeguard/remote-runtime build",
     "runtime:start": "pnpm --filter @scopeguard/remote-runtime start"

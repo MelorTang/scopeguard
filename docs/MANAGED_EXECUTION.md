@@ -82,6 +82,30 @@ Unregistered local folders can still be opened and used for ordinary UI and
 Full Access work, but bounded `run_command` fails closed until registration is
 present in both the service registry and Broker manifest.
 
+The current per-user Desktop NSIS installer remains separate from the machine
+trust boundary. It does not contain managed-execution resources. The companion
+package built by `pnpm package:managed:win` is a development distribution input
+for a future elevated machine installer, not a user-writable Desktop resource.
+Its manifest fixes these deployment rules:
+
+- immutable binaries and runtimes belong below
+  `%ProgramFiles%\ScopeGuard\ManagedExecution`;
+- mutable service state belongs below
+  `%ProgramData%\ScopeGuard\ManagedExecution`;
+- the Desktop user receives read/execute access, never write access, to the
+  installation root;
+- the Provisioner service identity remains LocalSystem;
+- generated service configuration, Workspace registrations, state, requests,
+  diagnostics, and Broker Profile intents are not package payload files.
+
+The closed payload contains the native service/client, LPAC launcher, lifetime
+Broker, Provisioner scripts, copied Node runtime, and the complete PowerShell
+runtime required by the service Worker. Every payload path, size, and SHA-256 is
+bound into one content digest. Verification rejects unlisted files, content or
+schema changes, duplicate JSON fields, reparse points, alternate data streams,
+and multiple hard links. Release-mode verification also rejects the unsigned
+development artifact.
+
 ## Validation Evidence
 
 On 2026-08-15, the source-level Desktop adapter passed the installed-service
@@ -113,10 +137,36 @@ omits the managed-execution native resources. It proves the Electron application
 lifecycle only; it is not a packaged LPAC end-to-end result and does not change
 the bounded profiles' fail-closed status.
 
+The machine companion payload is independently repeatable as well. Windows
+Server 2022 run
+[31890924391](https://github.com/MelorTang/scopeguard/actions/runs/31890924391)
+built and freshly extracted a 996-file closed payload containing Node `24.18.1`
+and PowerShell `7.6.4`. The uncompressed payload was 390,140,217 bytes. All
+all 9 package checks passed: one valid package plus release-signature, extra
+file, payload tamper, schema drift, duplicate property, alternate-data-stream,
+external-hard-link, and reparse-point rejection cases. The official Node and
+PowerShell entrypoints had valid Authenticode signatures; the three ScopeGuard
+native entrypoints were intentionally unsigned and therefore remain blocked by
+release verification. All five native/runtime entrypoints also passed direct
+AMD64 PE-header validation without executing package code during verification.
+
+Windows 11 build `26200.9168` repeated the build with Node `24.19.0`, verified
+the same 996-file contract and 9/9 package matrix, then expanded the ZIP
+into a fresh directory and reproduced its content digest. This is supply-chain
+and layout evidence only. No service was installed and no bounded execution
+path was enabled from this artifact.
+
 ## Remaining Release Gates
 
-- Signed ScopeGuard service, Broker, launcher, and immutable Node runtime pack.
-- Installer-owned roots plus upgrade, rollback, repair, and uninstall recovery.
+- Signed ScopeGuard service, lifetime Broker, launcher, and signed companion
+  archive/installer. Node and PowerShell runtimes are now included but the
+  ScopeGuard native entrypoints remain unsigned.
+- Broker-only authenticated session or inherited-handle bootstrap for the
+  Provisioner transport.
+- Elevated machine installer for the fixed Program Files/ProgramData layout,
+  plus upgrade, rollback, repair, and uninstall recovery.
+- Desktop discovery and validation of the installed machine companion without
+  trusting the per-user application directory.
 - A clean packaged Windows 11 Desktop end-to-end run after signing.
 - Windows 10 x64 compatibility matrix.
 - Productized dynamic Workspace registration without broadening execution requests.
