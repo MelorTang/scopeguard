@@ -18,7 +18,8 @@
     "build": "pnpm --filter @scopeguard/domain build && tsc -p tsconfig.json",
     "typecheck": "pnpm --filter @scopeguard/domain build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/*.test.js",
-    "package:companion:win": "pwsh -File native/windows/build-managed-companion.ps1"
+    "package:companion:win": "pwsh -File native/windows/build-managed-companion.ps1",
+    "test:companion-install:win": "pwsh -File native/windows/managed-companion-installation-test.ps1"
   },
   "dependencies": {
     "@scopeguard/domain": "workspace:*"

@@ -142,7 +142,7 @@ Server 2022 run
 [31890924391](https://github.com/MelorTang/scopeguard/actions/runs/31890924391)
 built and freshly extracted a 996-file closed payload containing Node `24.18.1`
 and PowerShell `7.6.4`. The uncompressed payload was 390,140,217 bytes. All
-all 9 package checks passed: one valid package plus release-signature, extra
+9 package checks passed: one valid package plus release-signature, extra
 file, payload tamper, schema drift, duplicate property, alternate-data-stream,
 external-hard-link, and reparse-point rejection cases. The official Node and
 PowerShell entrypoints had valid Authenticode signatures; the three ScopeGuard

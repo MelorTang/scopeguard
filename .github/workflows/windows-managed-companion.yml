@@ -6,14 +6,23 @@ on:
     paths:
       - ".github/workflows/windows-managed-companion.yml"
       - "packages/managed-execution/native/windows/**"
+      - "packages/managed-execution/src/**"
+      - "packages/managed-execution/package.json"
+      - "packages/domain/**"
+      - "pnpm-lock.yaml"
       - "package.json"
   push:
     branches:
       - "main"
       - "codex/windows-managed-companion-package"
+      - "codex/windows-managed-installer"
     paths:
       - ".github/workflows/windows-managed-companion.yml"
       - "packages/managed-execution/native/windows/**"
+      - "packages/managed-execution/src/**"
+      - "packages/managed-execution/package.json"
+      - "packages/domain/**"
+      - "pnpm-lock.yaml"
       - "package.json"
 
 permissions:
@@ -22,13 +31,20 @@ permissions:
 jobs:
   package:
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.0.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm --filter @scopeguard/managed-execution build
       - name: Build closed managed companion payload
         shell: pwsh
         run: pwsh -File packages/managed-execution/native/windows/build-managed-companion.ps1
@@ -39,6 +55,15 @@ jobs:
             Select-Object -First 1 -ExpandProperty FullName
           pwsh -File packages/managed-execution/native/windows/managed-companion-package-test.ps1 `
             -PackageRoot $root
+      - name: Run elevated machine installation lifecycle
+        shell: pwsh
+        run: |
+          $root = Get-ChildItem packages/managed-execution/native/windows/release -Directory |
+            Select-Object -First 1 -ExpandProperty FullName
+          $report = Join-Path $env:RUNNER_TEMP "managed-companion-installation-result.json"
+          pwsh -File packages/managed-execution/native/windows/managed-companion-installation-test.ps1 `
+            -PackageRoot $root `
+            -ReportPath $report
       - name: Verify fresh archive extraction
         shell: pwsh
         run: |
@@ -56,5 +81,6 @@ jobs:
           path: |
             packages/managed-execution/native/windows/release/*.zip
             packages/managed-execution/native/windows/release/*/managed-companion-manifest.json
+            ${{ runner.temp }}/managed-companion-installation-result.json
           if-no-files-found: error
           retention-days: 7
