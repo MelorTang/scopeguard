@@ -232,7 +232,8 @@ function Invoke-SandboxLifecycleRecovery {
         [string]$LedgerPath,
         [Parameter(Mandatory)]
         [string]$Launcher,
-        [int]$ProfileDeleteAttempts = 3
+        [int]$ProfileDeleteAttempts = 3,
+        [switch]$SkipProfileDelete
     )
 
     $ledger = Read-SandboxLifecycleLedger -Path $LedgerPath
@@ -279,7 +280,7 @@ function Invoke-SandboxLifecycleRecovery {
         Write-SandboxLifecycleLedger -Path $LedgerPath -Ledger $ledger
     }
 
-    if ($errors.Count -eq 0) {
+    if ($errors.Count -eq 0 -and -not $SkipProfileDelete) {
         $profileDeleted = $false
         for ($attempt = 1; $attempt -le $ProfileDeleteAttempts; $attempt++) {
             $output = (& $Launcher delete --name $ledger.profileName 2>&1 | Out-String).Trim()
@@ -309,7 +310,12 @@ function Invoke-SandboxLifecycleRecovery {
         profileName = $ledger.profileName
         packageSid = $ledger.packageSid
         profilePath = $ledger.profilePath
-        profilePathExists = Test-Path -LiteralPath $ledger.profilePath
+        profilePathExists = if ($ledger.profilePath) {
+            Test-Path -LiteralPath $ledger.profilePath
+        }
+        else {
+            $false
+        }
         errors = @($errors)
         aclGrants = $ledger.aclGrants
     }

@@ -736,7 +736,7 @@ std::wstring RequireValue(const std::vector<std::wstring>& args, std::size_t& in
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc < 2) {
-            throw std::runtime_error("usage: scopeguard-appcontainer <profile|profile-path|delete|run> ...");
+            throw std::runtime_error("usage: scopeguard-appcontainer <profile|profile-path|sid|delete|run> ...");
         }
         std::vector<std::wstring> args(argv + 1, argv + argc);
 
@@ -759,6 +759,19 @@ int wmain(int argc, wchar_t** argv) {
                 "DeriveAppContainerSidFromAppContainerName");
             Sid sid(raw_sid);
             std::wcout << GetProfilePath(sid.get()) << L"\n";
+            return 0;
+        }
+
+        if (args[0] == L"sid") {
+            if (args.size() != 3 || args[1] != L"--name") {
+                throw std::runtime_error("usage: sid --name <name>");
+            }
+            PSID raw_sid = nullptr;
+            CheckHresult(
+                DeriveAppContainerSidFromAppContainerName(args[2].c_str(), &raw_sid),
+                "DeriveAppContainerSidFromAppContainerName");
+            Sid sid(raw_sid);
+            std::wcout << SidToString(sid.get()) << L"\n";
             return 0;
         }
 

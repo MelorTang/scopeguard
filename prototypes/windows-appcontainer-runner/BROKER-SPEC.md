@@ -11,11 +11,13 @@ Windows 10 x64 validation and a production implementation remain release gates.
 The production design uses two modules rather than one elevated Agent host.
 
 1. The unprivileged **Execution Broker** compiles an immutable Run policy,
+   owns the current user's AppContainer Profile intent/create/delete lifecycle,
    launches verified LPAC processes, owns their Job Objects, streams bounded
    output, cancels executions, and confirms process-tree termination.
-2. The narrow elevated **Sandbox Provisioner** creates and deletes AppContainer
-   profiles and applies or removes verified ACL entries through a durable
-   lifecycle ledger. It never executes Agent commands and never receives
+2. The narrow elevated **Sandbox ACL Provisioner** derives the same Package SID
+   from the execution identity and applies or removes verified ACL entries
+   through its own durable lifecycle ledger. It never executes Agent commands
+   and never receives
    prompts, document contents, provider keys, MCP credentials, or arbitrary
    environment variables.
 
@@ -37,8 +39,8 @@ Desktop main (current user)
                     +-- inner kill-on-close Job B
                           +-- command and descendants
 
-Sandbox Provisioner (narrow elevated process)
-  +-- profile and exact-SID ACL lifecycle only
+Sandbox ACL Provisioner (LocalSystem service)
+  +-- exact-SID ACL lifecycle only
 ```
 
 The Broker opens a synchronization handle to Desktop main. Parent exit is an OS
@@ -87,9 +89,12 @@ accepted -> provisioning -> prepared -> launching -> running
          -> stopping -> process-tree-cleared -> cleaning -> cleaned
 ```
 
-Every ACL mutation is recorded before application. Cleanup removes only ACEs
-for the recorded Package SID, verifies absence, then deletes and verifies the
-profile. Startup calls `recover()` before accepting new bounded executions.
+Every ACL mutation is recorded before application. Service cleanup removes only
+ACEs for the recorded Package SID and verifies absence. Broker cleanup separately
+deletes and verifies the current user's Profile. Service startup recovers ACL
+ledgers before opening its request pipe; Broker startup recovers per-user Profile
+intents before accepting new bounded executions. Both ledgers must converge
+before the overall execution is `cleaned`.
 
 A final result includes exit status, timeout/cancellation reason, policy hash,
 output-spill reference, process-tree termination confirmation, cleanup status,
@@ -215,10 +220,12 @@ or dispatch that frame until client authentication succeeds.
 The service re-verifies SHA-256 pins for PowerShell, the service Worker,
 Provisioner and lifecycle scripts, runtime-pack verifier, registry, and native
 launcher before every dispatch. The LocalSystem Worker receives one raw payload
-through a service-owned spool, applies the same exact request schema, and can
-only call prepare or cleanup. Worker processes run in a kill-on-close Job with a
-fixed timeout and bounded response. Authentication/framing failures close the
-pipe without a diagnostic oracle.
+through a service-owned spool, applies the same exact request schema, derives the
+Package SID from the execution ID, and can only prepare or clean exact ACL state.
+The user's Broker creates/deletes the Profile and verifies its own Profile path;
+LocalSystem never creates a Profile under `systemprofile`. Worker processes run
+in a kill-on-close Job with a fixed timeout and bounded response.
+Authentication/framing failures close the pipe without a diagnostic oracle.
 
 This closes the prototype's shared-secret bootstrap problem, but image hashing
 is not a substitute for code signing. Production must install signed service,

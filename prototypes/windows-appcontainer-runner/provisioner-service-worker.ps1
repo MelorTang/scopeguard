@@ -42,7 +42,7 @@ $serviceIdentity = [ordered]@{
 try {
     . $ProvisionerScript
     if ($Operation -ceq "recover") {
-        $recovery = Invoke-ProvisionerStartupRecovery `
+        $recovery = Invoke-ProvisionerAclStartupRecovery `
             -StateRoot $StateRoot `
             -Launcher $Launcher
         if (-not $recovery.passed) {
@@ -70,14 +70,14 @@ try {
     $requestBytes = [IO.File]::ReadAllBytes($requestItem.FullName)
     $request = Read-ProvisionerPayload -PayloadBytes $requestBytes
     $result = if ($request.operation -ceq "prepare") {
-        Invoke-ProvisionerPrepare `
+        Invoke-ProvisionerAclPrepare `
             -Request $request `
             -RegistryPath $RegistryPath `
             -StateRoot $StateRoot `
             -Launcher $Launcher
     }
     else {
-        Invoke-ProvisionerCleanup `
+        Invoke-ProvisionerAclCleanup `
             -Request $request `
             -StateRoot $StateRoot `
             -Launcher $Launcher

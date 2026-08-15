@@ -1186,3 +1186,291 @@ function Invoke-ProvisionerCleanup {
         errors = @($result.errors)
     }
 }
+
+function Assert-ProvisionerAclLedger {
+    param(
+        [Parameter(Mandatory)][object]$Ledger,
+        [Parameter(Mandatory)][string]$ExecutionId
+    )
+
+    Assert-ProvisionerLifecycleIdentity `
+        -Ledger $Ledger `
+        -ExecutionId $ExecutionId
+    if ($Ledger.PSObject.Properties.Name -notcontains "profileOwner" -or
+        $Ledger.profileOwner -cne "broker-user") {
+        throw "Provisioner service ledger is not Broker-owned Profile state."
+    }
+}
+
+function Invoke-ProvisionerAclRecovery {
+    param(
+        [Parameter(Mandatory)][string]$LedgerPath,
+        [Parameter(Mandatory)][string]$Launcher
+    )
+
+    return Invoke-SandboxLifecycleRecovery `
+        -LedgerPath $LedgerPath `
+        -Launcher $Launcher `
+        -SkipProfileDelete
+}
+
+function Invoke-ProvisionerAclStartupRecovery {
+    param(
+        [Parameter(Mandatory)][string]$StateRoot,
+        [Parameter(Mandatory)][string]$Launcher
+    )
+
+    Assert-ProvisionerElevated
+    $resolvedStateRoot = Resolve-ProvisionerRegisteredPath `
+        -Path $StateRoot `
+        -Context "Provisioner ACL state root" `
+        -Directory
+    $items = [System.Collections.Generic.List[object]]::new()
+    $errors = [System.Collections.Generic.List[string]]::new()
+    foreach ($directory in Get-ChildItem -LiteralPath $resolvedStateRoot -Directory -Force) {
+        $executionId = $directory.Name
+        if ($executionId -notmatch '^[0-9a-f]{32}$' -or
+            ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $errors.Add("Provisioner ACL state directory is invalid: $($directory.FullName)")
+            continue
+        }
+        $paths = Get-ProvisionerExecutionPaths `
+            -StateRoot $resolvedStateRoot `
+            -ExecutionId $executionId
+        try {
+            $entries = @(Get-ChildItem -LiteralPath $directory.FullName -Force)
+            if ($entries.Count -ne 1 -or
+                $entries[0].Name -cne "lifecycle-ledger.json") {
+                throw "Provisioner ACL state directory must contain exactly one lifecycle ledger."
+            }
+            $ledger = Read-SandboxLifecycleLedger -Path $paths.ledgerPath
+            Assert-ProvisionerAclLedger `
+                -Ledger $ledger `
+                -ExecutionId $executionId
+            if ($ledger.state -ne "cleaned") {
+                $recovery = Invoke-ProvisionerAclRecovery `
+                    -LedgerPath $paths.ledgerPath `
+                    -Launcher $Launcher
+                if (-not $recovery.passed) {
+                    throw "Provisioner ACL recovery failed."
+                }
+            }
+            $cleanedLedger = Read-SandboxLifecycleLedger -Path $paths.ledgerPath
+            $items.Add([pscustomobject][ordered]@{
+                executionId = $executionId
+                action = if ($ledger.state -eq "cleaned") {
+                    "acl-ledger-already-cleaned"
+                }
+                else {
+                    "acl-ledger-recovered"
+                }
+                state = $cleanedLedger.state
+                cleanupAttempts = $cleanedLedger.cleanupAttempts
+                profileOwner = $cleanedLedger.profileOwner
+            })
+        }
+        catch {
+            $errors.Add("$executionId`: $($_.Exception.Message)")
+        }
+    }
+    return [pscustomobject][ordered]@{
+        passed = $errors.Count -eq 0
+        stateRoot = $resolvedStateRoot
+        recovered = @($items)
+        errors = @($errors)
+    }
+}
+
+function Invoke-ProvisionerAclPrepare {
+    param(
+        [Parameter(Mandatory)][object]$Request,
+        [Parameter(Mandatory)][string]$RegistryPath,
+        [Parameter(Mandatory)][string]$StateRoot,
+        [Parameter(Mandatory)][string]$Launcher
+    )
+
+    Assert-ProvisionerElevated
+    if ($Request.operation -cne "prepare") {
+        throw "Only prepare requests can prepare service ACL state."
+    }
+    $paths = Get-ProvisionerExecutionPaths `
+        -StateRoot $StateRoot `
+        -ExecutionId $Request.executionId
+    if (Test-Path -LiteralPath $paths.ledgerPath) {
+        $existing = Read-SandboxLifecycleLedger -Path $paths.ledgerPath
+        Assert-ProvisionerAclLedger `
+            -Ledger $existing `
+            -ExecutionId $Request.executionId
+        if ($existing.prepareRequestSha256 -cne $Request.payloadSha256) {
+            throw "Provisioner ACL execution conflicts with an existing lifecycle."
+        }
+        if ($existing.state -eq "cleaned") {
+            throw "A cleaned Provisioner ACL execution cannot be prepared again."
+        }
+        if ($existing.state -ne "prepared") {
+            throw "Provisioner ACL execution is not in an idempotent prepared state."
+        }
+        return [pscustomobject][ordered]@{
+            passed = $true
+            idempotent = $true
+            state = $existing.state
+            executionId = $existing.executionId
+            workspaceId = $existing.workspaceId
+            runtimeId = $existing.runtimeId
+            profileName = $existing.profileName
+            packageSid = $existing.packageSid
+            profileOwner = $existing.profileOwner
+            profileCleanupRequired = $true
+            ledgerPath = $paths.ledgerPath
+            runtime = $existing.runtime
+        }
+    }
+
+    $plan = Resolve-ProvisionerPlan -Request $Request -RegistryPath $RegistryPath
+    $packageSid = (& $Launcher sid --name $plan.profileName).Trim()
+    if ($LASTEXITCODE -ne 0 -or $packageSid -notmatch '^S-1-15-2-') {
+        throw "Provisioner service failed to derive the AppContainer Package SID."
+    }
+    $ledger = New-SandboxLifecycleLedger `
+        -Path $paths.ledgerPath `
+        -ProfileName $plan.profileName `
+        -PackageSid $packageSid `
+        -ProfilePath ""
+    $ledger | Add-Member -NotePropertyName executionId -NotePropertyValue $Request.executionId
+    $ledger | Add-Member -NotePropertyName workspaceId -NotePropertyValue $plan.workspaceId
+    $ledger | Add-Member -NotePropertyName runtimeId -NotePropertyValue $plan.runtimeId
+    $ledger | Add-Member -NotePropertyName profileOwner -NotePropertyValue "broker-user"
+    $ledger | Add-Member `
+        -NotePropertyName prepareRequestSha256 `
+        -NotePropertyValue $Request.payloadSha256
+    $ledger | Add-Member -NotePropertyName runtime -NotePropertyValue ([pscustomobject][ordered]@{
+        runtimeId = $plan.runtime.runtimeId
+        version = $plan.runtime.version
+        executablePath = $plan.runtime.executablePath
+        packRoot = $plan.runtime.packRoot
+        capabilities = @($plan.runtime.capabilities)
+        manifestSha256 = $plan.runtime.manifestSha256
+        contentSha256 = $plan.runtime.contentSha256
+    })
+    Write-SandboxLifecycleLedger -Path $paths.ledgerPath -Ledger $ledger
+    try {
+        Grant-SandboxAcl `
+            -LedgerPath $paths.ledgerPath `
+            -Path $plan.workspaceRoot `
+            -Grant "(OI)(CI)(M)" `
+            -Recursive
+        $ancestor = [IO.Directory]::GetParent($plan.workspaceRoot)
+        while ($null -ne $ancestor) {
+            Grant-SandboxAcl `
+                -LedgerPath $paths.ledgerPath `
+                -Path $ancestor.FullName `
+                -Grant "(RX)"
+            $ancestor = $ancestor.Parent
+        }
+        Grant-SandboxAcl `
+            -LedgerPath $paths.ledgerPath `
+            -Path $plan.runtime.packRoot `
+            -Grant "(OI)(CI)(RX)" `
+            -Recursive
+        $verifiedAgain = Read-VerifiedRuntimePack `
+            -PackRoot $plan.runtime.packRoot `
+            -ManifestPath $plan.runtimeManifestPath `
+            -ExpectedManifestSha256 $plan.runtime.manifestSha256
+        if ($verifiedAgain.contentSha256 -cne $plan.runtime.contentSha256 -or
+            $verifiedAgain.executablePath -cne $plan.runtime.executablePath) {
+            throw "Provisioner runtime identity changed during ACL preparation."
+        }
+        $ledger = Read-SandboxLifecycleLedger -Path $paths.ledgerPath
+        $ledger.state = "prepared"
+        Write-SandboxLifecycleLedger -Path $paths.ledgerPath -Ledger $ledger
+        return [pscustomobject][ordered]@{
+            passed = $true
+            idempotent = $false
+            state = "prepared"
+            executionId = $Request.executionId
+            workspaceId = $plan.workspaceId
+            runtimeId = $plan.runtimeId
+            profileName = $plan.profileName
+            packageSid = $packageSid
+            profileOwner = "broker-user"
+            profileCleanupRequired = $true
+            ledgerPath = $paths.ledgerPath
+            runtime = $ledger.runtime
+        }
+    }
+    catch {
+        $prepareError = $_
+        try {
+            $recovery = Invoke-ProvisionerAclRecovery `
+                -LedgerPath $paths.ledgerPath `
+                -Launcher $Launcher
+            if (-not $recovery.passed) {
+                throw "Provisioner ACL recovery did not complete."
+            }
+        }
+        catch {
+            throw "Provisioner ACL prepare failed and recovery also failed: $prepareError; $_"
+        }
+        throw $prepareError
+    }
+}
+
+function Invoke-ProvisionerAclCleanup {
+    param(
+        [Parameter(Mandatory)][object]$Request,
+        [Parameter(Mandatory)][string]$StateRoot,
+        [Parameter(Mandatory)][string]$Launcher
+    )
+
+    Assert-ProvisionerElevated
+    if ($Request.operation -cne "cleanup") {
+        throw "Only cleanup requests can clean service ACL state."
+    }
+    $ledgerPath = Get-ProvisionerLedgerPath `
+        -StateRoot $StateRoot `
+        -ExecutionId $Request.executionId
+    if (-not (Test-Path -LiteralPath $ledgerPath)) {
+        throw "Provisioner ACL lifecycle does not exist."
+    }
+    $ledger = Read-SandboxLifecycleLedger -Path $ledgerPath
+    Assert-ProvisionerAclLedger `
+        -Ledger $ledger `
+        -ExecutionId $Request.executionId
+    $idempotent = $ledger.state -eq "cleaned"
+    $result = if ($idempotent) {
+        [pscustomobject][ordered]@{
+            passed = $true
+            state = "cleaned"
+            cleanupAttempts = $ledger.cleanupAttempts
+            errors = @($ledger.lastCleanupErrors)
+        }
+    }
+    else {
+        Invoke-ProvisionerAclRecovery `
+            -LedgerPath $ledgerPath `
+            -Launcher $Launcher
+    }
+    $cleanedLedger = Read-SandboxLifecycleLedger -Path $ledgerPath
+    if ($cleanedLedger.PSObject.Properties.Name -contains "cleanupRequestSha256") {
+        $cleanedLedger.cleanupRequestSha256 = $Request.payloadSha256
+    }
+    else {
+        $cleanedLedger | Add-Member `
+            -NotePropertyName cleanupRequestSha256 `
+            -NotePropertyValue $Request.payloadSha256
+    }
+    Write-SandboxLifecycleLedger -Path $ledgerPath -Ledger $cleanedLedger
+    return [pscustomobject][ordered]@{
+        passed = $result.passed
+        idempotent = $idempotent
+        state = $result.state
+        cleanupAttempts = $result.cleanupAttempts
+        executionId = $cleanedLedger.executionId
+        profileName = $cleanedLedger.profileName
+        packageSid = $cleanedLedger.packageSid
+        profileOwner = $cleanedLedger.profileOwner
+        profileCleanupRequired = $true
+        ledgerPath = $ledgerPath
+        errors = @($result.errors)
+    }
+}

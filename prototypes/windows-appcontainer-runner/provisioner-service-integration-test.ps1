@@ -272,16 +272,29 @@ Write-Utf8Json -Path $registryPath -Value ([ordered]@{
 })
 
 $startupExecutionId = [guid]::NewGuid().ToString("N")
+$startupProfileName = "ScopeGuardExec_$startupExecutionId"
+$startupPackageSid = (& $launcher profile --name $startupProfileName).Trim()
+$startupProfilePath = (& $launcher profile-path --name $startupProfileName).Trim()
+if ($startupPackageSid -notmatch '^S-1-15-2-' -or -not $startupProfilePath) {
+    throw "Failed to create the Broker-owned startup recovery Profile."
+}
 $startupPaths = Get-ProvisionerExecutionPaths `
     -StateRoot $stateRoot `
     -ExecutionId $startupExecutionId
-$null = New-ProvisionerIntent `
-    -Path $startupPaths.intentPath `
-    -Request ([pscustomobject]@{
-        executionId = $startupExecutionId
-        payloadSha256 = "0" * 64
-    }) `
-    -ProfileName "ScopeGuardExec_$startupExecutionId"
+$startupLedger = New-SandboxLifecycleLedger `
+    -Path $startupPaths.ledgerPath `
+    -ProfileName $startupProfileName `
+    -PackageSid $startupPackageSid `
+    -ProfilePath $startupProfilePath
+$startupLedger | Add-Member `
+    -NotePropertyName executionId `
+    -NotePropertyValue $startupExecutionId
+$startupLedger | Add-Member `
+    -NotePropertyName profileOwner `
+    -NotePropertyValue "broker-user"
+Write-SandboxLifecycleLedger `
+    -Path $startupPaths.ledgerPath `
+    -Ledger $startupLedger
 
 Set-FixtureAcl `
     -FixtureRoot $fixtureRoot `
@@ -363,14 +376,24 @@ try {
 
     Add-ServiceCheck `
         -Checks $checks `
-        -Name "startup-recovery-completes-before-pipe-opens" `
+        -Name "startup-recovers-acls-without-deleting-broker-profile" `
         -Passed (
-            -not (Test-Path -LiteralPath $startupPaths.intentPath) -and
-            (Test-Path -LiteralPath $startupPaths.tombstonePath)
+            (Read-SandboxLifecycleLedger -Path $startupPaths.ledgerPath).state -eq "cleaned" -and
+            (Test-Path -LiteralPath $startupProfilePath)
         ) `
-        -Detail "intent=$([bool](Test-Path $startupPaths.intentPath)); tombstone=$([bool](Test-Path $startupPaths.tombstonePath))"
+        -Detail "ledger=$((Read-SandboxLifecycleLedger -Path $startupPaths.ledgerPath).state); profileExists=$([bool](Test-Path $startupProfilePath))"
+    & $launcher delete --name $startupProfileName | Out-Null
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $startupProfilePath)) {
+        throw "Broker failed to clean its startup recovery Profile."
+    }
 
     $executionId = [guid]::NewGuid().ToString("N")
+    $profileName = "ScopeGuardExec_$executionId"
+    $brokerPackageSid = (& $launcher profile --name $profileName).Trim()
+    $brokerProfilePath = (& $launcher profile-path --name $profileName).Trim()
+    if ($brokerPackageSid -notmatch '^S-1-15-2-' -or -not $brokerProfilePath) {
+        throw "Broker failed to create its AppContainer Profile."
+    }
     $prepareClient = Invoke-ServiceClient `
         -Executable $serviceExe `
         -PipeName $pipeName `
@@ -402,10 +425,6 @@ try {
         ) `
         -Detail "identity=$($prepare.serviceIdentity.name); sid=$($prepare.serviceIdentity.sid)"
 
-    $brokerProfilePath = (& $launcher profile-path --name $prepare.result.profileName).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $brokerProfilePath) {
-        throw "Broker could not resolve its AppContainer Profile path."
-    }
     $brokerDiagnostics = Join-Path $fixtureRoot "broker-launch-diagnostics.log"
     $brokerLaunchOutput = (& $launcher `
         run `
@@ -422,9 +441,10 @@ try {
     $brokerLaunchExit = $LASTEXITCODE
     Add-ServiceCheck `
         -Checks $checks `
-        -Name "system-provisioned-profile-launches-for-broker-user" `
+        -Name "service-prepared-broker-profile-launches-in-lpac" `
         -Passed (
             $brokerLaunchExit -eq 0 -and
+            $prepare.result.packageSid -eq $brokerPackageSid -and
             (Test-Path -LiteralPath $probeResultPath) -and
             (Get-Content -LiteralPath $probeResultPath -Raw) -eq "service-profile-ok"
         ) `
@@ -468,18 +488,27 @@ try {
     $cleanup = $cleanupClient.stdout | ConvertFrom-Json -Depth 16
     Add-ServiceCheck `
         -Checks $checks `
-        -Name "service-cleanup-removes-profile-and-acls" `
+        -Name "service-cleanup-removes-acls-and-preserves-broker-profile" `
         -Passed (
             $cleanupClient.exitCode -eq 0 -and
             $cleanup.ok -and
             $cleanup.result.state -eq "cleaned" -and
-            -not $cleanup.result.profilePathExists -and
-            -not (Test-Path -LiteralPath $brokerProfilePath) -and
+            $cleanup.result.profileCleanupRequired -and
+            (Test-Path -LiteralPath $brokerProfilePath) -and
             @($cleanup.result.errors).Count -eq 0
         ) `
         -Detail "state=$($cleanup.result.state); attempts=$($cleanup.result.cleanupAttempts); brokerProfileExists=$([bool](Test-Path $brokerProfilePath))"
+    & $launcher delete --name $profileName | Out-Null
+    Add-ServiceCheck `
+        -Checks $checks `
+        -Name "broker-completes-user-profile-cleanup" `
+        -Passed ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $brokerProfilePath)) `
+        -Detail "profileExists=$([bool](Test-Path $brokerProfilePath))"
 
     $restartExecutionId = [guid]::NewGuid().ToString("N")
+    $restartProfileName = "ScopeGuardExec_$restartExecutionId"
+    $restartPackageSid = (& $launcher profile --name $restartProfileName).Trim()
+    $restartProfilePath = (& $launcher profile-path --name $restartProfileName).Trim()
     $restartPrepareClient = Invoke-ServiceClient `
         -Executable $serviceExe `
         -PipeName $pipeName `
@@ -498,11 +527,17 @@ try {
         -Name "service-restart-recovers-prepared-lifecycle" `
         -Passed (
             $restartPrepare.ok -and
+            $restartPrepare.result.packageSid -eq $restartPackageSid -and
             $restartLedger.state -eq "cleaned" -and
             $restartLedger.cleanupAttempts -eq 1 -and
+            (Test-Path -LiteralPath $restartProfilePath) -and
             @($restartLedger.lastCleanupErrors).Count -eq 0
         ) `
         -Detail "state=$($restartLedger.state); attempts=$($restartLedger.cleanupAttempts)"
+    & $launcher delete --name $restartProfileName | Out-Null
+    if ($LASTEXITCODE -ne 0 -or (Test-Path -LiteralPath $restartProfilePath)) {
+        throw "Broker failed to clean its restart recovery Profile."
+    }
 
     Add-Content -LiteralPath $worker -Value "# tamper" -Encoding utf8
     $tamperClient = Invoke-ServiceClient `
