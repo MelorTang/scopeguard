@@ -28,7 +28,8 @@ const CLEANUP_TIMEOUT_MS = 210_000;
 const TERMINATION_WAIT_MS = 5_000;
 const COMMAND_WORKER = [
   'const { spawn } = require("node:child_process");',
-  "const child = spawn(process.argv[1], [\"/d\", \"/s\", \"/c\", process.argv[2]], { stdio: \"inherit\", windowsHide: true });",
+  "const command = `\"${process.argv[2]}\"`;",
+  "const child = spawn(process.argv[1], [\"/d\", \"/s\", \"/c\", command], { stdio: \"inherit\", windowsHide: true, windowsVerbatimArguments: true });",
   "child.once(\"error\", (error) => { console.error(error.message); process.exit(126); });",
   "child.once(\"close\", (code, signal) => process.exit(signal ? 125 : (code ?? 126)));",
 ].join("");
