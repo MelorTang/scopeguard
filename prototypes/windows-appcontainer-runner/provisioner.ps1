@@ -450,11 +450,484 @@ function Get-ProvisionerLedgerPath {
     if ($ExecutionId -notmatch '^[0-9a-f]{32}$') {
         throw "Provisioner executionId is invalid."
     }
+    $paths = Get-ProvisionerExecutionPaths `
+        -StateRoot $StateRoot `
+        -ExecutionId $ExecutionId
+    return $paths.ledgerPath
+}
+
+function Get-ProvisionerExecutionPaths {
+    param(
+        [Parameter(Mandatory)][string]$StateRoot,
+        [Parameter(Mandatory)][string]$ExecutionId
+    )
+
+    if ($ExecutionId -notmatch '^[0-9a-f]{32}$') {
+        throw "Provisioner executionId is invalid."
+    }
     $resolvedStateRoot = Resolve-ProvisionerRegisteredPath `
         -Path $StateRoot `
         -Context "Provisioner state root" `
         -Directory
-    return Join-Path (Join-Path $resolvedStateRoot $ExecutionId) "lifecycle-ledger.json"
+    $executionRoot = Join-Path $resolvedStateRoot $ExecutionId
+    return [pscustomobject][ordered]@{
+        stateRoot = $resolvedStateRoot
+        executionRoot = $executionRoot
+        ledgerPath = Join-Path $executionRoot "lifecycle-ledger.json"
+        intentPath = Join-Path $executionRoot "provisioning-intent.json"
+        tombstonePath = Join-Path $executionRoot "recovery-tombstone.json"
+    }
+}
+
+function New-ProvisionerIntent {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][object]$Request,
+        [Parameter(Mandatory)][string]$ProfileName
+    )
+
+    $intent = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        state = "profile-creation-planned"
+        executionId = $Request.executionId
+        prepareRequestSha256 = $Request.payloadSha256
+        profileName = $ProfileName
+        packageSid = ""
+        profilePath = ""
+        createdAtUtc = [DateTime]::UtcNow.ToString("O")
+        updatedAtUtc = [DateTime]::UtcNow.ToString("O")
+    }
+    Write-SandboxLifecycleLedger -Path $Path -Ledger $intent
+    return $intent
+}
+
+function Read-ProvisionerIntent {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$ExpectedExecutionId
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Provisioner intent does not exist: $Path"
+    }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or $item.Length -gt 64KB -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Provisioner intent must be a regular file below 64 KiB."
+    }
+    Assert-RuntimePackSingleHardLink -Path $item.FullName
+    $document = $null
+    try {
+        $document = [System.Text.Json.JsonDocument]::Parse(
+            [IO.File]::ReadAllText($item.FullName, [Text.Encoding]::UTF8)
+        )
+        $properties = @(Get-StrictJsonProperties `
+            -Element $document.RootElement `
+            -ExpectedNames @(
+                "schemaVersion",
+                "state",
+                "executionId",
+                "prepareRequestSha256",
+                "profileName",
+                "packageSid",
+                "profilePath",
+                "createdAtUtc",
+                "updatedAtUtc"
+            ) `
+            -Context "Provisioner intent")
+        $schemaVersion = Get-StrictJsonInt64 `
+            -Element (Get-StrictJsonProperty -Properties $properties -Name "schemaVersion") `
+            -Context "Provisioner intent.schemaVersion"
+        if ($schemaVersion -ne 1) {
+            throw "Unsupported Provisioner intent schemaVersion: $schemaVersion"
+        }
+        $intent = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            state = Get-ProvisionerStrictString `
+                -Properties $properties -Name "state" -Context "Provisioner intent"
+            executionId = Get-ProvisionerStrictString `
+                -Properties $properties -Name "executionId" -Context "Provisioner intent"
+            prepareRequestSha256 = Get-ProvisionerStrictString `
+                -Properties $properties `
+                -Name "prepareRequestSha256" `
+                -Context "Provisioner intent"
+            profileName = Get-ProvisionerStrictString `
+                -Properties $properties -Name "profileName" -Context "Provisioner intent"
+            packageSid = Get-ProvisionerStrictString `
+                -Properties $properties -Name "packageSid" -Context "Provisioner intent"
+            profilePath = Get-ProvisionerStrictString `
+                -Properties $properties -Name "profilePath" -Context "Provisioner intent"
+            createdAtUtc = Get-ProvisionerStrictString `
+                -Properties $properties -Name "createdAtUtc" -Context "Provisioner intent"
+            updatedAtUtc = Get-ProvisionerStrictString `
+                -Properties $properties -Name "updatedAtUtc" -Context "Provisioner intent"
+        }
+        if ($intent.executionId -cne $ExpectedExecutionId -or
+            $intent.executionId -notmatch '^[0-9a-f]{32}$') {
+            throw "Provisioner intent execution identity is invalid."
+        }
+        if ($intent.profileName -cne "ScopeGuardExec_$ExpectedExecutionId") {
+            throw "Provisioner intent profile name is not derived from its execution ID."
+        }
+        if ($intent.prepareRequestSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw "Provisioner intent request digest is invalid."
+        }
+        if ($intent.state -ceq "profile-creation-planned") {
+            if ($intent.packageSid -or $intent.profilePath) {
+                throw "A planned Provisioner intent cannot contain Profile identity data."
+            }
+        }
+        elseif ($intent.state -ceq "profile-created") {
+            if ($intent.packageSid -notmatch '^S-1-15-2-' -or -not $intent.profilePath) {
+                throw "A created Provisioner intent must contain Profile identity data."
+            }
+        }
+        else {
+            throw "Unsupported Provisioner intent state: $($intent.state)"
+        }
+        foreach ($timestamp in @($intent.createdAtUtc, $intent.updatedAtUtc)) {
+            $parsed = [DateTimeOffset]::MinValue
+            if (-not [DateTimeOffset]::TryParse(
+                $timestamp,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind,
+                [ref]$parsed
+            )) {
+                throw "Provisioner intent timestamp is invalid."
+            }
+        }
+        return $intent
+    }
+    finally {
+        if ($null -ne $document) { $document.Dispose() }
+    }
+}
+
+function Set-ProvisionerIntentProfileCreated {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$ExecutionId,
+        [Parameter(Mandatory)][string]$PackageSid,
+        [Parameter(Mandatory)][string]$ProfilePath
+    )
+
+    $intent = Read-ProvisionerIntent -Path $Path -ExpectedExecutionId $ExecutionId
+    if ($intent.state -cne "profile-creation-planned") {
+        throw "Provisioner intent is not awaiting Profile creation."
+    }
+    if ($PackageSid -notmatch '^S-1-15-2-' -or -not $ProfilePath) {
+        throw "Provisioner Profile identity is invalid."
+    }
+    $intent.state = "profile-created"
+    $intent.packageSid = $PackageSid
+    $intent.profilePath = [IO.Path]::GetFullPath($ProfilePath).TrimEnd('\')
+    $intent.updatedAtUtc = [DateTime]::UtcNow.ToString("O")
+    Write-SandboxLifecycleLedger -Path $Path -Ledger $intent
+    return $intent
+}
+
+function Write-ProvisionerRecoveryTombstone {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][object]$Intent,
+        [Parameter(Mandatory)][string]$Reason
+    )
+
+    $tombstone = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        state = "recovered"
+        executionId = $Intent.executionId
+        prepareRequestSha256 = $Intent.prepareRequestSha256
+        profileName = $Intent.profileName
+        reason = $Reason
+        recoveredAtUtc = [DateTime]::UtcNow.ToString("O")
+        updatedAtUtc = [DateTime]::UtcNow.ToString("O")
+    }
+    Write-SandboxLifecycleLedger -Path $Path -Ledger $tombstone
+    return $tombstone
+}
+
+function Read-ProvisionerRecoveryTombstone {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$ExpectedExecutionId
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or $item.Length -gt 64KB -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Provisioner recovery tombstone must be a regular file below 64 KiB."
+    }
+    Assert-RuntimePackSingleHardLink -Path $item.FullName
+    $document = $null
+    try {
+        $document = [System.Text.Json.JsonDocument]::Parse(
+            [IO.File]::ReadAllText($item.FullName, [Text.Encoding]::UTF8)
+        )
+        $properties = @(Get-StrictJsonProperties `
+            -Element $document.RootElement `
+            -ExpectedNames @(
+                "schemaVersion",
+                "state",
+                "executionId",
+                "prepareRequestSha256",
+                "profileName",
+                "reason",
+                "recoveredAtUtc",
+                "updatedAtUtc"
+            ) `
+            -Context "Provisioner recovery tombstone")
+        $schemaVersion = Get-StrictJsonInt64 `
+            -Element (Get-StrictJsonProperty -Properties $properties -Name "schemaVersion") `
+            -Context "Provisioner recovery tombstone.schemaVersion"
+        $state = Get-ProvisionerStrictString `
+            -Properties $properties `
+            -Name "state" `
+            -Context "Provisioner recovery tombstone"
+        $executionId = Get-ProvisionerStrictString `
+            -Properties $properties `
+            -Name "executionId" `
+            -Context "Provisioner recovery tombstone"
+        $requestSha256 = Get-ProvisionerStrictString `
+            -Properties $properties `
+            -Name "prepareRequestSha256" `
+            -Context "Provisioner recovery tombstone"
+        $profileName = Get-ProvisionerStrictString `
+            -Properties $properties `
+            -Name "profileName" `
+            -Context "Provisioner recovery tombstone"
+        if ($schemaVersion -ne 1 -or $state -cne "recovered" -or
+            $executionId -cne $ExpectedExecutionId -or
+            $requestSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $profileName -cne "ScopeGuardExec_$ExpectedExecutionId") {
+            throw "Provisioner recovery tombstone identity is invalid."
+        }
+        $tombstone = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            state = $state
+            executionId = $executionId
+            prepareRequestSha256 = $requestSha256
+            profileName = $profileName
+            reason = Get-ProvisionerStrictString `
+                -Properties $properties `
+                -Name "reason" `
+                -Context "Provisioner recovery tombstone"
+            recoveredAtUtc = Get-ProvisionerStrictString `
+                -Properties $properties `
+                -Name "recoveredAtUtc" `
+                -Context "Provisioner recovery tombstone"
+            updatedAtUtc = Get-ProvisionerStrictString `
+                -Properties $properties `
+                -Name "updatedAtUtc" `
+                -Context "Provisioner recovery tombstone"
+        }
+        if ($tombstone.reason -cne "startup-intent-recovery") {
+            throw "Provisioner recovery tombstone reason is invalid."
+        }
+        foreach ($timestamp in @($tombstone.recoveredAtUtc, $tombstone.updatedAtUtc)) {
+            $parsed = [DateTimeOffset]::MinValue
+            if (-not [DateTimeOffset]::TryParse(
+                $timestamp,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind,
+                [ref]$parsed
+            )) {
+                throw "Provisioner recovery tombstone timestamp is invalid."
+            }
+        }
+        return $tombstone
+    }
+    finally {
+        if ($null -ne $document) { $document.Dispose() }
+    }
+}
+
+function Remove-ProvisionerExecutionRootIfEmpty {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if ((Test-Path -LiteralPath $Path) -and
+        @(Get-ChildItem -LiteralPath $Path -Force).Count -eq 0) {
+        Remove-Item -LiteralPath $Path -Force
+    }
+}
+
+function Assert-ProvisionerLifecycleIdentity {
+    param(
+        [Parameter(Mandatory)][object]$Ledger,
+        [Parameter(Mandatory)][string]$ExecutionId
+    )
+
+    if ($Ledger.executionId -cne $ExecutionId -or
+        $Ledger.profileName -cne "ScopeGuardExec_$ExecutionId" -or
+        $Ledger.packageSid -notmatch '^S-1-15-2-') {
+        throw "Provisioner lifecycle identity is not derived from its execution ID."
+    }
+}
+
+function Invoke-ProvisionerStartupRecovery {
+    param(
+        [Parameter(Mandatory)][string]$StateRoot,
+        [Parameter(Mandatory)][string]$Launcher
+    )
+
+    Assert-ProvisionerElevated
+    $resolvedStateRoot = Resolve-ProvisionerRegisteredPath `
+        -Path $StateRoot `
+        -Context "Provisioner state root" `
+        -Directory
+    $items = [System.Collections.Generic.List[object]]::new()
+    $errors = [System.Collections.Generic.List[string]]::new()
+    foreach ($directory in Get-ChildItem -LiteralPath $resolvedStateRoot -Directory -Force) {
+        $executionId = $directory.Name
+        if ($executionId -notmatch '^[0-9a-f]{32}$' -or
+            ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $errors.Add("Provisioner state directory is invalid: $($directory.FullName)")
+            continue
+        }
+        $paths = Get-ProvisionerExecutionPaths `
+            -StateRoot $resolvedStateRoot `
+            -ExecutionId $executionId
+        try {
+            $knownNames = @(
+                "lifecycle-ledger.json",
+                "provisioning-intent.json",
+                "recovery-tombstone.json"
+            )
+            $unexpected = @(
+                Get-ChildItem -LiteralPath $directory.FullName -Force |
+                    Where-Object { $_.Name -notin $knownNames }
+            )
+            if ($unexpected.Count -gt 0) {
+                throw "Provisioner state directory contains unexpected entries."
+            }
+            $hasIntent = Test-Path -LiteralPath $paths.intentPath
+            $hasLedger = Test-Path -LiteralPath $paths.ledgerPath
+            $hasTombstone = Test-Path -LiteralPath $paths.tombstonePath
+            if ($hasIntent) {
+                $intent = Read-ProvisionerIntent `
+                    -Path $paths.intentPath `
+                    -ExpectedExecutionId $executionId
+            }
+            else {
+                $intent = $null
+            }
+            if ($hasTombstone) {
+                $tombstone = Read-ProvisionerRecoveryTombstone `
+                    -Path $paths.tombstonePath `
+                    -ExpectedExecutionId $executionId
+            }
+            else {
+                $tombstone = $null
+            }
+            if ($hasLedger -and $hasTombstone) {
+                throw "Provisioner lifecycle ledger and recovery tombstone cannot coexist."
+            }
+            if ($hasIntent -and $hasTombstone -and (
+                $intent.prepareRequestSha256 -cne $tombstone.prepareRequestSha256 -or
+                $intent.profileName -cne $tombstone.profileName
+            )) {
+                throw "Provisioner intent and recovery tombstone identities do not match."
+            }
+
+            if ($hasLedger) {
+                $ledger = Read-SandboxLifecycleLedger -Path $paths.ledgerPath
+                Assert-ProvisionerLifecycleIdentity `
+                    -Ledger $ledger `
+                    -ExecutionId $executionId
+                if ($hasIntent -and (
+                    $intent.state -cne "profile-created" -or
+                    $intent.packageSid -cne $ledger.packageSid -or
+                    -not $intent.profilePath.Equals(
+                        [IO.Path]::GetFullPath($ledger.profilePath).TrimEnd('\'),
+                        [StringComparison]::OrdinalIgnoreCase
+                    )
+                )) {
+                    throw "Provisioner intent and lifecycle identities do not match."
+                }
+                if ($ledger.state -ne "cleaned") {
+                    $recovery = Invoke-SandboxLifecycleRecovery `
+                        -LedgerPath $paths.ledgerPath `
+                        -Launcher $Launcher
+                    if (-not $recovery.passed) {
+                        throw "Provisioner lifecycle recovery failed."
+                    }
+                }
+                if ($hasIntent) {
+                    Remove-Item -LiteralPath $paths.intentPath -Force
+                }
+                $cleanedLedger = Read-SandboxLifecycleLedger -Path $paths.ledgerPath
+                $items.Add([pscustomobject][ordered]@{
+                    executionId = $executionId
+                    action = if ($ledger.state -eq "cleaned") {
+                        "ledger-already-cleaned"
+                    }
+                    else {
+                        "ledger-recovered"
+                    }
+                    state = $cleanedLedger.state
+                    cleanupAttempts = $cleanedLedger.cleanupAttempts
+                    profilePathExists = Test-Path -LiteralPath $cleanedLedger.profilePath
+                })
+                continue
+            }
+
+            if ($hasIntent) {
+                $derivedProfilePath = ""
+                if ($intent.state -ceq "profile-created") {
+                    $derivedProfilePath = (& $Launcher profile-path --name $intent.profileName).Trim()
+                    if ($LASTEXITCODE -ne 0 -or -not $derivedProfilePath) {
+                        throw "Provisioner recovery could not derive the Profile path."
+                    }
+                    $derivedProfilePath = [IO.Path]::GetFullPath($derivedProfilePath).TrimEnd('\')
+                    if (-not $intent.profilePath.Equals(
+                        $derivedProfilePath,
+                        [StringComparison]::OrdinalIgnoreCase
+                    )) {
+                        throw "Provisioner intent Profile path does not match its derived identity."
+                    }
+                }
+                & $Launcher delete --name $intent.profileName | Out-Null
+                if ($LASTEXITCODE -ne 0 -or
+                    ($derivedProfilePath -and (Test-Path -LiteralPath $derivedProfilePath))) {
+                    throw "Provisioner intent-only Profile recovery failed."
+                }
+                $null = Write-ProvisionerRecoveryTombstone `
+                    -Path $paths.tombstonePath `
+                    -Intent $intent `
+                    -Reason "startup-intent-recovery"
+                Remove-Item -LiteralPath $paths.intentPath -Force
+                $items.Add([pscustomobject][ordered]@{
+                    executionId = $executionId
+                    action = "intent-recovered"
+                    state = "recovered"
+                    cleanupAttempts = 1
+                    profilePathExists = $false
+                })
+                continue
+            }
+
+            if ($hasTombstone) {
+                $items.Add([pscustomobject][ordered]@{
+                    executionId = $executionId
+                    action = "tombstone-retained"
+                    state = "recovered"
+                    cleanupAttempts = 0
+                    profilePathExists = $false
+                })
+                continue
+            }
+            throw "Provisioner state directory contains no recognized state file."
+        }
+        catch {
+            $errors.Add("$executionId`: $($_.Exception.Message)")
+        }
+    }
+    return [pscustomobject][ordered]@{
+        passed = $errors.Count -eq 0
+        stateRoot = $resolvedStateRoot
+        recovered = @($items)
+        errors = @($errors)
+    }
 }
 
 function Invoke-ProvisionerPrepare {
@@ -466,9 +939,14 @@ function Invoke-ProvisionerPrepare {
     )
 
     Assert-ProvisionerElevated
-    $ledgerPath = Get-ProvisionerLedgerPath `
+    $paths = Get-ProvisionerExecutionPaths `
         -StateRoot $StateRoot `
         -ExecutionId $Request.executionId
+    $ledgerPath = $paths.ledgerPath
+    if ((Test-Path -LiteralPath $paths.intentPath) -or
+        (Test-Path -LiteralPath $paths.tombstonePath)) {
+        throw "Provisioner execution requires startup recovery or has been recovered."
+    }
     if (Test-Path -LiteralPath $ledgerPath) {
         $existing = Read-SandboxLifecycleLedger -Path $ledgerPath
         if ($existing.executionId -cne $Request.executionId -or
@@ -497,17 +975,25 @@ function Invoke-ProvisionerPrepare {
     }
 
     $plan = Resolve-ProvisionerPlan -Request $Request -RegistryPath $RegistryPath
-    $packageSid = (& $Launcher profile --name $plan.profileName).Trim()
-    if ($LASTEXITCODE -ne 0 -or $packageSid -notmatch '^S-1-15-2-') {
-        throw "Provisioner failed to create the AppContainer profile."
-    }
-    $profilePath = (& $Launcher profile-path --name $plan.profileName).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $profilePath) {
-        & $Launcher delete --name $plan.profileName | Out-Null
-        throw "Provisioner failed to resolve the AppContainer profile path."
-    }
+    $null = New-ProvisionerIntent `
+        -Path $paths.intentPath `
+        -Request $Request `
+        -ProfileName $plan.profileName
     $ledgerCreated = $false
     try {
+        $packageSid = (& $Launcher profile --name $plan.profileName).Trim()
+        if ($LASTEXITCODE -ne 0 -or $packageSid -notmatch '^S-1-15-2-') {
+            throw "Provisioner failed to create the AppContainer profile."
+        }
+        $profilePath = (& $Launcher profile-path --name $plan.profileName).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $profilePath) {
+            throw "Provisioner failed to resolve the AppContainer profile path."
+        }
+        $null = Set-ProvisionerIntentProfileCreated `
+            -Path $paths.intentPath `
+            -ExecutionId $Request.executionId `
+            -PackageSid $packageSid `
+            -ProfilePath $profilePath
         $ledger = New-SandboxLifecycleLedger `
             -Path $ledgerPath `
             -ProfileName $plan.profileName `
@@ -530,6 +1016,7 @@ function Invoke-ProvisionerPrepare {
             contentSha256 = $plan.runtime.contentSha256
         })
         Write-SandboxLifecycleLedger -Path $ledgerPath -Ledger $ledger
+        Remove-Item -LiteralPath $paths.intentPath -Force
 
         Grant-SandboxAcl `
             -LedgerPath $ledgerPath `
@@ -579,16 +1066,37 @@ function Invoke-ProvisionerPrepare {
         $prepareError = $_
         if ($ledgerCreated -and (Test-Path -LiteralPath $ledgerPath)) {
             try {
-                $null = Invoke-SandboxLifecycleRecovery `
+                $recovery = Invoke-SandboxLifecycleRecovery `
                     -LedgerPath $ledgerPath `
                     -Launcher $Launcher
+                if (-not $recovery.passed) {
+                    throw "Provisioner lifecycle recovery did not complete."
+                }
+                if (Test-Path -LiteralPath $paths.intentPath) {
+                    Remove-Item -LiteralPath $paths.intentPath -Force
+                }
             }
             catch {
                 throw "Provisioner prepare failed and recovery also failed: $prepareError; $_"
             }
         }
         else {
-            & $Launcher delete --name $plan.profileName | Out-Null
+            try {
+                $intent = Read-ProvisionerIntent `
+                    -Path $paths.intentPath `
+                    -ExpectedExecutionId $Request.executionId
+                & $Launcher delete --name $plan.profileName | Out-Null
+                if ($LASTEXITCODE -ne 0 -or
+                    ($intent.profilePath -and
+                        (Test-Path -LiteralPath $intent.profilePath))) {
+                    throw "Provisioner Profile cleanup did not complete."
+                }
+                Remove-Item -LiteralPath $paths.intentPath -Force
+                Remove-ProvisionerExecutionRootIfEmpty -Path $paths.executionRoot
+            }
+            catch {
+                throw "Provisioner prepare failed and Profile cleanup also failed: $prepareError; $_"
+            }
         }
         throw $prepareError
     }

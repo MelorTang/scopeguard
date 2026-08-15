@@ -41,6 +41,10 @@ jobs:
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/provisioner-integration-test.ps1 -KeepFixture
 
+      - name: Validate Provisioner startup recovery
+        shell: pwsh
+        run: pwsh -File prototypes/windows-appcontainer-runner/provisioner-startup-recovery-test.ps1 -KeepFixture
+
       - name: Run lifecycle crash recovery matrix
         shell: pwsh
         run: pwsh -File prototypes/windows-appcontainer-runner/lifecycle-recovery-test.ps1 -KeepFixture
@@ -87,6 +91,10 @@ jobs:
             ${{ runner.temp }}\scopeguard-provisioner-fixture\state\*\lifecycle-ledger.json
             ${{ runner.temp }}\scopeguard-provisioner-fixture\launcher-diagnostics.log
             ${{ runner.temp }}\scopeguard-provisioner-fixture\launcher-diagnostics.log.child-output.log
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\result.json
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\*-ready.json
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\state\*\lifecycle-ledger.json
+            ${{ runner.temp }}\scopeguard-provisioner-recovery-fixture\state\*\recovery-tombstone.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\result.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\lifecycle-ledger.json
             ${{ runner.temp }}\scopeguard-lifecycle-recovery-fixture\recovery-*.json

@@ -126,6 +126,23 @@ envelope integrity only. A production service still needs an OS-authenticated
 Broker channel and key/bootstrap design, administrator-owned registry and state
 roots, and a signed runtime package.
 
+Validate crashes before and immediately after Profile creation with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/provisioner-startup-recovery-test.ps1
+```
+
+Prepare writes a `profile-creation-planned` intent atomically before creating a
+Profile, updates it with the created Profile identity, persists the lifecycle
+ledger, and only then removes the intent. The installed service must run
+`Invoke-ProvisionerStartupRecovery` against its administrator-owned state root
+before accepting any request. Recovery derives Profile names from execution
+IDs, rejects malformed or unexpected state without deleting it, writes a
+tombstone for intent-only recovery, and leaves cleaned ledgers and tombstones
+idempotent. The Windows 11 checkpoint passed all 9 hard-exit, recovery, replay,
+and fail-closed checks across four windows: after intent, after unrecorded
+Profile creation, after recording the Profile, and after ledger persistence.
+
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every

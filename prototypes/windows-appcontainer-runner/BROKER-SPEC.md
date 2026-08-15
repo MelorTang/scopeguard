@@ -173,6 +173,23 @@ Windows Server 2022 build `20348` produced the same 20/20 and 7/7 result with
 Node `22.23.2`. Its downloaded ledger records all six ACL entries as `removed`,
 one cleanup attempt, no cleanup error, and no remaining Profile path.
 
+Profile creation is now covered by a durable pre-ledger protocol. Prepare
+atomically records a `profile-creation-planned` intent, creates the derived
+Profile, updates the intent to `profile-created`, persists the lifecycle ledger,
+then removes the intent before ACL mutation. The service entry point must run
+startup recovery to completion before opening its request channel. Intent-only
+state is recovered by the execution-derived Profile name and retained as a
+recovery tombstone; intent-plus-ledger state uses the normal lifecycle recovery.
+Malformed files, unknown entries, non-execution directories, and conflicting
+intent/ledger identities fail closed without guessed cleanup. Because lifecycle
+ACL paths are accepted only from this protected state, the production state root
+must be owned by the installed service and not writable by the Desktop user.
+
+The hard-exit matrix passed 9/9 on Windows 11 25H2 build `26200.9168`, including
+all four transition windows, idempotent restart, replay rejection, and
+malformed-state preservation. This is crash-consistency evidence for the state
+machine, not evidence for the production service channel or filesystem ACLs.
+
 This validates request semantics, not the production transport. The fixture's
 HMAC key exists only in process memory and its registry/state roots are test
 directories. A production Windows service must authenticate the Broker over an

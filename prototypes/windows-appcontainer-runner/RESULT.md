@@ -196,6 +196,35 @@ The downloaded artifact records 20/20 validation checks, 7/7 lifecycle checks,
 exact token evidence, all six ACL ledger entries removed, one cleanup attempt,
 no cleanup errors, and no remaining Profile path.
 
+## Provisioner startup-recovery checkpoint
+
+Prepare now persists a strict `profile-creation-planned` intent before Profile
+creation, updates that intent after Profile creation, writes the lifecycle
+ledger, and removes the intent before the first ACL mutation. Startup recovery
+scans only execution-derived directories and known state filenames. It validates
+intent, tombstone, and ledger identity before acting; malformed or unexpected
+state fails closed and is preserved for operator review.
+
+An elevated hard-exit fixture terminates child PowerShell processes with
+`Environment.Exit` after intent, after unrecorded Profile creation, after
+recording the Profile identity, and after ledger persistence.
+On Windows 11 25H2 build `26200.9168`, all 9 checks passed:
+
+- every crash point returned its distinct hard-exit code and left an
+  unambiguous durable state;
+- intent-only and intent-plus-ledger states removed the Profile and converged
+  to a tombstone or cleaned ledger;
+- a second startup scan was idempotent and did not increase cleanup attempts;
+- recovered execution IDs could not be prepared again; and
+- malformed intent identity and invalid state directories failed closed without
+  deleting the deliberately retained Profile.
+
+The same machine reran the existing Provisioner matrix after this change and
+retained its 20/20 request/registry and 7/7 real lifecycle result. Production
+still requires an installed service to invoke recovery before accepting
+requests, an administrator-owned state root, and an OS-authenticated Broker
+channel. The prototype does not make user-writable lifecycle state trustworthy.
+
 ## Passing evidence
 
 [GitHub Actions run 31824339077](https://github.com/MelorTang/scopeguard/actions/runs/31824339077)
@@ -272,9 +301,9 @@ The run verified:
    `registryRead` exposure and is not a production distribution artifact.
 3. Move the passing Provisioner request/state contract behind an installed
    Windows service with an OS-authenticated Broker channel, protected
-   registry/state roots, signed identities, crash-safe pre-profile intent, and
-   startup recovery. The in-memory HMAC fixture is not the production trust
-   boundary.
+   registry/state roots, and signed identities. Wire the now-passing pre-profile
+   intent/startup-recovery protocol into service startup before accepting
+   requests. The in-memory HMAC fixture is not the production trust boundary.
 4. Adapt the passing Broker lifecycle matrix to the eventual Desktop module
    interface. The native prototype proves parent-exit and concurrent-Run Job
    behavior, but product code remains disabled while Wayfinder decisions are
