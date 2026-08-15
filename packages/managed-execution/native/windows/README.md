@@ -182,6 +182,43 @@ or handle bootstrap, signed service/Broker/runtime distribution, a real
 installer and upgrade model, the Desktop Broker adapter, and Windows 10 x64
 validation.
 
+## Build the machine companion payload
+
+Build the closed Windows x64 distribution input with:
+
+```powershell
+pnpm package:managed:win
+```
+
+The build compiles the Provisioner service/client, LPAC launcher, and lifetime
+Broker, then packages the Provisioner scripts, Node runtime, and complete
+PowerShell runtime used by the LocalSystem Worker. The generated manifest fixes
+the machine-owned Program Files/ProgramData layout and binds every payload path,
+size, and SHA-256 into one content digest. It deliberately excludes generated
+service configuration, Workspace registrations, state, request spools,
+diagnostics, and user Profile intents.
+
+Verify a staged or freshly extracted package with:
+
+```powershell
+pwsh -File packages/managed-execution/native/windows/verify-managed-companion.ps1 `
+  -PackageRoot packages/managed-execution/native/windows/release/ScopeGuard-ManagedExecution-0.5.0-dev-windows-x64
+
+pwsh -File packages/managed-execution/native/windows/managed-companion-package-test.ps1 `
+  -PackageRoot packages/managed-execution/native/windows/release/ScopeGuard-ManagedExecution-0.5.0-dev-windows-x64
+```
+
+The matrix accepts the valid package and rejects seven unsafe variants:
+unsigned release verification, an extra file, payload tampering, schema drift,
+duplicate JSON properties, an NTFS alternate data stream, and a junction. Use
+`-RequireTrustedSignature` only for a release candidate; the current native
+ScopeGuard binaries are intentionally unsigned development artifacts.
+
+[Windows Server 2022 run 31890549547](https://github.com/MelorTang/scopeguard/actions/runs/31890549547)
+passed the complete 8/8 matrix and a fresh archive extraction. Windows 11 25H2
+x64 build `26200.9168` reproduced the same contract. This package is not yet an
+installer and must not be copied into the per-user Desktop installation root.
+
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every
