@@ -8,13 +8,12 @@ import {
   FolderPlus,
   Inbox,
   ListTodo,
-  LoaderCircle,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Settings,
   Server,
-  Square,
+  SquarePen,
 } from "lucide-react";
 
 import { countWorkspacePendingAttention } from "@scopeguard/domain";
@@ -116,6 +115,17 @@ export function Sidebar(props: {
           <PanelLeftClose size={18} />
         </button>
       </header>
+
+      <div className="sidebar-primary">
+        <button
+          type="button"
+          className="sidebar-new-task"
+          onClick={props.onNewTask}
+        >
+          <SquarePen size={15} />
+          <span>新建任务</span>
+        </button>
+      </div>
 
       <div className="sidebar-section-heading">
         <span>工作区</span>
@@ -222,14 +232,6 @@ export function Sidebar(props: {
                   <button
                     type="button"
                     className="thread-row thread-row--new"
-                    onClick={props.onNewTask}
-                  >
-                    <ListTodo size={15} />
-                    <span>新建任务</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="thread-row thread-row--new"
                     onClick={props.onNewAgent}
                   >
                     <Bot size={15} />
@@ -300,38 +302,23 @@ function TaskStatus(props: {
       </span>
     );
   }
-  if (props.status === "failed" || props.status === "blocked") {
-    return (
-      <span className="thread-status-icon thread-status-icon--failed" title="需要处理">
-        <CircleAlert size={13} aria-hidden="true" />
-      </span>
-    );
-  }
-  if (
-    props.status === "cancelled" ||
-    props.status === "archived"
-  ) {
+  if (props.status === "cancelled" || props.status === "archived") {
     return null;
   }
-  const stopping = props.status === "cancelling";
+  const tone = props.status === "failed" ||
+      props.status === "blocked" ||
+      props.status === "cancelling"
+    ? "attention"
+    : props.status === "waiting-approval" || props.status === "waiting-input"
+      ? "waiting"
+      : "running";
   const label = formatRunStatus(props.status);
   return (
     <span
-      className={`thread-status-icon thread-status-icon--${props.status}`}
+      className={`status-dot status-dot--${tone}`}
+      role="img"
       aria-label={label}
       title={label}
-    >
-      {props.status === "waiting-approval" || props.status === "waiting-input"
-        ? <CircleAlert size={13} aria-hidden="true" />
-        : stopping
-          ? <Square size={11} fill="currentColor" aria-hidden="true" />
-          : (
-            <LoaderCircle
-              size={13}
-              className="spin"
-              aria-hidden="true"
-            />
-          )}
-    </span>
+    />
   );
 }

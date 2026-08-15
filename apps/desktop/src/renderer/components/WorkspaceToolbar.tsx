@@ -1,4 +1,5 @@
 import {
+  Check,
   Columns2,
   Columns3,
   Columns4,
@@ -6,14 +7,24 @@ import {
   Plus,
   Square,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import type { WorkspaceController } from "../useWorkspace.js";
+
+const SPLIT_OPTIONS = [
+  { count: 1, label: "单窗格", icon: <Square size={14} /> },
+  { count: 2, label: "两个窗格", icon: <Columns2 size={14} /> },
+  { count: 3, label: "三个窗格", icon: <Columns3 size={14} /> },
+  { count: 4, label: "四个窗格", icon: <Columns4 size={14} /> },
+] as const;
 
 export function WorkspaceToolbar(props: {
   workspace: WorkspaceController;
   onNewTask: () => void;
 }): JSX.Element {
   const { workspace } = props;
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const workspaceId = workspace.selectedWorkspace?.id;
   const taskCount = workspace.snapshot?.tasks.filter(
     (task) => task.workspaceId === workspaceId,
@@ -21,6 +32,20 @@ export function WorkspaceToolbar(props: {
   const agentCount = workspace.snapshot?.agentInstances.filter(
     (agent) => agent.workspaceId === workspaceId,
   ).length ?? 0;
+
+  useEffect(() => {
+    if (!layoutMenuOpen) {
+      return;
+    }
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!layoutRef.current?.contains(event.target as Node)) {
+        setLayoutMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [layoutMenuOpen]);
+
   return (
     <header className="workspace-toolbar" aria-label="工作区工具栏">
       <div className="workspace-toolbar__drag-region" aria-hidden="true" />
@@ -38,39 +63,44 @@ export function WorkspaceToolbar(props: {
           <Plus size={14} />
           新建任务
         </button>
-        <div
-          className="segmented-icons"
-          role="group"
-          aria-label="并列布局"
-        >
-          <SplitButton
-            count={1}
-            active={workspace.effectiveSplitCount === 1}
-            disabled={false}
-            onClick={workspace.setRequestedSplitCount}
-            icon={<Square size={15} />}
-          />
-          <SplitButton
-            count={2}
-            active={workspace.effectiveSplitCount === 2}
-            disabled={workspace.maxSplitCount < 2}
-            onClick={workspace.setRequestedSplitCount}
-            icon={<Columns2 size={16} />}
-          />
-          <SplitButton
-            count={3}
-            active={workspace.effectiveSplitCount === 3}
-            disabled={workspace.maxSplitCount < 3}
-            onClick={workspace.setRequestedSplitCount}
-            icon={<Columns3 size={16} />}
-          />
-          <SplitButton
-            count={4}
-            active={workspace.effectiveSplitCount === 4}
-            disabled={workspace.maxSplitCount < 4}
-            onClick={workspace.setRequestedSplitCount}
-            icon={<Columns4 size={16} />}
-          />
+        <div className="toolbar-menu-wrap" ref={layoutRef}>
+          <button
+            type="button"
+            className={`icon-button ${layoutMenuOpen ? "is-active" : ""}`}
+            onClick={() => setLayoutMenuOpen((current) => !current)}
+            title="并列布局"
+            aria-label={`并列布局，当前 ${workspace.effectiveSplitCount} 个窗格`}
+            aria-haspopup="menu"
+            aria-expanded={layoutMenuOpen}
+          >
+            <Columns2 size={17} />
+          </button>
+          {layoutMenuOpen && (
+            <div className="toolbar-menu" role="menu" aria-label="并列布局">
+              {SPLIT_OPTIONS.map((option) => {
+                const disabled = workspace.maxSplitCount < option.count;
+                const active = workspace.effectiveSplitCount === option.count;
+                return (
+                  <button
+                    key={option.count}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={active}
+                    disabled={disabled}
+                    className={active ? "is-selected" : ""}
+                    onClick={() => {
+                      workspace.setRequestedSplitCount(option.count);
+                      setLayoutMenuOpen(false);
+                    }}
+                  >
+                    {option.icon}
+                    <span>{option.label}</span>
+                    {active && <Check size={14} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -83,28 +113,5 @@ export function WorkspaceToolbar(props: {
         </button>
       </div>
     </header>
-  );
-}
-
-function SplitButton(props: {
-  count: number;
-  active: boolean;
-  disabled: boolean;
-  onClick: (count: number) => void;
-  icon: JSX.Element;
-}): JSX.Element {
-  const label = `${props.count} 个对话窗格`;
-  return (
-    <button
-      type="button"
-      className={props.active ? "is-active" : ""}
-      disabled={props.disabled}
-      onClick={() => props.onClick(props.count)}
-      title={label}
-      aria-label={label}
-      aria-pressed={props.active}
-    >
-      {props.icon}
-    </button>
   );
 }

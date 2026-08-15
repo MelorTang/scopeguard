@@ -1,4 +1,5 @@
 import {
+  ArrowUp,
   Bot,
   Check,
   ChevronDown,
@@ -9,7 +10,6 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Send,
   ShieldCheck,
   Square,
   Terminal,
@@ -73,6 +73,31 @@ export function ThreadPane(props: {
   const latestRun = workspace.getLatestRunForThread(thread.id);
   const messages = workspace.messagesByThread[thread.id] ?? [];
   const stream = workspace.streamingByThread[thread.id] ?? "";
+  const toolResults = useMemo(() => {
+    const map = new Map<
+      string,
+      Extract<MessageContentBlock, { type: "tool-result" }>
+    >();
+    for (const message of messages) {
+      for (const block of message.content) {
+        if (block.type === "tool-result") {
+          map.set(block.toolCallId, block);
+        }
+      }
+    }
+    return map;
+  }, [messages]);
+  const toolCallIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const message of messages) {
+      for (const block of message.content) {
+        if (block.type === "tool-call") {
+          set.add(block.toolCallId);
+        }
+      }
+    }
+    return set;
+  }, [messages]);
   const approvals = snapshot?.pendingApprovals.filter(
     (item) => item.approval.runId === run?.id,
   ) ?? [];
@@ -228,7 +253,9 @@ export function ThreadPane(props: {
   return (
     <section
       id={`thread-panel-${thread.id}`}
-      className={`thread-pane ${props.active ? "is-active" : ""}`}
+      className={`thread-pane ${props.active ? "is-active" : ""} ${
+        messages.length === 0 && !stream ? "thread-pane--empty" : ""
+      }`}
       role="region"
       aria-label={`${task?.title ?? thread.title}，第 ${props.paneIndex + 1} 个窗格`}
       onPointerDownCapture={props.onActivate}
@@ -266,12 +293,13 @@ export function ThreadPane(props: {
               key={message.id}
               message={message}
               showTechnicalDetails={workspace.professionalMode}
+              toolResults={toolResults}
+              toolCallIds={toolCallIds}
             />
           ))
         )}
         {stream && (
           <div className="message message--assistant message--streaming">
-            <div className="message-role">Agent</div>
             <div className="message-text">{stream}</div>
             <span className="stream-caret" aria-hidden="true" />
           </div>
@@ -291,6 +319,12 @@ export function ThreadPane(props: {
       </div>
 
       <footer className="composer-area">
+        {messages.length === 0 && !stream && !run && (
+          <div className="composer-greeting">
+            <strong>{agentDefinition?.name ?? agent?.name ?? "Agent"}</strong>
+            <span>输入任务要求，Agent 的工作只进入当前上下文。</span>
+          </div>
+        )}
         {!run && latestRun && (
           latestRun.status === "failed" || latestRun.status === "interrupted"
         ) && (
@@ -519,7 +553,7 @@ export function ThreadPane(props: {
                   aria-label="发送消息"
                   title="发送"
                 >
-                  <Send size={16} />
+                  <ArrowUp size={17} />
                 </button>
               )}
             </div>
@@ -589,21 +623,26 @@ function appendWorkspaceFileReferences(
 function Message(props: {
   message: ThreadMessage;
   showTechnicalDetails: boolean;
-}): JSX.Element {
-  const label = props.message.role === "user"
-    ? "你"
-    : props.message.role === "assistant"
-      ? "Agent"
-      : "工具";
+  toolResults: Map<string, Extract<MessageContentBlock, { type: "tool-result" }>>;
+  toolCallIds: Set<string>;
+}): JSX.Element | null {
+  // Tool results with a matching call render inside that call's expandable
+  // row, so a tool message may have nothing left to show on its own.
+  const visibleBlocks = props.message.content.filter(
+    (block) => block.type !== "tool-result" || !props.toolCallIds.has(block.toolCallId),
+  );
+  if (visibleBlocks.length === 0) {
+    return null;
+  }
   return (
     <article className={`message message--${props.message.role}`}>
-      <div className="message-role">{label}</div>
       <div className="message-content">
-        {props.message.content.map((block, index) => (
+        {visibleBlocks.map((block, index) => (
           <MessageBlock
             key={`${props.message.id}-${block.type}-${index}`}
             block={block}
             showTechnicalDetails={props.showTechnicalDetails}
+            toolResults={props.toolResults}
           />
         ))}
       </div>
@@ -614,27 +653,42 @@ function Message(props: {
 function MessageBlock(props: {
   block: MessageContentBlock;
   showTechnicalDetails: boolean;
+  toolResults: Map<string, Extract<MessageContentBlock, { type: "tool-result" }>>;
 }): JSX.Element {
   const { block } = props;
   if (block.type === "text") {
     return <MarkdownText text={block.text} />;
   }
   if (block.type === "tool-call") {
+    const result = props.toolResults.get(block.toolCallId);
     return (
-      <div className="tool-event">
-        <span className="tool-event__icon">
+      <details
+        className={`tool-call ${result?.isError ? "tool-call--error" : ""}`}
+      >
+        <summary>
+          <ChevronRight size={13} className="tool-call__chevron" aria-hidden="true" />
           {block.name === "run_command"
-            ? <Terminal size={15} />
-            : <FileText size={15} />}
-        </span>
-        <span>
-          <strong>{formatToolName(block.name)}</strong>
-          {props.showTechnicalDetails && (
-            <code>{summarizeArguments(block.arguments)}</code>
+            ? <Terminal size={14} />
+            : <FileText size={14} />}
+          <span className="tool-call__name">{formatToolName(block.name)}</span>
+          <code className="tool-call__args">{summarizeArguments(block.arguments)}</code>
+          {result && (
+            <span
+              className={`tool-call__status ${result.isError ? "is-error" : ""}`}
+            >
+              {result.isError ? "失败" : "完成"}
+            </span>
           )}
-        </span>
-        <ChevronRight size={14} />
-      </div>
+        </summary>
+        {(result || props.showTechnicalDetails) && (
+          <div className="tool-call__detail">
+            {props.showTechnicalDetails && (
+              <pre>{JSON.stringify(block.arguments, null, 2)}</pre>
+            )}
+            {result && <pre>{result.output}</pre>}
+          </div>
+        )}
+      </details>
     );
   }
   return (
@@ -750,6 +804,9 @@ function summarizeArguments(value: Record<string, unknown>): string {
   }
   if (typeof value.path === "string") {
     return value.path;
+  }
+  if (typeof value.question === "string") {
+    return value.question;
   }
   const serialized = JSON.stringify(value);
   return serialized.length > 160 ? `${serialized.slice(0, 157)}…` : serialized;
