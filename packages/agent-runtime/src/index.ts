@@ -3,6 +3,9 @@ import type {
   ConversationExecutionProfile,
   Id,
   ManagedExecutionProgress,
+  ModelMessage,
+  ModelToolCall,
+  ModelToolDefinition,
   ProviderConnectionResult,
   ProviderProtocol,
 } from "@scopeguard/domain";
@@ -14,36 +17,6 @@ export type ProviderCredentials = {
   model: string;
   customHeaders: Record<string, string>;
 };
-
-export type ModelToolDefinition = {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-};
-
-export type ModelToolCall = {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-};
-
-export type ModelMessage =
-  | {
-      role: "system" | "user";
-      content: string;
-    }
-  | {
-      role: "assistant";
-      content: string;
-      toolCalls?: ModelToolCall[];
-    }
-  | {
-      role: "tool";
-      toolCallId: string;
-      name: string;
-      content: string;
-      isError?: boolean;
-    };
 
 export type ProviderTurnRequest = {
   credentials: ProviderCredentials;
@@ -127,3 +100,9 @@ export {
   type NativeAgentRunResult,
   type ObservedToolCall,
 } from "./native-agent-runtime.js";
+
+export type {
+  ModelMessage,
+  ModelToolCall,
+  ModelToolDefinition,
+} from "@scopeguard/domain";

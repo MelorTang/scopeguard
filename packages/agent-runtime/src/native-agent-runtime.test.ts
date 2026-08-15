@@ -31,6 +31,65 @@ test("streams a final text response", async () => {
   assert.equal(result.finalText, "Hello world");
   assert.equal(observed.deltas.join(""), "Hello world");
   assert.equal(observed.turns.length, 1);
+  assert.equal(observed.manifests.length, 1);
+  assert.deepEqual(observed.manifests[0]?.messages, [
+    { role: "user", content: "Hello" },
+  ]);
+  assert.deepEqual(observed.manifests[0]?.messages, provider.requests[0]?.messages);
+  assert.deepEqual(observed.manifests[0]?.tools, provider.requests[0]?.tools);
+  assert.equal(observed.manifests[0]?.model, "test-model");
+  assert.deepEqual(observed.usage, [{
+    stepSequence: 1,
+    status: "unavailable",
+  }]);
+});
+
+test("records every provider usage event without converting unknown values to zero", async () => {
+  const provider = new SequenceProvider([[
+    { type: "usage", inputTokens: 12 },
+    { type: "usage", outputTokens: 7 },
+    { type: "completed", finishReason: "stop" },
+  ]]);
+  const observed = observer();
+
+  await new NativeAgentRuntime(provider, new FakeRegistry([])).run(
+    runInput(),
+    observed.value,
+  );
+
+  assert.deepEqual(observed.usage, [
+    {
+      stepSequence: 1,
+      status: "reported",
+      inputTokens: 12,
+      outputTokens: undefined,
+    },
+    {
+      stepSequence: 1,
+      status: "reported",
+      inputTokens: undefined,
+      outputTokens: 7,
+    },
+  ]);
+});
+
+test("does not call the provider when request-manifest persistence fails", async () => {
+  const provider = new SequenceProvider([[
+    { type: "completed", finishReason: "stop" },
+  ]]);
+  const observed = observer();
+  observed.value.onRequestManifest = () => {
+    throw new Error("Injected manifest persistence failure.");
+  };
+
+  await assert.rejects(
+    () => new NativeAgentRuntime(provider, new FakeRegistry([])).run(
+      runInput(),
+      observed.value,
+    ),
+    /manifest persistence failure/,
+  );
+  assert.equal(provider.requests.length, 0);
 });
 
 test("executes an allowed tool and continues the provider loop", async () => {
@@ -69,6 +128,9 @@ test("executes an allowed tool and continues the provider loop", async () => {
     "succeeded",
   ]);
   assert.equal(provider.requests[1]?.messages.at(-1)?.role, "tool");
+  assert.equal(observed.manifests.length, 2);
+  assert.equal(observed.manifests[1]?.stepSequence, 2);
+  assert.equal(observed.manifests[1]?.messages.at(-1)?.role, "tool");
 });
 
 test("pauses for explicit user input and continues the same provider loop", async () => {
@@ -349,25 +411,36 @@ function observer(
   inputAnswer = "User answer",
 ): {
   value: NativeAgentRunObserver;
+  manifests: Array<Parameters<NativeAgentRunObserver["onRequestManifest"]>[0]>;
+  usage: Array<Parameters<NativeAgentRunObserver["onUsage"]>[0]>;
   deltas: string[];
   turns: unknown[];
   statuses: string[];
   inputQuestions: string[];
 } {
+  const manifests: Array<Parameters<NativeAgentRunObserver["onRequestManifest"]>[0]> = [];
+  const usage: Array<Parameters<NativeAgentRunObserver["onUsage"]>[0]> = [];
   const deltas: string[] = [];
   const turns: unknown[] = [];
   const statuses: string[] = [];
   const inputQuestions: string[] = [];
   return {
+    manifests,
+    usage,
     deltas,
     turns,
     statuses,
     inputQuestions,
     value: {
+      onRequestManifest(input) {
+        manifests.push(input);
+      },
       onTextDelta(delta) {
         deltas.push(delta);
       },
-      onUsage() {},
+      onUsage(input) {
+        usage.push(input);
+      },
       async onAssistantTurn(turn) {
         turns.push(turn);
         return Object.fromEntries(

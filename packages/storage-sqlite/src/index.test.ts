@@ -166,6 +166,120 @@ test("persists model and execution settings per conversation", () => {
   }
 });
 
+test("persists immutable request manifests and usage records across restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-run-ledger-"));
+  const databasePath = join(directory, "scopeguard.db");
+  let threadId = "";
+  let runId = "";
+  try {
+    const initial = new ScopeGuardStore(databasePath);
+    const workspace = createRunningWorkspace(initial, directory);
+    threadId = workspace.thread.id;
+    runId = workspace.run.id;
+    const manifest = initial.recordRunRequestManifest({
+      runId,
+      stepSequence: 1,
+      providerProtocol: "openai-compatible",
+      model: "model",
+      messages: [{ role: "user", content: "Start" }],
+      tools: [{
+        name: "read_file",
+        description: "Read a Workspace file.",
+        inputSchema: { type: "object", required: ["path"] },
+      }],
+      maxOutputTokens: 4096,
+      requestHash: "a".repeat(64),
+    });
+    initial.appendRunUsageRecord({
+      runId,
+      stepSequence: 1,
+      source: "provider",
+      status: "reported",
+      inputTokens: 128,
+      outputTokens: null,
+    });
+    initial.appendRunUsageRecord({
+      runId,
+      stepSequence: 1,
+      source: "provider",
+      status: "reported",
+      inputTokens: null,
+      outputTokens: 32,
+    });
+    assert.throws(
+      () => initial.recordRunRequestManifest({
+        ...manifest,
+        requestHash: "b".repeat(64),
+      }),
+      /UNIQUE constraint failed/,
+    );
+    assert.throws(
+      () => initial.recordRunRequestManifest({
+        ...manifest,
+        stepSequence: 2,
+        requestHash: "not-a-sha256",
+      }),
+      /CHECK constraint failed/,
+    );
+    assert.throws(
+      () => initial.appendRunUsageRecord({
+        runId,
+        stepSequence: 1,
+        source: "provider",
+        status: "reported",
+        inputTokens: -1,
+        outputTokens: null,
+      }),
+      /CHECK constraint failed/,
+    );
+    initial.close();
+
+    const recovered = new ScopeGuardStore(databasePath);
+    assert.deepEqual(recovered.listRunRequestManifests(runId), [manifest]);
+    assert.deepEqual(
+      recovered.listRunUsageRecords(runId).map((record) => ({
+        sequence: record.sequence,
+        stepSequence: record.stepSequence,
+        status: record.status,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+      })),
+      [
+        {
+          sequence: 1,
+          stepSequence: 1,
+          status: "reported",
+          inputTokens: 128,
+          outputTokens: null,
+        },
+        {
+          sequence: 2,
+          stepSequence: 1,
+          status: "reported",
+          inputTokens: null,
+          outputTokens: 32,
+        },
+      ],
+    );
+    recovered.close();
+
+    const database = new DatabaseSync(databasePath);
+    database.exec("PRAGMA foreign_keys = ON");
+    database.prepare("DELETE FROM agent_threads WHERE id = ?").run(threadId);
+    const manifestCount = database.prepare(
+      "SELECT COUNT(*) AS count FROM run_request_manifests WHERE run_id = ?",
+    ).get(runId) as { count: number };
+    const usageCount = database.prepare(
+      "SELECT COUNT(*) AS count FROM run_usage_records WHERE run_id = ?",
+    ).get(runId) as { count: number };
+    database.close();
+    assert.equal(manifestCount.count, 0);
+    assert.equal(usageCount.count, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("keeps projects idempotent by root path", () => {
   const store = new ScopeGuardStore(":memory:");
   try {
@@ -444,7 +558,7 @@ test("v6 migration adds waiting-input to the active Run index", async () => {
     ).get("idx_one_active_run_per_thread") as { sql: string };
     migrated.close();
 
-    assert.equal(version.value, "8");
+    assert.equal(version.value, "9");
     assert.match(index.sql, /waiting-input/);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -518,6 +632,41 @@ test("v8 migration inherits model and execution settings into conversations", as
     assert.equal(migrated.getThread(thread.id)?.modelOverride, "inherited-model");
     assert.equal(migrated.getThread(thread.id)?.executionProfile, "auto-approve");
     migrated.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("v9 migration creates the local Run request and usage ledger", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "scopeguard-v9-migration-"));
+  const databasePath = join(directory, "scopeguard.db");
+  try {
+    new ScopeGuardStore(databasePath).close();
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      DROP INDEX idx_run_usage_step;
+      DROP TABLE run_usage_records;
+      DROP TABLE run_request_manifests;
+      UPDATE schema_metadata SET value = '8' WHERE key = 'schema_version';
+    `);
+    legacy.close();
+
+    new ScopeGuardStore(databasePath).close();
+    const migrated = new DatabaseSync(databasePath, { readOnly: true });
+    const version = migrated.prepare(
+      "SELECT value FROM schema_metadata WHERE key = 'schema_version'",
+    ).get() as { value: string };
+    const tables = migrated.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name IN (?, ?) ORDER BY name`,
+    ).all("run_request_manifests", "run_usage_records") as Array<{ name: string }>;
+    migrated.close();
+
+    assert.equal(version.value, "9");
+    assert.deepEqual(tables.map((table) => table.name), [
+      "run_request_manifests",
+      "run_usage_records",
+    ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

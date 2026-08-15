@@ -1,4 +1,4 @@
-export const SCOPEGUARD_SCHEMA_VERSION = 8;
+export const SCOPEGUARD_SCHEMA_VERSION = 9;
 
 export type Id = string;
 export type IsoDateTime = string;
@@ -446,6 +446,59 @@ export type RunConfigSnapshot = {
   executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
   cliConfig: CliAgentConfig | null;
+};
+
+export type ModelToolDefinition = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+};
+
+export type ModelToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type ModelMessage =
+  | {
+      role: "system" | "user";
+      content: string;
+    }
+  | {
+      role: "assistant";
+      content: string;
+      toolCalls?: ModelToolCall[];
+    }
+  | {
+      role: "tool";
+      toolCallId: string;
+      name: string;
+      content: string;
+      isError?: boolean;
+    };
+
+export type RunRequestManifest = {
+  runId: Id;
+  stepSequence: number;
+  providerProtocol: ProviderProtocol;
+  model: string;
+  messages: ModelMessage[];
+  tools: ModelToolDefinition[];
+  maxOutputTokens: number | null;
+  requestHash: string;
+  createdAt: IsoDateTime;
+};
+
+export type RunUsageRecord = {
+  runId: Id;
+  sequence: number;
+  stepSequence: number;
+  source: "provider";
+  status: "reported" | "unavailable";
+  inputTokens: number | null;
+  outputTokens: number | null;
+  receivedAt: IsoDateTime;
 };
 
 export type AgentRun = {
