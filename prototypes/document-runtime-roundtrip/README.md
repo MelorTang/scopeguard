@@ -44,6 +44,23 @@ pwsh -File prototypes/document-runtime-roundtrip/run.ps1
 Results are written to `prototypes/document-runtime-roundtrip/out/result.json`.
 The output directory is ignored by Git.
 
+## Reopen edited files in Microsoft Office
+
+After the round-trip matrix finishes on a logged-in Windows workstation with
+Microsoft Office installed, run the edited OOXML files through the read-only
+reopen check:
+
+```powershell
+pwsh -File prototypes/document-runtime-roundtrip/office-reopen-check.ps1
+```
+
+The check disables macros and link updates, requests no Office repair mode,
+opens every edited DOCX/XLSX/PPTX read-only, records bounded structural counts,
+closes without saving, and verifies the file hash did not change. Its JSON
+report contains no document text. A pass proves only that the installed Office
+applications can open the edited public fixtures without an automation error;
+it does not prove visual fidelity or compatibility equivalence.
+
 ## Run private company fixtures
 
 Place DOCX, XLSX, PPTX, and one PDF in a directory outside the repository, then
