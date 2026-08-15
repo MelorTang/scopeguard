@@ -82,6 +82,28 @@ Unregistered local folders can still be opened and used for ordinary UI and
 Full Access work, but bounded `run_command` fails closed until registration is
 present in both the service registry and Broker manifest.
 
+## Validation Evidence
+
+On 2026-08-15, the source-level Desktop adapter passed the installed-service
+matrix on a Windows 11 25H2 x64 client, build `26200.9168`, from the logged-in
+user's interactive session. All 14 checks passed. The product adapter streamed
+stdout, reported `accepted -> provisioning -> running -> cleaning -> completed`,
+returned exit code 0 with confirmed termination and cleanup, and left the
+service lifecycle clean.
+
+[GitHub Actions run 31873628707](https://github.com/MelorTang/scopeguard/actions/runs/31873628707)
+passed the complete Windows Server 2022 matrix from commit `4d9bce6`, including
+the real product adapter against the installed fixture service, runtime
+Capability and integrity checks, startup/crash recovery, and Desktop parent
+cleanup.
+
+An OpenSSH Session 0 run returned `0xC0000142` before the LPAC Node worker
+initialized. The unchanged prototype reproduced that result, while the same
+commit passed from the interactive user session. Session 0 therefore is not an
+accepted Windows client success environment; client validation must run from a
+logged-in user session. This evidence is source integration, not a signed or
+packaged Desktop release result.
+
 ## Remaining Release Gates
 
 - Signed ScopeGuard service, Broker, launcher, and immutable Node runtime pack.

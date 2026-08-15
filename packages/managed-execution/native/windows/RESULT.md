@@ -19,8 +19,24 @@ successful result. Missing or malformed setup fails closed.
 Local macOS contract tests cover routing, IPC concurrency, cancellation,
 manifest validation, lifecycle success, and cleanup uncertainty. The Windows
 Server 2022 workflow additionally invokes `product-adapter-probe.mjs` against
-the installed service fixture. This checkpoint is not complete until that new
-workflow passes and a clean Windows 11 packaged Desktop run is recorded.
+the installed service fixture.
+
+On 2026-08-15, the formal source adapter passed the installed-service matrix on
+the Windows 11 25H2 x64 client at build `26200.9168`. All 14 checks passed. The
+adapter streamed stdout, completed `accepted -> provisioning -> running ->
+cleaning -> completed`, returned exit code 0, and reported confirmed termination,
+clean cleanup, and `effect=confirmed`. The first OpenSSH run occurred in Session
+0 and failed before LPAC Node initialization with `0xC0000142`; the unchanged
+prototype reproduced it. Running the same commit in the logged-in user's
+interactive session passed, so Session 0 is retained as invalid-environment
+evidence rather than a product regression.
+
+[GitHub Actions run 31873628707](https://github.com/MelorTang/scopeguard/actions/runs/31873628707)
+passed the complete Windows Server 2022 matrix from commit `4d9bce6`. This
+includes the product adapter against the installed service fixture, exact
+runtime Capability and integrity checks, startup and crash recovery, and
+Desktop parent process cleanup. A signed, clean packaged Windows 11 Desktop run
+remains a release gate.
 
 ## Decision
 

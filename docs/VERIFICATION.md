@@ -228,6 +228,25 @@ Verified on macOS on 2026-08-01 from an isolated Electron user-data directory:
   off-viewport controls, or clipped buttons. Fresh console had 0 errors and 0
   warnings; reduced-motion removed animation and keyboard focus had a visible 2 px outline.
 
+Managed execution was additionally verified on 2026-08-15:
+
+- macOS `pnpm test`, `pnpm typecheck`, and `pnpm build` passed with the formal
+  managed-execution package and private Desktop Broker IPC enabled.
+- Web preview checks at 1440x900 and 1024x720 found no overlap in the three-way
+  execution-profile control or Agent dialog; the console reported no errors.
+- A clean Windows 11 worktree passed typecheck after deleting package build
+  output, proving the package dependency order does not rely on stale `dist` files.
+- Windows 11 25H2 build `26200.9168` passed all 14 installed-service checks from
+  an interactive user session. The real product adapter streamed one stdout
+  event, completed the exact five-stage lifecycle, confirmed termination and
+  cleanup, and returned `effect=confirmed`.
+- [Windows Server 2022 run 31873628707](https://github.com/MelorTang/scopeguard/actions/runs/31873628707)
+  passed the full TypeScript, AppContainer, LPAC, Capability, runtime-pack,
+  Provisioner, installed-service, crash-recovery, and Desktop Broker matrix.
+- OpenSSH runs execute in Session 0 on that client and are not valid AppContainer
+  success evidence. The same baseline and product probes passed when scheduled
+  into the logged-in user's interactive session.
+
 ## 12. Release-External Work
 
 Source MVP verification does not cover signed/notarized installers, auto-update,
