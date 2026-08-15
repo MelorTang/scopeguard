@@ -216,6 +216,13 @@ New-Item -ItemType Directory -Path @(
     $workspace,
     $outside
 ) -Force | Out-Null
+$probeScript = Join-Path $workspace "service-broker-probe.js"
+$probeResultPath = Join-Path $workspace "service-broker-result.txt"
+[IO.File]::WriteAllText(
+    $probeScript,
+    'require("fs").writeFileSync(process.argv[2], "service-profile-ok");',
+    [Text.UTF8Encoding]::new($false)
+)
 
 $builtLauncher = (& (Join-Path $PSScriptRoot "build.ps1")).Trim()
 $builtService = (& (Join-Path $PSScriptRoot "build-provisioner-service.ps1")).Trim()
@@ -395,6 +402,34 @@ try {
         ) `
         -Detail "identity=$($prepare.serviceIdentity.name); sid=$($prepare.serviceIdentity.sid)"
 
+    $brokerProfilePath = (& $launcher profile-path --name $prepare.result.profileName).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $brokerProfilePath) {
+        throw "Broker could not resolve its AppContainer Profile path."
+    }
+    $brokerDiagnostics = Join-Path $fixtureRoot "broker-launch-diagnostics.log"
+    $brokerLaunchOutput = (& $launcher `
+        run `
+        --name $prepare.result.profileName `
+        --cwd $workspace `
+        --timeout 30 `
+        --lpac `
+        --capability registryRead `
+        --diagnostics $brokerDiagnostics `
+        -- `
+        $prepare.result.runtime.executablePath `
+        $probeScript `
+        $probeResultPath 2>&1 | Out-String).Trim()
+    $brokerLaunchExit = $LASTEXITCODE
+    Add-ServiceCheck `
+        -Checks $checks `
+        -Name "system-provisioned-profile-launches-for-broker-user" `
+        -Passed (
+            $brokerLaunchExit -eq 0 -and
+            (Test-Path -LiteralPath $probeResultPath) -and
+            (Get-Content -LiteralPath $probeResultPath -Raw) -eq "service-profile-ok"
+        ) `
+        -Detail "exit=$brokerLaunchExit; output=$brokerLaunchOutput; brokerProfile=$brokerProfilePath"
+
     $malformed = (New-RequestJson -Operation "cleanup" -ExecutionId $executionId) |
         ConvertFrom-Json
     $malformed | Add-Member -NotePropertyName rawPath -NotePropertyValue "C:\Windows"
@@ -409,7 +444,7 @@ try {
         -Passed (
             $malformedClient.exitCode -eq 0 -and
             -not $malformedResponse.ok -and
-            $malformedResponse.error.message -match "unexpected property"
+            $malformedResponse.error.message -match "properties must be exactly"
         ) `
         -Detail $malformedResponse.error.message
 
@@ -439,9 +474,10 @@ try {
             $cleanup.ok -and
             $cleanup.result.state -eq "cleaned" -and
             -not $cleanup.result.profilePathExists -and
+            -not (Test-Path -LiteralPath $brokerProfilePath) -and
             @($cleanup.result.errors).Count -eq 0
         ) `
-        -Detail "state=$($cleanup.result.state); attempts=$($cleanup.result.cleanupAttempts)"
+        -Detail "state=$($cleanup.result.state); attempts=$($cleanup.result.cleanupAttempts); brokerProfileExists=$([bool](Test-Path $brokerProfilePath))"
 
     $restartExecutionId = [guid]::NewGuid().ToString("N")
     $restartPrepareClient = Invoke-ServiceClient `

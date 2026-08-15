@@ -119,6 +119,7 @@ jobs:
             C:\ProgramData\ScopeGuardProvisionerServiceFixture\result.json
             C:\ProgramData\ScopeGuardProvisionerServiceFixture\prepare-client.json
             C:\ProgramData\ScopeGuardProvisionerServiceFixture\service-diagnostics.log
+            C:\ProgramData\ScopeGuardProvisionerServiceFixture\broker-launch-diagnostics.log
             C:\ProgramData\ScopeGuardProvisionerServiceFixture\requests\*.log
             C:\ProgramData\ScopeGuardProvisionerServiceFixture\state\*\lifecycle-ledger.json
             C:\ProgramData\ScopeGuardProvisionerServiceFixture\state\*\recovery-tombstone.json
