@@ -73,58 +73,20 @@ function Get-ProvisionerStrictString {
         -Context "$Context.$Name"
 }
 
-function Read-ProvisionerEnvelope {
+function Read-ProvisionerPayload {
     param(
-        [Parameter(Mandatory)][string]$EnvelopeJson,
-        [Parameter(Mandatory)][byte[]]$Key,
+        [Parameter(Mandatory)][byte[]]$PayloadBytes,
         [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
         [int]$MaximumAgeSeconds = 300,
         [int]$MaximumFutureSkewSeconds = 30
     )
 
-    if ([Text.Encoding]::UTF8.GetByteCount($EnvelopeJson) -gt 128KB) {
-        throw "Provisioner envelope exceeds the 128 KiB limit."
+    if ($PayloadBytes.Length -eq 0 -or $PayloadBytes.Length -gt 64KB) {
+        throw "Provisioner payload must contain between 1 byte and 64 KiB."
     }
-    $envelopeDocument = $null
     $payloadDocument = $null
     try {
-        $envelopeDocument = [System.Text.Json.JsonDocument]::Parse($EnvelopeJson)
-        $envelopeProperties = @(Get-StrictJsonProperties `
-            -Element $envelopeDocument.RootElement `
-            -ExpectedNames @("payloadBase64", "hmacSha256") `
-            -Context "Provisioner envelope")
-        $payloadBase64 = Get-ProvisionerStrictString `
-            -Properties $envelopeProperties `
-            -Name "payloadBase64" `
-            -Context "Provisioner envelope"
-        $hmacSha256 = Get-ProvisionerStrictString `
-            -Properties $envelopeProperties `
-            -Name "hmacSha256" `
-            -Context "Provisioner envelope"
-        if ($hmacSha256 -notmatch '^[0-9a-f]{64}$') {
-            throw "Provisioner envelope HMAC must be lowercase hexadecimal."
-        }
-        try {
-            $payloadBytes = [Convert]::FromBase64String($payloadBase64)
-        }
-        catch {
-            throw "Provisioner envelope payload is not valid base64."
-        }
-        if ($payloadBytes.Length -eq 0 -or $payloadBytes.Length -gt 64KB) {
-            throw "Provisioner payload must contain between 1 byte and 64 KiB."
-        }
-        $expectedHmacBytes = [Convert]::FromHexString(
-            (Get-ProvisionerHmacHex -Key $Key -Bytes $payloadBytes)
-        )
-        $actualHmacBytes = [Convert]::FromHexString($hmacSha256)
-        if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
-            $expectedHmacBytes,
-            $actualHmacBytes
-        )) {
-            throw "Provisioner envelope authentication failed."
-        }
-
-        $payloadJson = [Text.Encoding]::UTF8.GetString($payloadBytes)
+        $payloadJson = [Text.Encoding]::UTF8.GetString($PayloadBytes)
         $payloadDocument = [System.Text.Json.JsonDocument]::Parse($payloadJson)
         if ($payloadDocument.RootElement.ValueKind -ne
             [System.Text.Json.JsonValueKind]::Object) {
@@ -230,11 +192,70 @@ function Read-ProvisionerEnvelope {
             issuedAtUtc = $issuedAt.UtcDateTime.ToString("O")
             workspaceId = $workspaceId
             runtimeId = $runtimeId
-            payloadSha256 = Get-ProvisionerSha256Hex -Bytes $payloadBytes
+            payloadSha256 = Get-ProvisionerSha256Hex -Bytes $PayloadBytes
         }
     }
     finally {
         if ($null -ne $payloadDocument) { $payloadDocument.Dispose() }
+    }
+}
+
+function Read-ProvisionerEnvelope {
+    param(
+        [Parameter(Mandatory)][string]$EnvelopeJson,
+        [Parameter(Mandatory)][byte[]]$Key,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
+        [int]$MaximumAgeSeconds = 300,
+        [int]$MaximumFutureSkewSeconds = 30
+    )
+
+    if ([Text.Encoding]::UTF8.GetByteCount($EnvelopeJson) -gt 128KB) {
+        throw "Provisioner envelope exceeds the 128 KiB limit."
+    }
+    $envelopeDocument = $null
+    try {
+        $envelopeDocument = [System.Text.Json.JsonDocument]::Parse($EnvelopeJson)
+        $envelopeProperties = @(Get-StrictJsonProperties `
+            -Element $envelopeDocument.RootElement `
+            -ExpectedNames @("payloadBase64", "hmacSha256") `
+            -Context "Provisioner envelope")
+        $payloadBase64 = Get-ProvisionerStrictString `
+            -Properties $envelopeProperties `
+            -Name "payloadBase64" `
+            -Context "Provisioner envelope"
+        $hmacSha256 = Get-ProvisionerStrictString `
+            -Properties $envelopeProperties `
+            -Name "hmacSha256" `
+            -Context "Provisioner envelope"
+        if ($hmacSha256 -notmatch '^[0-9a-f]{64}$') {
+            throw "Provisioner envelope HMAC must be lowercase hexadecimal."
+        }
+        try {
+            $payloadBytes = [Convert]::FromBase64String($payloadBase64)
+        }
+        catch {
+            throw "Provisioner envelope payload is not valid base64."
+        }
+        if ($payloadBytes.Length -eq 0 -or $payloadBytes.Length -gt 64KB) {
+            throw "Provisioner payload must contain between 1 byte and 64 KiB."
+        }
+        $expectedHmacBytes = [Convert]::FromHexString(
+            (Get-ProvisionerHmacHex -Key $Key -Bytes $payloadBytes)
+        )
+        $actualHmacBytes = [Convert]::FromHexString($hmacSha256)
+        if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals(
+            $expectedHmacBytes,
+            $actualHmacBytes
+        )) {
+            throw "Provisioner envelope authentication failed."
+        }
+        return Read-ProvisionerPayload `
+            -PayloadBytes $payloadBytes `
+            -Now $Now `
+            -MaximumAgeSeconds $MaximumAgeSeconds `
+            -MaximumFutureSkewSeconds $MaximumFutureSkewSeconds
+    }
+    finally {
         if ($null -ne $envelopeDocument) { $envelopeDocument.Dispose() }
     }
 }

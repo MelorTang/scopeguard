@@ -199,6 +199,31 @@ OS-protected channel, define key or handle bootstrap without renderer access,
 pin the signed Broker/runtime identities, and own the registry and recovery
 roots. Until then the renderer-to-Provisioner boundary is not approved.
 
+## Installed service transport prototype
+
+The next prototype replaces the shared HMAC key with an OS-authenticated local
+transport. A native SCM service runs as LocalSystem, invokes startup recovery
+before reporting `SERVICE_RUNNING`, then accepts length-bounded payloads on a
+local-only named pipe. The pipe DACL permits only LocalSystem and the registered
+Desktop user SID. After connection, the service impersonates the client to
+verify its token user, resolves the named-pipe client process ID, and requires
+the canonical client image path and SHA-256 to match the administrator-installed
+Broker image.
+
+The service re-verifies SHA-256 pins for PowerShell, the service Worker,
+Provisioner and lifecycle scripts, runtime-pack verifier, registry, and native
+launcher before every dispatch. The LocalSystem Worker receives one raw payload
+through a service-owned spool, applies the same exact request schema, and can
+only call prepare or cleanup. Worker processes run in a kill-on-close Job with a
+fixed timeout and bounded response. Authentication/framing failures close the
+pipe without a diagnostic oracle.
+
+This closes the prototype's shared-secret bootstrap problem, but image hashing
+is not a substitute for code signing. Production must install signed service,
+Broker, launcher, Worker, and runtime artifacts below protected roots, define
+upgrade/rollback and service recovery, and connect the client mode to the real
+Execution Broker rather than exposing it as a test executable.
+
 ## Capability and metadata threat decision
 
 LPAC remains preferred because it disregards ambient `ALL APPLICATION

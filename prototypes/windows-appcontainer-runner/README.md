@@ -145,6 +145,29 @@ Profile creation, after recording the Profile, and after ledger persistence.
 Windows Server 2022 CI produced the same 9/9 result while retaining the original
 20/20 request validation and 7/7 Profile/ACL lifecycle result.
 
+Validate the installed SCM service and authenticated local transport with:
+
+```powershell
+pwsh -File prototypes/windows-appcontainer-runner/provisioner-service-integration-test.ps1
+```
+
+The native service runs as LocalSystem and completes startup recovery before it
+reports `SERVICE_RUNNING` or opens its local named pipe. Pipe access is limited
+to LocalSystem and one registered Desktop user SID. Every connection is also
+bound to an administrator-installed Broker image by canonical path and SHA-256.
+The service re-verifies pinned PowerShell, Worker, Provisioner, lifecycle,
+runtime verifier, registry, and launcher files before each dispatch. It passes
+only a bounded raw Provisioner payload to a LocalSystem Worker through a
+service-owned request spool; no command, arbitrary path, environment, prompt,
+document, provider key, or MCP credential is accepted by this interface.
+
+The integration fixture installs the service and runtime under a protected
+`ProgramData` root, exercises prepare/cleanup and restart recovery, rejects a
+copied client image and malformed request, and proves pinned Worker tampering
+fails before dispatch. This remains a prototype: production still requires
+signed service/Broker/runtime distribution, a real installer and upgrade model,
+the Desktop Broker adapter, and Windows 10 x64 validation.
+
 The Desktop Broker matrix starts two concurrent Conversation identities under a native Broker-held
 outer Job. It cancels one launcher without disturbing the other, terminates the
 Desktop parent probe, verifies the Broker detects parent exit and clears every
