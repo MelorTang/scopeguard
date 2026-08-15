@@ -62,12 +62,11 @@ if ($BrokerSid -notmatch '^S-1-(?:\d+-){1,14}\d+$') {
     throw "BrokerSid is invalid."
 }
 
-$verifierArguments = @("-PackageRoot", $PackageRoot)
+$verifierArguments = @{ PackageRoot = $PackageRoot }
 if (-not $AllowUnsignedDevelopmentPackage) {
-    $verifierArguments += "-RequireTrustedSignature"
+    $verifierArguments.RequireTrustedSignature = $true
 }
 & (Join-Path $PSScriptRoot "verify-managed-companion.ps1") @verifierArguments | Out-Host
-if ($LASTEXITCODE -ne 0) { throw "Source companion package verification failed." }
 
 $manifestPath = Join-Path $PackageRoot "managed-companion-manifest.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 12
@@ -98,9 +97,12 @@ try {
     Remove-Item -LiteralPath $backupRoot -Recurse -Force -ErrorAction SilentlyContinue
     Copy-ManagedDirectoryContents -Source $PackageRoot -Destination $stageRoot
     Set-ManagedInstallAcl -Path $stageRoot
+    $stagedVerifierArguments = @{ PackageRoot = $stageRoot }
+    if (-not $AllowUnsignedDevelopmentPackage) {
+        $stagedVerifierArguments.RequireTrustedSignature = $true
+    }
     & (Join-Path $PSScriptRoot "verify-managed-companion.ps1") `
-        -PackageRoot $stageRoot | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Staged companion package verification failed." }
+        @stagedVerifierArguments | Out-Host
 
     # Quiesce the old service before changing its pinned registry or payload.
     if ($existingService) {

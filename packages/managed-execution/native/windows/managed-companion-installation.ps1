@@ -131,6 +131,10 @@ function Set-ManagedInstallAcl {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to protect the managed installation root."
     }
+    & icacls.exe "$Path\*" /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to inherit the managed installation ACL into its payload."
+    }
 }
 
 function Set-ManagedStateAcl {
@@ -141,6 +145,10 @@ function Set-ManagedStateAcl {
         '*S-1-5-32-544:(OI)(CI)(F)' /T /C /Q | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to protect the managed state root."
+    }
+    & icacls.exe "$Path\*" /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to inherit the managed state ACL into its contents."
     }
 }
 
