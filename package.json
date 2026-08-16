@@ -14,7 +14,8 @@
     "package:win": "pnpm --filter @scopeguard/desktop package:win",
     "package:managed:win": "pwsh -File packages/managed-execution/native/windows/build-managed-companion.ps1",
     "test:managed:install:win": "pwsh -File packages/managed-execution/native/windows/managed-companion-installation-test.ps1",
-    "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider"
+    "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider",
+    "pilot:local": "pnpm --filter @scopeguard/desktop pilot:local"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
