@@ -3,7 +3,6 @@ import {
   Columns2,
   Columns3,
   Columns4,
-  PanelRight,
   Plus,
   Square,
 } from "lucide-react";
@@ -20,18 +19,18 @@ const SPLIT_OPTIONS = [
 
 export function WorkspaceToolbar(props: {
   workspace: WorkspaceController;
-  onNewTask: () => void;
+  onNewConversation: () => void;
 }): JSX.Element {
   const { workspace } = props;
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const layoutRef = useRef<HTMLDivElement>(null);
   const layoutButtonRef = useRef<HTMLButtonElement>(null);
   const workspaceId = workspace.selectedWorkspace?.id;
-  const taskCount = workspace.snapshot?.tasks.filter(
-    (task) => task.workspaceId === workspaceId,
+  const conversationCount = workspace.snapshot?.threads.filter(
+    (conversation) => conversation.projectId === workspaceId,
   ).length ?? 0;
-  const agentCount = workspace.snapshot?.agentInstances.filter(
-    (agent) => agent.workspaceId === workspaceId,
+  const agentCount = workspace.snapshot?.agentProfiles.filter(
+    (agent) => agent.projectId === workspaceId,
   ).length ?? 0;
 
   useEffect(() => {
@@ -108,17 +107,17 @@ export function WorkspaceToolbar(props: {
       <div className="workspace-toolbar__drag-region" aria-hidden="true" />
       <div className="workspace-toolbar__identity">
         <strong>{workspace.selectedWorkspace?.name ?? "ScopeGuard"}</strong>
-        <span>{taskCount} 项任务 · {agentCount} 个 Agent</span>
+        <span>{conversationCount} 个对话 · {agentCount} 个 Agent</span>
       </div>
       <div className="workbench-controls">
         <button
           type="button"
           className="button button--secondary button--compact"
-          onClick={props.onNewTask}
+          onClick={props.onNewConversation}
           disabled={!workspace.selectedWorkspace}
         >
           <Plus size={14} />
-          新建任务
+          新建对话
         </button>
         <div
           className="toolbar-menu-wrap"
@@ -164,15 +163,6 @@ export function WorkspaceToolbar(props: {
             </div>
           )}
         </div>
-        <button
-          type="button"
-          className={`icon-button ${workspace.inspectorOpen ? "is-active" : ""}`}
-          onClick={() => workspace.setInspectorOpen(!workspace.inspectorOpen)}
-          title="显示或隐藏侧边面板"
-          aria-label="显示或隐藏侧边面板"
-        >
-          <PanelRight size={17} />
-        </button>
       </div>
     </header>
   );

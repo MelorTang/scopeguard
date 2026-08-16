@@ -13,9 +13,6 @@ import type {
   ManagedExecutionStage,
   Project,
   ProviderConnectionResult,
-  RuntimeConnectionResult,
-  RuntimeNode,
-  SaveRuntimeNodeInput,
   RunEvent,
   ThreadMessage,
   UpdateThreadSettingsInput,
@@ -67,7 +64,7 @@ const DEFAULT_UI_STATE: PersistedUiState = {
   requestedSplitCount: 1,
   projectLayouts: {},
   sidebarCollapsed: false,
-  inspectorOpen: true,
+  inspectorOpen: false,
   professionalMode: false,
 };
 
@@ -112,17 +109,14 @@ export type WorkspaceController = {
   testProvider: (
     input: SaveProviderProfileRequest,
   ) => Promise<ProviderConnectionResult>;
-  saveRuntime: (input: SaveRuntimeNodeInput) => Promise<RuntimeNode>;
-  testRuntime: (runtimeNodeId: string) => Promise<RuntimeConnectionResult>;
-  updateAgentRuntime: (
-    agentInstanceId: string,
-    runtimeNodeId: string,
-  ) => Promise<AgentInstance>;
   createAgentThread: (
     profileInput: Omit<CreateAgentProfileInput, "projectId">,
     title: string,
   ) => Promise<AgentThread>;
-  createTaskThread: (agentInstanceId: string, title: string) => Promise<AgentThread>;
+  createConversation: (
+    agentProfileId: string,
+    title: string,
+  ) => Promise<AgentThread>;
   updateThreadSettings: (
     input: UpdateThreadSettingsInput,
   ) => Promise<AgentThread>;
@@ -158,9 +152,6 @@ export function useWorkspace(): WorkspaceController {
   >({});
   const [executionStageByThread, setExecutionStageByThread] = useState<
     Record<string, ManagedExecutionStage>
-  >({});
-  const [contextsByProject, setContextsByProject] = useState<
-    Record<string, ContextRevision | null>
   >({});
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [approvalFocus, setApprovalFocus] =
@@ -327,9 +318,7 @@ export function useWorkspace(): WorkspaceController {
   const activePaneIndex = visibleActivePaneIndex >= 0
     ? visibleActivePaneIndex
     : 0;
-  const activeContext = selectedWorkspace
-    ? contextsByProject[selectedWorkspace.id] ?? null
-    : null;
+  const activeContext: ContextRevision | null = null;
 
   useEffect(() => {
     for (const thread of openThreads) {
@@ -349,20 +338,6 @@ export function useWorkspace(): WorkspaceController {
         .catch((loadError: unknown) => setError(messageFromError(loadError)));
     }
   }, [messagesByThread, openThreads]);
-
-  useEffect(() => {
-    if (!selectedWorkspace || selectedWorkspace.id in contextsByProject) {
-      return;
-    }
-    void desktopApi.getWorkspaceContext(selectedWorkspace.id)
-      .then((context) => {
-        setContextsByProject((current) => ({
-          ...current,
-          [selectedWorkspace.id]: context,
-        }));
-      })
-      .catch((loadError: unknown) => setError(messageFromError(loadError)));
-  }, [contextsByProject, selectedWorkspace]);
 
   const selectProject = useCallback((projectId: string) => {
     setUi((current) => {
@@ -544,30 +519,6 @@ export function useWorkspace(): WorkspaceController {
     [],
   );
 
-  const saveRuntime = useCallback(async (input: SaveRuntimeNodeInput) => {
-    const runtime = await desktopApi.saveRuntimeNode(input);
-    await refresh();
-    return runtime;
-  }, [refresh]);
-
-  const testRuntime = useCallback(async (runtimeNodeId: string) => {
-    const result = await desktopApi.testRuntimeConnection(runtimeNodeId);
-    await refresh();
-    return result;
-  }, [refresh]);
-
-  const updateAgentRuntime = useCallback(async (
-    agentInstanceId: string,
-    runtimeNodeId: string,
-  ) => {
-    const instance = await desktopApi.updateAgentInstanceRuntime({
-      agentInstanceId,
-      runtimeNodeId,
-    });
-    await refresh();
-    return instance;
-  }, [refresh]);
-
   const createAgentThread = useCallback(
     async (
       profileInput: Omit<CreateAgentProfileInput, "projectId">,
@@ -592,34 +543,28 @@ export function useWorkspace(): WorkspaceController {
     [openThread, refresh, selectedProject],
   );
 
-  const createTaskThread = useCallback(async (
-    agentInstanceId: string,
+  const createConversation = useCallback(async (
+    agentProfileId: string,
     title: string,
   ) => {
-    if (!selectedProject || !selectedWorkspace) {
+    if (!selectedProject) {
       throw new Error("请先创建工作区。");
     }
-    const instance = snapshot?.agentInstances.find(
-      (item) => item.id === agentInstanceId,
+    const agent = snapshot?.agentProfiles.find(
+      (item) => item.id === agentProfileId && item.projectId === selectedProject.id,
     );
-    const definition = snapshot?.agentDefinitions.find(
-      (item) => item.id === instance?.agentDefinitionId,
-    );
-    const legacyProfile = snapshot?.agentProfiles.find(
-      (item) => item.id === definition?.id && item.projectId === selectedProject.id,
-    );
-    if (!instance || instance.workspaceId !== selectedWorkspace.id || !legacyProfile) {
-      throw new Error("这个 Agent 尚未接入当前可执行 Runtime。");
+    if (!agent) {
+      throw new Error("找不到当前工作区中的 Agent。");
     }
     const thread = await desktopApi.createThread({
       projectId: selectedProject.id,
-      agentProfileId: legacyProfile.id,
+      agentProfileId: agent.id,
       title: title.trim(),
     });
     await refresh();
     openThread(thread.id);
     return thread;
-  }, [openThread, refresh, selectedProject, selectedWorkspace, snapshot]);
+  }, [openThread, refresh, selectedProject, snapshot?.agentProfiles]);
 
   const updateThreadSettings = useCallback(async (
     input: UpdateThreadSettingsInput,
@@ -657,121 +602,19 @@ export function useWorkspace(): WorkspaceController {
     await refresh();
   }, [refresh]);
 
-  const resolveInboxItem = useCallback(async (inboxItemId: string) => {
-    await desktopApi.resolveInboxItem(inboxItemId);
-    await refresh();
-  }, [refresh]);
+  const resolveInboxItem = useCallback(async (_inboxItemId: string) =>
+    unavailableFeature("收件箱"), []);
 
-  const updateContext = useCallback(async (content: string) => {
-    if (!selectedWorkspace) {
-      throw new Error("当前没有选中的工作区。");
-    }
-    const activeRun = activeThread
-      ? snapshot?.activeRuns.find((run) => run.threadId === activeThread.id)
-      : null;
-    const revision = await desktopApi.publishWorkspaceContext({
-      workspaceId: selectedWorkspace.id,
-      title: "共享工作区上下文",
-      content,
-      scope: "workspace",
-      sourceThreadId: activeThread?.projectId === selectedWorkspace.id
-        ? activeThread.id
-        : undefined,
-      sourceRunId: activeThread?.projectId === selectedWorkspace.id
-        ? activeRun?.id
-        : undefined,
-      sourceAgentInstanceId: activeAgentInstance?.id,
-      publishedBy: "user",
-    });
-    setContextsByProject((current) => ({
-      ...current,
-      [selectedWorkspace.id]: revision,
-    }));
-    await refresh();
-    return revision;
-  }, [
-    activeAgentInstance?.id,
-    activeThread,
-    refresh,
-    selectedWorkspace,
-    snapshot?.activeRuns,
-  ]);
+  const updateContext = useCallback(async (_content: string) =>
+    unavailableFeature("共享上下文发布"), []);
 
-  const publishArtifactToContext = useCallback(async (artifactId: string) => {
-    if (!selectedWorkspace || !snapshot) {
-      throw new Error("当前没有选中的工作区。");
-    }
-    const artifact = snapshot.artifacts.find((item) => item.id === artifactId);
-    if (!artifact || artifact.workspaceId !== selectedWorkspace.id) {
-      throw new Error("找不到当前工作区中的成果。");
-    }
-    if (!artifact.content?.trim()) {
-      throw new Error("这个文件成果没有可发布的文本内容。");
-    }
-    const assignment = artifact.assignmentId
-      ? snapshot.assignments.find((item) => item.id === artifact.assignmentId)
-      : snapshot.assignments.find(
-          (item) =>
-            item.taskId === artifact.taskId &&
-            item.agentInstanceId === artifact.agentInstanceId,
-        );
-    const revision = await desktopApi.publishWorkspaceContext({
-      workspaceId: selectedWorkspace.id,
-      title: artifact.title,
-      content: artifact.content,
-      scope: "workspace",
-      sourceThreadId: assignment?.threadId ?? undefined,
-      sourceRunId: artifact.runId ?? undefined,
-      sourceAgentInstanceId: artifact.agentInstanceId,
-      sourceArtifactId: artifact.id,
-      publishedBy: "user",
-    });
-    setContextsByProject((current) => ({
-      ...current,
-      [selectedWorkspace.id]: revision,
-    }));
-    await refresh();
-    return revision;
-  }, [refresh, selectedWorkspace, snapshot]);
+  const publishArtifactToContext = useCallback(async (_artifactId: string) =>
+    unavailableFeature("Artifact 发布"), []);
 
   const createHandoff = useCallback(async (
     toAgentInstanceId: string,
     summary: string,
-  ) => {
-    if (!selectedWorkspace || !snapshot || !activeContext) {
-      throw new Error("请先发布共享上下文。");
-    }
-    const sourceArtifact = activeContext.sourceArtifactId
-      ? snapshot.artifacts.find(
-          (item) => item.id === activeContext.sourceArtifactId,
-        )
-      : null;
-    const fromAgentInstanceId = activeContext.sourceAgentInstanceId
-      ?? sourceArtifact?.agentInstanceId
-      ?? activeAgentInstance?.id;
-    const taskId = activeContext.taskId ?? sourceArtifact?.taskId ?? activeTask?.id;
-    if (!fromAgentInstanceId || !taskId) {
-      throw new Error("当前上下文缺少可交接的 Agent 或任务来源。");
-    }
-    const handoff = await desktopApi.createHandoff({
-      workspaceId: selectedWorkspace.id,
-      taskId,
-      fromAgentInstanceId,
-      toAgentInstanceId,
-      sourceRunId: activeContext.sourceRunId ?? sourceArtifact?.runId ?? undefined,
-      contextRevisionId: activeContext.id,
-      summary: summary.trim(),
-    });
-    await refresh();
-    return handoff;
-  }, [
-    activeAgentInstance?.id,
-    activeContext,
-    activeTask?.id,
-    refresh,
-    selectedWorkspace,
-    snapshot,
-  ]);
+  ) => unavailableFeature(`旧版 Handoff ${toAgentInstanceId}:${summary}`), []);
 
   const getRunForThread = useCallback(
     (threadId: string) =>
@@ -874,11 +717,8 @@ export function useWorkspace(): WorkspaceController {
     addProject,
     saveProvider,
     testProvider,
-    saveRuntime,
-    testRuntime,
-    updateAgentRuntime,
     createAgentThread,
-    createTaskThread,
+    createConversation,
     updateThreadSettings,
     chooseWorkspaceFiles,
     sendMessage,
@@ -1213,6 +1053,7 @@ function readUiState(): PersistedUiState {
       activePaneIndex: typeof parsed.activePaneIndex === "number"
         ? parsed.activePaneIndex
         : 0,
+      inspectorOpen: false,
       projectLayouts: readProjectLayouts(parsed.projectLayouts),
     };
   } catch {
@@ -1283,4 +1124,8 @@ function maxPaneCount(
 
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function unavailableFeature(name: string): never {
+  throw new Error(`${name} 已退出桌面端默认路径。`);
 }

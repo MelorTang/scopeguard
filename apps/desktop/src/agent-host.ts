@@ -2,19 +2,14 @@ import { randomUUID } from "node:crypto";
 import process from "node:process";
 
 import {
-  type PublishWorkspaceContextInput,
   ScopeGuardApplication,
+  type ScopeGuardCore,
   type SaveProviderProfileInput,
   type SecretVault,
 } from "@scopeguard/application";
 import {
-  runCliAgent,
-  shutdownRunningCliAgents,
-} from "@scopeguard/cli-runtime";
-import {
   createProviderAdapter,
 } from "@scopeguard/provider-adapters";
-import { HttpRemoteRuntimeClient } from "@scopeguard/remote-runtime";
 import { ScopeGuardStore } from "@scopeguard/storage-sqlite";
 import {
   ScopeGuardToolRegistry,
@@ -26,8 +21,6 @@ import {
 import {
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
-  type UpdateTaskStatusRequest,
-  type UpdateAgentInstanceRuntimeRequest,
   type AgentHostRequest,
   type AgentHostResponse,
   type AgentHostSecretRequest,
@@ -40,19 +33,11 @@ import {
   type UpdateProjectContextRequest,
 } from "@scopeguard/ipc-contracts";
 import type {
-  CreateAgentDefinitionInput,
-  CreateAgentInstanceInput,
   CreateAgentProfileInput,
-  CreateArtifactInput,
-  CreateHandoffInput,
   CreateProjectInput,
-  CreateScheduleInput,
-  CreateTaskAssignmentInput,
-  CreateTaskInput,
   CreateThreadInput,
   CreateWorkspaceInput,
   Id,
-  SaveRuntimeNodeInput,
   StartRunInput,
   UpdateThreadSettingsInput,
 } from "@scopeguard/domain";
@@ -155,26 +140,11 @@ const tools = new ScopeGuardToolRegistry(
     fullAccess: new CurrentUserManagedExecutionAdapter(),
   }),
 );
-const application = new ScopeGuardApplication({
+const application: ScopeGuardCore = new ScopeGuardApplication({
   store,
   secrets,
   providerFactory: (protocol) => createProviderAdapter({ protocol }),
   tools,
-  cliRunner: {
-    run: ({ config, prompt, projectRoot, signal, onOutput }) =>
-      runCliAgent({
-        command: config.command,
-        args: config.args,
-        cwd: projectRoot,
-        env: {},
-        prompt,
-        projectRoot,
-        signal,
-        onOutput,
-      }),
-  },
-  remoteClientFactory: ({ baseUrl, token }) =>
-    new HttpRemoteRuntimeClient({ baseUrl, token }),
   publish: (event) => {
     parentPort.postMessage({
       type: "host-run-event",
@@ -211,7 +181,6 @@ parentPort.postMessage({
   type: "host-ready",
   interruptedRuns: initialized.interruptedRuns,
 } satisfies AgentHostToMainMessage);
-application.resumeRemoteRuns();
 
 let shuttingDown = false;
 process.once("SIGINT", () => {
@@ -228,10 +197,7 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   try {
     const applicationShutdown = application.shutdown();
-    const runtimeShutdown = Promise.allSettled([
-      tools.shutdown(),
-      shutdownRunningCliAgents(),
-    ]);
+    const runtimeShutdown = tools.shutdown();
     await Promise.allSettled([applicationShutdown, runtimeShutdown]);
   } finally {
     store.close();
@@ -246,7 +212,7 @@ async function handleRequest(request: AgentHostRequest): Promise<void> {
     ok: true,
   };
   try {
-    response.result = await dispatch(request);
+    response.result = await dispatch(application, request);
   } catch (error) {
     response.ok = false;
     response.error = {
@@ -257,99 +223,65 @@ async function handleRequest(request: AgentHostRequest): Promise<void> {
   parentPort.postMessage(response satisfies AgentHostToMainMessage);
 }
 
-async function dispatch(request: AgentHostRequest): Promise<unknown> {
+async function dispatch(
+  core: Pick<ScopeGuardCore, AgentHostRequest["method"]>,
+  request: AgentHostRequest,
+): Promise<unknown> {
   switch (request.method) {
     case "getWorkspaceSnapshot":
-      return toDesktopWorkspaceSnapshot(application.getWorkspaceSnapshot());
+      return toDesktopWorkspaceSnapshot(core.getWorkspaceSnapshot());
     case "createWorkspace":
-      return application.createWorkspace(request.payload as CreateWorkspaceInput);
-    case "saveRuntimeNode":
-      return application.saveRuntimeNode(request.payload as SaveRuntimeNodeInput);
-    case "testRuntimeConnection":
-      return application.testRuntimeConnection(request.payload as Id);
-    case "createAgentDefinition":
-      return application.createAgentDefinition(
-        request.payload as CreateAgentDefinitionInput,
-      );
-    case "createAgentInstance":
-      return application.createAgentInstance(
-        request.payload as CreateAgentInstanceInput,
-      );
-    case "updateAgentInstanceRuntime": {
-      const input = request.payload as UpdateAgentInstanceRuntimeRequest;
-      return application.updateAgentInstanceRuntime(
-        input.agentInstanceId,
-        input.runtimeNodeId,
-      );
-    }
-    case "createTask":
-      return application.createTask(request.payload as CreateTaskInput);
-    case "updateTaskStatus": {
-      const input = request.payload as UpdateTaskStatusRequest;
-      return application.updateTaskStatus(input.taskId, input.status);
-    }
-    case "assignAgentToTask":
-      return application.assignAgentToTask(
-        request.payload as CreateTaskAssignmentInput,
-      );
-    case "createArtifact":
-      return application.createArtifact(request.payload as CreateArtifactInput);
-    case "getWorkspaceContext":
-      return application.getWorkspaceContext(request.payload as Id);
-    case "publishWorkspaceContext":
-      return application.publishWorkspaceContext(
-        request.payload as PublishWorkspaceContextInput,
-      );
-    case "createHandoff":
-      return application.createHandoff(request.payload as CreateHandoffInput);
-    case "createSchedule":
-      return application.createSchedule(request.payload as CreateScheduleInput);
-    case "resolveInboxItem":
-      return application.resolveInboxItem(request.payload as Id);
+      return core.createWorkspace(request.payload as CreateWorkspaceInput);
     case "addProject":
-      return application.addProject(request.payload as CreateProjectInput);
+      return core.addProject(request.payload as CreateProjectInput);
     case "saveProviderProfile":
       return toProviderProfileView(
-        await application.saveProviderProfile(
+        await core.saveProviderProfile(
           request.payload as SaveProviderProfileInput,
         ),
       );
     case "deleteProviderProfile":
-      return application.deleteProviderProfile(request.payload as Id);
+      return core.deleteProviderProfile(request.payload as Id);
     case "testProviderConnection":
-      return application.testProviderConnection(
+      return core.testProviderConnection(
         request.payload as SaveProviderProfileInput,
       );
     case "createAgentProfile":
-      return application.createAgentProfile(
+      return core.createAgentProfile(
         request.payload as CreateAgentProfileInput,
       );
     case "createThread":
-      return application.createThread(request.payload as CreateThreadInput);
+      return core.createThread(request.payload as CreateThreadInput);
     case "updateThreadSettings":
-      return application.updateThreadSettings(
+      return core.updateThreadSettings(
         request.payload as UpdateThreadSettingsInput,
       );
     case "listThreadMessages":
-      return application.listThreadMessages(request.payload as Id);
+      return core.listThreadMessages(request.payload as Id);
     case "startRun":
-      return application.startRun(request.payload as StartRunInput);
+      return core.startRun(request.payload as StartRunInput);
     case "cancelRun":
-      return application.cancelRun(request.payload as Id);
+      return core.cancelRun(request.payload as Id);
     case "resolveApproval": {
       const input = request.payload as ResolveApprovalRequest;
-      return application.resolveApproval(input.approvalId, input.decision);
+      return core.resolveApproval(input.approvalId, input.decision);
     }
     case "getProjectContext":
-      return application.getProjectContext(request.payload as Id);
+      return core.getProjectContext(request.payload as Id);
     case "updateProjectContext": {
       const input = request.payload as UpdateProjectContextRequest;
-      return application.updateProjectContext(
+      return core.updateProjectContext(
         input.projectId,
         input.content,
         input.sourceThreadId,
         input.sourceRunId,
       );
     }
+    default:
+      return assertNever(request.method);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported Agent host method: ${String(value)}`);
 }

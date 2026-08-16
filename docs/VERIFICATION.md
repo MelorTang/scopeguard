@@ -1,8 +1,8 @@
-# ScopeGuard First-Stage Verification
+# ScopeGuard Core Verification
 
 This gate separates deterministic code checks, Renderer-only visual checks, and
-real Electron behavior. Web preview results never substitute for Desktop,
-SecretVault, SQLite, Provider, tool, or remote Runtime evidence.
+real Electron behavior. Web preview never substitutes for Desktop, SecretVault,
+SQLite, Provider, file-tool, or managed-execution evidence.
 
 ## 1. Automated Gate
 
@@ -18,38 +18,30 @@ git diff --check
 
 Required coverage includes:
 
-- Workspace/Agent/Task/Artifact/Handoff/Inbox transitions and schema v1-v7 migration.
-- two concurrent Runs with independent cancellation.
-- three-Agent transcript isolation and explicit Context/Handoff sharing.
-- Context and Artifact provenance rejection for forged source relationships.
-- tool path confinement, approval denial, process-tree cancellation, and partial recovery.
-- explicit Agent input requests that pause and resume the same Run through Inbox.
-- successful `write_file` execution registered as a provenance-rich file Artifact.
-- Provider and Runtime credential redaction plus SecretVault rollback behavior.
-- Runtime HTTP authentication, idempotent submission, cancellation, event cursor,
-  non-loopback HTTPS enforcement, and database secret scan.
-- Desktop shutdown/restart reconnection to a still-running remote Run.
-- IPC payload validation, sender trust, picker authorization, Renderer navigation,
-  and Agent-host supervision.
-- managed-execution routing, private Agent Host/Broker IPC, per-execution cancel,
-  durable Profile intent, LPAC lifecycle cleanup, and unknown-effect projection.
+- schema migration and non-destructive retention of legacy database history;
+- native Agent profile creation and rejection of legacy execution kinds;
+- independent concurrent Runs and per-Run cancellation;
+- conversation transcript isolation and explicit Project Context use;
+- immutable request manifests, settings snapshots, and usage persistence;
+- approval denial, automatic approval, and cancellation while waiting;
+- user-input continuation in the same Run and conversation;
+- path confinement, command routing, partial-output recovery, and unknown effects;
+- Provider credential redaction and SecretVault rollback;
+- Agent-host shutdown interruption, IPC validation, sender trust, native picker
+  authorization, navigation restrictions, and host supervision.
 
-The Windows Server 2022 gate is defined in
-`.github/workflows/managed-execution-windows.yml`. It runs the TypeScript gate,
-the complete AppContainer/LPAC denial matrices, runtime Capability and runtime
-pack checks, Provisioner request/startup/service recovery, Desktop parent Job
-cleanup, and the real product `WindowsLpacManagedExecutionAdapter` against the
-installed fixture service.
+The Windows managed-execution matrix remains defined in
+`.github/workflows/managed-execution-windows.yml`.
 
-## 2. Deterministic Services
+## 2. Deterministic Provider
 
-Start the test Provider in terminal A:
+Start the local test Provider:
 
 ```bash
 pnpm smoke:provider
 ```
 
-Expected URL and key:
+Use:
 
 ```text
 URL: http://127.0.0.1:47821/v1
@@ -57,24 +49,9 @@ API Key: sg-fake-desktop-validation-key
 Model: smoke-model
 ```
 
-Build and start the persistent Runtime in terminal B:
-
-```bash
-pnpm runtime:build
-SCOPEGUARD_RUNTIME_TOKEN='sg-runtime-smoke-token' \
-SCOPEGUARD_RUNTIME_HOST='127.0.0.1' \
-SCOPEGUARD_RUNTIME_PORT='47822' \
-SCOPEGUARD_RUNTIME_DB='/tmp/scopeguard-runtime-smoke/runtime.sqlite' \
-pnpm runtime:start
-```
-
-The remote Runtime URL is `http://127.0.0.1:47822`. Keep both services alive
-through the Desktop exit/reopen test.
-
 ## 3. Fresh Electron Gate
 
-Build and launch with isolated user data in terminal C. This avoids touching a
-normal ScopeGuard profile:
+Launch with isolated user data so a normal ScopeGuard profile is untouched:
 
 ```bash
 pnpm build
@@ -83,191 +60,72 @@ pnpm --filter @scopeguard/desktop exec electron . \
   --user-data-dir="$SCOPEGUARD_SMOKE_DATA"
 ```
 
-Verify the first-run path without editing source or SQLite:
+Verify:
 
-1. Create a Workspace named `行业简报`; do not select a local folder.
-2. Add the test Provider above, run connection test, and save it.
-3. Add Runtime `常驻节点` with URL `http://127.0.0.1:47822` and token
-   `sg-runtime-smoke-token`; test connection and confirm `已连接`.
-4. Create three API Agents from `调研`, `核验`, and `文档` templates. Bind each
-   to `常驻节点`. Confirm Local CLI is unavailable because the Workspace has no folder.
-5. Confirm each Agent has its own initial Task and can be opened in an independent pane.
+1. Create one Workspace without a folder and configure the test Provider.
+2. Create two native Agents with different instructions.
+3. Create two conversations and display them in parallel panes.
+4. Start both before either finishes; cancel one and confirm the other completes.
+5. Restart the cancelled conversation and confirm it can complete independently.
+6. Confirm no Runtime, Task, Artifact, Handoff, Inbox, or external CLI setup is
+   required by the workflow.
 
-## 4. Concurrent Isolation Gate
+## 4. Conversation And Context Gate
 
-1. Show the 调研 and 核验 tasks in two panes.
-2. Start both Runs before either completes.
-3. Confirm both display running/streaming state at the same time.
-4. Stop one Run and confirm only that Task is cancelled; the other completes.
-5. Retry the cancelled Task and confirm it can complete independently.
-6. Confirm completion creates a Markdown Artifact and a completion Inbox item.
+1. Confirm the conversation's Agent cannot be changed.
+2. Change its model override and execution profile, then confirm the next Run
+   snapshot records both values without changing the Agent.
+3. Put a private marker in conversation A and run conversation B; Provider input
+   for B must not contain A's transcript.
+4. Publish a short Project Context revision from A, then run B; B may receive the
+   explicit revision while A's remaining transcript stays private.
+5. Trigger a user-input request, answer in the same composer, and confirm the
+   same Run resumes instead of creating another Run.
 
-The automated test additionally asserts that private transcript markers from
-Agent A are absent from Agent B and C Provider requests.
+## 5. Local Tool Gate
 
-## 5. Remote Exit And Reconnect Gate
+Use a disposable folder in a separate Workspace:
 
-1. In any Agent task, send `[slow] 生成一份远端续跑验证报告`.
-2. Wait until the Run is shown as running on `常驻节点`.
-3. Quit ScopeGuard completely with `Cmd+Q`; do not stop terminal A or B.
-4. Wait at least 7 seconds.
-5. Re-run the same Electron command with the same `SCOPEGUARD_SMOKE_DATA` value.
-6. Confirm the original Run is completed, its events/messages are restored, and
-   exactly one final Artifact is visible with the correct Agent, Task, Run, and time.
+1. Confirm `read_file` cannot escape the selected root.
+2. Deny a write once and confirm no file is created.
+3. Retry and approve; confirm the file appears only after approval.
+4. Cancel one command while another conversation runs; the unrelated Run must
+   remain active.
+5. On Windows, run a command under Request Approval, Auto Approve, and Full
+   Access. The first two must use the bounded path; Full Access must be labeled
+   as current-user execution.
+6. Make the bounded adapter unavailable and confirm execution fails closed.
 
-Stopping only Desktop must not cancel the remote job. Stopping the Runtime
-process itself is outside first-stage continuity because Provider credentials
-are intentionally not persisted remotely.
+## 6. Restart And Recovery Gate
 
-## 6. Non-coding Three-Agent Gate
+1. Save an unsent draft and multi-pane layout, then quit and reopen.
+2. Confirm Workspace, Agents, conversations, messages, layout, and draft return.
+3. Quit during a native Run; on restart it must be `interrupted`, retain partial
+   output, and allow retry.
+4. Seed a non-terminal legacy remote-bound Run in a migration fixture; startup
+   must interrupt it rather than wait for the removed remote owner.
+5. Recover an unfinished non-idempotent tool call and confirm its effect remains
+   unknown.
 
-1. Run 调研 Agent with `整理某行业本周三条值得关注的变化，区分事实与假设`.
-2. Open its Artifact, inspect provenance, and choose `发布` to create a new Context revision.
-3. In Context, send a Handoff to 核验 Agent with a concrete verification brief.
-4. Run 核验 Agent. Confirm the Handoff moves from `等待接收` to `已接收`, and
-   that its Run records the published Context version.
-5. Publish the核验 Artifact, then send a Handoff to 文档 Agent.
-6. Run 文档 Agent to generate the final Markdown brief.
-7. Confirm the final Artifact is previewable and traces to the 文档 Agent,
-   its Task, Assignment, Run, version, and creation time.
-8. Confirm no UI action exposes the source Agent's full private Thread as shared context.
+## 7. Security Gate
 
-## 7. Local Tool And Approval Gate
+- Search desktop SQLite, logs, and build output for the test API key; it must not
+  appear.
+- Reopened Provider dialogs expose only credential presence, never the key or
+  SecretVault reference.
+- Attempt directory registration without the native picker; it must fail.
+- Attempt traversal and symlink escapes; they must fail.
+- Confirm BrowserWindow uses `sandbox: true`, `contextIsolation: true`,
+  `nodeIntegration: false`, blocks webviews and popups, and restricts navigation.
 
-Use a separate Workspace opened from a disposable local folder:
+## 8. Visual Gate
 
-1. Create a native local Agent with read `允许`, write `每次询问`, command `每次询问`.
-2. Send `[tool:read]`; confirm `package.json` is read only inside the selected root.
-3. Send `[tool:write]`; deny once and confirm no file is created.
-4. Retry and allow once; confirm `scopeguard-write-smoke.txt` is created only after approval.
-5. Confirm the successful write appears in Artifacts with Agent, Task, Run, MIME type,
-   absolute file path, version, and generation time.
-6. Send `[tool:input]`; confirm the Run and Task change to `等待输入`, an Inbox item
-   displays the exact question, and the composer remains available.
-7. Reply in the same conversation and confirm the same Run resumes, the Inbox item
-   resolves, and the reply is returned to the Agent without entering another Thread.
-8. Send `[tool:command]`; verify the exact command appears in Inbox before execution.
-9. Remove the disposable folder after the test.
-
-On Windows, repeat `run_command` once in each execution profile:
-
-1. Request Approval must wait for the user, then show `准备沙箱`, `沙箱运行中`,
-   and `正在清理` before completion.
-2. Auto Approve must not prompt, but must show the same sandbox stages and policy.
-3. Full Access must run through the explicit current-user path and must not be
-   presented as sandboxed.
-4. Stop command A while command B runs in another pane; B must remain active.
-5. Quit Desktop with a bounded command tree running; every Broker, launcher,
-   Node, CMD, and descendant PID must be absent afterward.
-6. Stop/restart the Provisioner service with prepared ACL state and restart
-   Desktop with a Profile intent; both recovery paths must converge to clean.
-
-## 8. Restart And Recovery Gate
-
-1. Enter unsent message and Context drafts, configure a multi-pane layout, then quit/reopen.
-2. Confirm Workspace, Agents, Tasks, Threads, messages, Context, Inbox, Artifacts,
-   drafts, active panes, inspector state, and split count return.
-3. Quit during a local Run and confirm it returns as interrupted with partial output and retry.
-4. Confirm a remote-bound Run is not falsely converted to interrupted and instead reconciles.
-
-## 9. Security Checks
-
-- Search desktop SQLite, remote SQLite, normal logs, and repository output for
-  `sg-fake-desktop-validation-key` and `sg-runtime-smoke-token`; neither may appear.
-- Confirm stored secret inputs are blank when dialogs reopen and snapshots expose
-  only `hasCredential`, never a secret or SecretVault reference.
-- Attempt directory registration over IPC without the native picker; it must fail.
-- Attempt file traversal and symlink escapes; they must fail.
-- Deny a command approval and confirm execution count remains zero.
-- Test an invalid Runtime token: node becomes offline, affected Agent gets one
-  deduplicated Inbox item, and the token is absent from the error.
-- Confirm BrowserWindow has `sandbox: true`, `contextIsolation: true`,
-  `nodeIntegration: false`, blocked webviews, denied popups, and restricted navigation.
-
-## 10. Visual And Accessibility Gate
-
-- `1024x720`: one pane, composer reachable, inspector scrolls without covering actions.
-- `1280x800`: two-pane layout remains usable without horizontal overflow.
-- `1440x900`: two panes plus inspector, no overlaps.
-- `1600x900`: three panes with inspector closed, no text clipping.
-- Keyboard-only: Workspace/Task navigation, dialogs, pane controls, Inbox,
-  approval decisions, Artifact publish, and Handoff are reachable with visible focus.
+- Check 1024x720, 1280x800, 1440x900, and 1600x900.
+- One to four panes must preserve reachable composers and independent Run states.
+- Sidebar selection must not duplicate the pane hierarchy.
+- Keyboard focus is visible; dialogs and approval actions are keyboard reachable.
 - Reduced-motion mode removes non-essential animation.
-- A fresh console contains no current Renderer errors or React hook-order warnings.
+- A fresh console has no Renderer errors or React hook-order warnings.
 
-## 11. Latest Local Evidence
-
-Verified on macOS on 2026-08-01 from an isolated Electron user-data directory:
-
-- `pnpm test`: 119 tests passed across 10 packages.
-- `pnpm typecheck`, `pnpm build`, and `git diff --check`: passed.
-- Fresh production Electron created one no-folder Workspace, one Provider, one
-  authenticated remote Runtime, and three remote Agents without source or database edits.
-- A `[slow]` remote Run completed while Desktop was fully exited. Before reopen,
-  remote SQLite showed `completed`, 11 events, and one Artifact; Desktop then
-  reconciled the Run and imported exactly one Artifact.
-- Real Electron completed 调研 -> 核验 -> 文档 with two explicit Context
-  publications, two Handoffs moving from pending to accepted, and three
-  Agent-attributed Artifacts.
-- Two additional remote Runs overlapped for about 4.7 seconds. UTC intervals
-  were `17:50:18.581-17:50:24.051` and `17:50:19.291-17:50:24.756`.
-- A real local `run_command` proposal appeared in both the Thread and Inbox.
-  Denial persisted `tool_status=denied` and `approval_status=denied`.
-- Application integration verified that `request_user_input` moves the Run,
-  Task, and Assignment to waiting-input, creates a durable Inbox question, and
-  resumes the same Run after a reply. The Web preview completed the matching
-  `/ask-input` flow through the visible composer and task locator.
-- A successful `write_file` integration registered a separate file Artifact
-  with Agent, Task, Assignment, Run, absolute path, MIME type, and version provenance.
-- Restart restored the selected Workspace, two-pane layout, Threads, messages,
-  Inbox, Artifacts, and an unsent draft.
-- Plaintext scan across desktop and remote test data found neither test credential;
-  desktop data directory, SQLite, encrypted secret file, and Runtime SQLite had
-  owner-only permissions.
-- Web layout checks at 1024, 1280, 1440, and 1600 px found no document overflow,
-  off-viewport controls, or clipped buttons. Fresh console had 0 errors and 0
-  warnings; reduced-motion removed animation and keyboard focus had a visible 2 px outline.
-
-Managed execution was additionally verified on 2026-08-15:
-
-- macOS `pnpm test`, `pnpm typecheck`, and `pnpm build` passed with the formal
-  managed-execution package and private Desktop Broker IPC enabled.
-- Web preview checks at 1440x900 and 1024x720 found no overlap in the three-way
-  execution-profile control or Agent dialog; the console reported no errors.
-- A clean Windows 11 worktree passed typecheck after deleting package build
-  output, proving the package dependency order does not rely on stale `dist` files.
-- Windows 11 25H2 build `26200.9168` passed all 14 installed-service checks from
-  an interactive user session. The real product adapter streamed one stdout
-  event, completed the exact five-stage lifecycle, confirmed termination and
-  cleanup, and returned `effect=confirmed`.
-- [Windows Server 2022 run 31873628707](https://github.com/MelorTang/scopeguard/actions/runs/31873628707)
-  passed the full TypeScript, AppContainer, LPAC, Capability, runtime-pack,
-  Provisioner, installed-service, crash-recovery, and Desktop Broker matrix.
-- OpenSSH runs execute in Session 0 on that client and are not valid AppContainer
-  success evidence. The same baseline and product probes passed when scheduled
-  into the logged-in user's interactive session.
-
-The internal Windows package pipeline was verified on 2026-08-15:
-
-- [Windows Server 2022 run 31887615478](https://github.com/MelorTang/scopeguard/actions/runs/31887615478)
-  built a self-contained x64 Electron ASAR and NSIS per-user installer from a
-  frozen lockfile. Package checks rejected unresolved Workspace imports,
-  source files, tests, source maps, credentials, and unexpected files.
-- Windows 11 25H2 build `26200.9168` silently installed the unsigned package.
-  An interactive-user smoke test observed the `ScopeGuard` main window and four
-  live descendants, then closed the window gracefully and confirmed that no
-  packaged process remained.
-- Silent uninstall returned zero and removed the installation directory,
-  uninstall registration, desktop shortcut, and Start menu shortcut. The
-  application user-data directory was intentionally preserved.
-- This internal package contains the Desktop application only. It does not ship
-  the signed Provisioner, Broker, launcher, or managed Node runtime pack, so the
-  two bounded execution profiles continue to fail closed in this artifact.
-
-## 12. Release-External Work
-
-Source MVP verification does not cover signed/notarized installers, the managed
-Windows runtime installation, upgrade/rollback/repair, auto-update, crash
-reporting, privacy policy, Linux packaging, production TLS operations, or public
-Runtime hardening. Those are release engineering work, not evidence for the
-first-stage product loop.
+Record current evidence only after all applicable gates pass. Historical remote
+Runtime and control-plane demonstrations are not evidence for this core.

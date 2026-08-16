@@ -16,9 +16,9 @@ Profile intent recovery, ACL lifecycle, launcher policy, Job cleanup, or final
 Profile deletion cannot be verified, the command fails closed. It never falls
 back to Full Access.
 
-Local CLI Agents remain explicit Full Access integrations outside this managed
-native-Agent command path. The user-opened Workspace terminal is also outside
-the Agent execution boundary.
+External Agent CLIs and user-opened terminals are outside ScopeGuard's managed
+Run lifecycle. ScopeGuard may provide a terminal entry point, but it does not
+own those sessions, permissions, recovery, or output.
 
 ## Process Boundary
 

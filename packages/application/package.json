@@ -15,14 +15,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "pnpm --filter @scopeguard/agent-runtime build && pnpm --filter @scopeguard/remote-runtime build && pnpm --filter @scopeguard/storage-sqlite build && tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @scopeguard/agent-runtime build && pnpm --filter @scopeguard/remote-runtime build && pnpm --filter @scopeguard/storage-sqlite build && tsc -p tsconfig.json --noEmit",
+    "build": "pnpm --filter @scopeguard/agent-runtime build && pnpm --filter @scopeguard/storage-sqlite build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @scopeguard/agent-runtime build && pnpm --filter @scopeguard/storage-sqlite build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/*.test.js"
   },
   "dependencies": {
     "@scopeguard/agent-runtime": "workspace:*",
-    "@scopeguard/domain": "workspace:*",
-    "@scopeguard/remote-runtime": "workspace:*"
+    "@scopeguard/domain": "workspace:*"
   },
   "devDependencies": {
     "@scopeguard/storage-sqlite": "workspace:*"

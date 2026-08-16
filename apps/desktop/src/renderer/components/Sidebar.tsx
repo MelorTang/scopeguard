@@ -6,17 +6,13 @@ import {
   CircleAlert,
   Folder,
   FolderPlus,
-  Inbox,
-  ListTodo,
+  MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Settings,
-  Server,
   SquarePen,
 } from "lucide-react";
-
-import { countWorkspacePendingAttention } from "@scopeguard/domain";
 
 import type { WorkspaceController } from "../useWorkspace.js";
 import { formatRunStatus } from "../uiText.js";
@@ -24,24 +20,12 @@ import { formatRunStatus } from "../uiText.js";
 export function Sidebar(props: {
   workspace: WorkspaceController;
   onNewAgent: () => void;
-  onNewTask: () => void;
+  onNewConversation: () => void;
   onNewWorkspace: () => void;
   onProviders: () => void;
-  onRuntimes: () => void;
 }): JSX.Element {
   const { workspace } = props;
   const snapshot = workspace.snapshot;
-  const pendingAttentionCount = countWorkspacePendingAttention({
-    workspaceId: workspace.selectedWorkspace?.id ?? null,
-    threads: snapshot?.threads ?? [],
-    runs: [
-      ...(snapshot?.activeRuns ?? []),
-      ...(snapshot?.recentRuns ?? []),
-    ],
-    approvals: snapshot?.pendingApprovals ?? [],
-    inboxItems: snapshot?.inboxItems ?? [],
-  });
-
   if (workspace.sidebarCollapsed) {
     return (
       <aside className="sidebar sidebar--collapsed">
@@ -69,22 +53,13 @@ export function Sidebar(props: {
         <button
           className="icon-button"
           type="button"
-          onClick={props.onNewTask}
-          title="新建任务"
-          aria-label="新建任务"
+          onClick={props.onNewConversation}
+          title="新建对话"
+          aria-label="新建对话"
         >
-          <ListTodo size={18} />
+          <MessageSquare size={18} />
         </button>
         <div className="sidebar-spacer" />
-        <button
-          className="icon-button"
-          type="button"
-          onClick={props.onRuntimes}
-          title="运行节点设置"
-          aria-label="运行节点设置"
-        >
-          <Server size={18} />
-        </button>
         <button
           className="icon-button"
           type="button"
@@ -120,10 +95,10 @@ export function Sidebar(props: {
         <button
           type="button"
           className="sidebar-new-task"
-          onClick={props.onNewTask}
+          onClick={props.onNewConversation}
         >
           <SquarePen size={15} />
-          <span>新建任务</span>
+          <span>新建对话</span>
         </button>
       </div>
 
@@ -140,11 +115,11 @@ export function Sidebar(props: {
         </button>
       </div>
 
-      <nav className="project-tree" aria-label="工作区和任务">
-        {snapshot?.workspaces.map((project) => {
-          const selected = workspace.selectedWorkspace?.id === project.id;
-          const tasks = snapshot.tasks.filter(
-            (task) => task.workspaceId === project.id,
+      <nav className="project-tree" aria-label="工作区和对话">
+        {snapshot?.projects.map((project) => {
+          const selected = workspace.selectedProject?.id === project.id;
+          const conversations = snapshot.threads.filter(
+            (conversation) => conversation.projectId === project.id,
           );
           return (
             <section className="project-node" key={project.id}>
@@ -160,35 +135,22 @@ export function Sidebar(props: {
               {selected && (
                 <div className="thread-tree">
                   <div className="tree-group-label">
-                    <span>任务</span>
+                    <span>对话</span>
                     <button
                       type="button"
                       className="icon-button icon-button--small"
-                      onClick={props.onNewTask}
-                      title="新建任务"
-                      aria-label="新建任务"
+                      onClick={props.onNewConversation}
+                      title="新建对话"
+                      aria-label="新建对话"
                     >
                       <Plus size={14} />
                     </button>
                   </div>
-                  {tasks.map((task) => {
-                    const assignment = snapshot.assignments.find(
-                      (item) => item.taskId === task.id,
+                  {conversations.map((thread) => {
+                    const agent = snapshot.agentProfiles.find(
+                      (item) => item.id === thread.agentProfileId,
                     );
-                    const thread = assignment?.threadId
-                      ? snapshot.threads.find(
-                          (item) => item.id === assignment.threadId,
-                        )
-                      : null;
-                    const instance = snapshot.agentInstances.find(
-                      (item) => item.id === assignment?.agentInstanceId,
-                    );
-                    const agent = snapshot.agentDefinitions.find(
-                      (definition) => definition.id === instance?.agentDefinitionId,
-                    );
-                    const run = thread
-                      ? workspace.getRunForThread(thread.id)
-                      : null;
+                    const run = workspace.getRunForThread(thread.id);
                     const approvalCount = snapshot.pendingApprovals.filter(
                       (item) => item.approval.runId === run?.id,
                     ).length;
@@ -201,29 +163,24 @@ export function Sidebar(props: {
                     return (
                       <button
                         type="button"
-                        key={task.id}
+                        key={thread.id}
                         className={`thread-row ${
                           visible ? "is-visible" : ""
                         } ${
                           active ? "is-selected" : ""
                         }`}
                         aria-current={active ? "page" : undefined}
-                        disabled={!thread}
-                        onClick={() => {
-                          if (thread) {
-                            workspace.openThread(thread.id);
-                          }
-                        }}
+                        onClick={() => workspace.openThread(thread.id)}
                       >
-                        <ListTodo size={15} />
+                        <MessageSquare size={15} />
                         <span className="thread-row__content">
-                          <span className="thread-row__title">{task.title}</span>
+                          <span className="thread-row__title">{thread.title}</span>
                           <span className="thread-row__agent">
                             {agent?.name ?? "Agent"}
                           </span>
                         </span>
-                        <TaskStatus
-                          status={run?.status ?? task.status}
+                        <ConversationStatus
+                          status={run?.status ?? null}
                           approvalCount={approvalCount}
                         />
                       </button>
@@ -246,13 +203,6 @@ export function Sidebar(props: {
 
       <div className="sidebar-spacer" />
       <footer className="sidebar-footer">
-        <div className="sidebar-summary" aria-label="工作区摘要">
-          <span>
-            <Inbox size={14} />
-            待处理
-          </span>
-          <strong>{pendingAttentionCount}</strong>
-        </div>
         <button type="button" className="sidebar-command" onClick={props.onProviders}>
           <Settings size={16} />
           <span>模型服务</span>
@@ -260,19 +210,12 @@ export function Sidebar(props: {
             {snapshot?.providerProfiles.length ?? 0}
           </span>
         </button>
-        <button type="button" className="sidebar-command" onClick={props.onRuntimes}>
-          <Server size={16} />
-          <span>运行节点</span>
-          <span className="sidebar-count">
-            {snapshot?.runtimeNodes.length ?? 0}
-          </span>
-        </button>
       </footer>
     </aside>
   );
 }
 
-function TaskStatus(props: {
+function ConversationStatus(props: {
   status: string | null;
   approvalCount: number;
 }): JSX.Element | null {

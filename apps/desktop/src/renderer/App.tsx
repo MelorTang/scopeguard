@@ -9,12 +9,10 @@ import {
 import { useState, type CSSProperties } from "react";
 
 import { AgentDialog } from "./components/AgentDialog.js";
-import { Inspector } from "./components/Inspector.js";
+import { ConversationDialog } from "./components/ConversationDialog.js";
 import { ProviderDialog } from "./components/ProviderDialog.js";
-import { RuntimeDialog } from "./components/RuntimeDialog.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ThreadPane } from "./components/ThreadPane.js";
-import { TaskDialog } from "./components/TaskDialog.js";
 import { WorkspaceToolbar } from "./components/WorkspaceToolbar.js";
 import { WorkspaceDialog } from "./components/WorkspaceDialog.js";
 import { useWorkspace } from "./useWorkspace.js";
@@ -23,8 +21,7 @@ export function App(): JSX.Element {
   const workspace = useWorkspace();
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
-  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
+  const [conversationDialogOpen, setConversationDialogOpen] = useState(false);
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
 
   const openAgentDialog = () => {
@@ -35,12 +32,12 @@ export function App(): JSX.Element {
     setAgentDialogOpen(true);
   };
 
-  const openTaskDialog = () => {
+  const openConversationDialog = () => {
     if (!workspace.selectedWorkspace) {
       setWorkspaceDialogOpen(true);
       return;
     }
-    setTaskDialogOpen(true);
+    setConversationDialogOpen(true);
   };
 
   if (workspace.loading) {
@@ -56,19 +53,21 @@ export function App(): JSX.Element {
     <div
       className={`app-shell ${
         workspace.sidebarCollapsed ? "app-shell--sidebar-collapsed" : ""
-      } ${workspace.inspectorOpen ? "app-shell--inspector-open" : ""}`}
+      }`}
     >
       <Sidebar
         workspace={workspace}
         onNewAgent={openAgentDialog}
-        onNewTask={openTaskDialog}
+        onNewConversation={openConversationDialog}
         onNewWorkspace={() => setWorkspaceDialogOpen(true)}
         onProviders={() => setProviderDialogOpen(true)}
-        onRuntimes={() => setRuntimeDialogOpen(true)}
       />
 
       <main className="main-area">
-        <WorkspaceToolbar workspace={workspace} onNewTask={openTaskDialog} />
+        <WorkspaceToolbar
+          workspace={workspace}
+          onNewConversation={openConversationDialog}
+        />
         {workspace.error && (
           <div className="global-error" role="alert">
             <CircleAlert size={16} />
@@ -104,24 +103,16 @@ export function App(): JSX.Element {
           <WorkspaceEmpty
             hasWorkspace={Boolean(workspace.selectedWorkspace)}
             hasProvider={(workspace.snapshot?.providerProfiles.length ?? 0) > 0}
-            hasAgent={workspace.snapshot?.agentInstances.some(
-              (instance) =>
-                instance.workspaceId === workspace.selectedWorkspace?.id,
+            hasAgent={workspace.snapshot?.agentProfiles.some(
+              (agent) => agent.projectId === workspace.selectedProject?.id,
             ) ?? false}
             onWorkspace={() => setWorkspaceDialogOpen(true)}
             onProvider={() => setProviderDialogOpen(true)}
             onAgent={openAgentDialog}
-            onTask={openTaskDialog}
+            onConversation={openConversationDialog}
           />
         )}
       </main>
-
-      {workspace.inspectorOpen && (
-        <Inspector
-          workspace={workspace}
-          onClose={() => workspace.setInspectorOpen(false)}
-        />
-      )}
 
       <ProviderDialog
         open={providerDialogOpen}
@@ -133,11 +124,6 @@ export function App(): JSX.Element {
         workspace={workspace}
         onClose={() => setWorkspaceDialogOpen(false)}
       />
-      <RuntimeDialog
-        open={runtimeDialogOpen}
-        workspace={workspace}
-        onClose={() => setRuntimeDialogOpen(false)}
-      />
       <AgentDialog
         open={agentDialogOpen}
         workspace={workspace}
@@ -147,12 +133,12 @@ export function App(): JSX.Element {
           setProviderDialogOpen(true);
         }}
       />
-      <TaskDialog
-        open={taskDialogOpen}
+      <ConversationDialog
+        open={conversationDialogOpen}
         workspace={workspace}
-        onClose={() => setTaskDialogOpen(false)}
+        onClose={() => setConversationDialogOpen(false)}
         onNewAgent={() => {
-          setTaskDialogOpen(false);
+          setConversationDialogOpen(false);
           setAgentDialogOpen(true);
         }}
       />
@@ -167,14 +153,14 @@ function WorkspaceEmpty(props: {
   onWorkspace: () => void;
   onProvider: () => void;
   onAgent: () => void;
-  onTask: () => void;
+  onConversation: () => void;
 }): JSX.Element {
   if (!props.hasWorkspace) {
     return (
       <section className="workspace-empty">
         <span className="workspace-empty__icon"><FolderPlus size={22} /></span>
         <h1>创建工作区</h1>
-        <p>集中管理 Agent、任务、共享上下文和成果。</p>
+        <p>集中管理 Agent、对话和本地工作文件。</p>
         <button
           type="button"
           className="button button--primary"
@@ -207,15 +193,15 @@ function WorkspaceEmpty(props: {
     return (
       <section className="workspace-empty">
         <span className="workspace-empty__icon"><Bot size={22} /></span>
-        <h1>创建任务</h1>
-        <p>选择一个 Agent，开始一项独立工作。</p>
+        <h1>创建对话</h1>
+        <p>选择一个 Agent，开始一个独立上下文。</p>
         <button
           type="button"
           className="button button--primary"
-          onClick={props.onTask}
+          onClick={props.onConversation}
         >
           <Plus size={16} />
-          新建任务
+          新建对话
         </button>
       </section>
     );

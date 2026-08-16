@@ -1,55 +1,41 @@
 # Changelog
 
-## Unreleased - Multi-Agent Desktop MVP
+## Unreleased - Conversation Core
 
 ### Changed
 
-- Repositioned ScopeGuard as a desktop-first workspace for personal knowledge
-  work with multiple persistent, role-specific Agents.
-- Replaced the Project/Thread-centric product model with Workspace, Agent
-  Definition/Instance, Task, Assignment, Artifact, Handoff, Inbox, Schedule,
-  ContextRevision, RuntimeNode, and Run boundaries.
-- Made local folders optional Workspace resources instead of product identity.
-- Rebuilt the Chinese interface around Workspace-scoped Tasks annotated by
-  Agent, 1-4 supervision panes, and one inspector for Inbox, Artifacts,
-  Context, and activity.
-- Kept the Web build as a capability-free Renderer preview; Electron remains
-  the product surface and privileged execution boundary.
-
-### Added
-
-- OpenAI-compatible and Anthropic-compatible streaming providers.
-- Encrypted provider secret vault backed by Electron `safeStorage`.
-- An authenticated persistent remote Runtime with idempotent submission,
-  event-cursor reconnection, independent cancellation, and Artifact import.
-- Remote Runs that continue after Desktop exits and reconcile when it reopens.
-- SQLite schema v6 with forward migration from legacy Project, AgentProfile,
-  Thread, Run, approval, and Context records.
-- Concurrent independent Threads and Runs with isolated transcripts.
-- Explicit immutable Context revisions, source-aware Handoffs, and per-Run
-  Context usage provenance.
-- Versioned text, Markdown, report, and written-file Artifacts attributed to
-  Workspace, Task, Assignment, Agent, and Run.
-- A unified Inbox for approval, failure, completion, required input, and
-  Runtime-offline attention.
-- Agent-requested user input that pauses and resumes the same local Run.
-- Workspace-confined file tools and approval-gated writes and commands.
-- Optional local CLI Agent process adapter.
-- Restart recovery for canonical work state, partial output, layout, panes,
-  drafts, Context, Inbox, and Artifacts.
+- Narrowed the desktop product to Workspace, native Agent, persistent
+  conversation, Run, Provider, tool approval, and explicit Project Context.
+- Made each conversation's Agent immutable while keeping its model override and
+  execution profile configurable; every Run persists the effective snapshot.
+- Kept multiple conversations independently runnable and visible in one to four
+  panes.
+- Preserved request manifests, usage accounting, partial output, user-input
+  continuation, and unknown-effect recovery inside the conversation lifecycle.
+- Kept Web as a capability-free Renderer preview; Electron remains the product
+  and privileged execution boundary.
 
 ### Removed
 
-- Legacy `scopeguard` and `agentboard` task CLIs.
-- Task scheduler, worktree runner, queue/claim server, MCP bridge, and related
-  fixtures and documentation.
+- Persistent remote Runtime service, HTTP client, protocol, and desktop
+  reconciliation path.
+- Managed Local CLI Agent package and application orchestration path.
+- Runtime node, Agent Definition/Instance, Task/Assignment, Artifact, Handoff,
+  Schedule, and Inbox use cases from the desktop application core.
+- Side effects that mirrored conversation Runs into the retired control plane.
+
+### Compatibility
+
+- SQLite retains legacy tables and forward migrations so existing local data is
+  not destroyed. Legacy non-terminal Runs are interrupted on startup.
+- Domain/storage compatibility types and the Web preview fixture remain until a
+  later migration can remove them without data loss or blocking UI iteration.
+- Historical releases remain available from the `v0.4.1` and
+  `v0.5.0-orchestration-mvp` tags.
 
 ### Deferred
 
-- Multi-user accounts, organizations, RBAC/SSO, billing, and cloud sync.
-- Production Runtime hosting, Runtime secret escrow across process restart,
-  message channels, mobile clients, and plugin distribution.
-- Autonomous Schedule execution UI and signed/notarized installers.
-
-Historical v0.4 and orchestration-MVP code remain available from the
-`v0.4.1` and `v0.5.0-orchestration-mvp` tags.
+- Multi-user identity and authorization, cloud synchronization, enterprise MCP
+  policy, message channels, installer distribution, and auto-update.
+- External Agent CLIs remain user-operated terminal sessions outside
+  ScopeGuard's Run lifecycle.

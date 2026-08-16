@@ -51,20 +51,6 @@ import type {
 export const IPC_CHANNELS = {
   getWorkspaceSnapshot: "scopeguard:workspace:get-snapshot",
   createWorkspace: "scopeguard:workspace:create",
-  saveRuntimeNode: "scopeguard:runtime:save",
-  testRuntimeConnection: "scopeguard:runtime:test",
-  createAgentDefinition: "scopeguard:agent-definition:create",
-  createAgentInstance: "scopeguard:agent-instance:create",
-  updateAgentInstanceRuntime: "scopeguard:agent-instance:update-runtime",
-  createTask: "scopeguard:task:create",
-  updateTaskStatus: "scopeguard:task:update-status",
-  assignAgentToTask: "scopeguard:task:assign-agent",
-  createArtifact: "scopeguard:artifact:create",
-  getWorkspaceContext: "scopeguard:workspace-context:get",
-  publishWorkspaceContext: "scopeguard:workspace-context:publish",
-  createHandoff: "scopeguard:handoff:create",
-  createSchedule: "scopeguard:schedule:create",
-  resolveInboxItem: "scopeguard:inbox:resolve",
   chooseProjectDirectory: "scopeguard:project:choose-directory",
   chooseWorkspaceFiles: "scopeguard:workspace:choose-files",
   addProject: "scopeguard:project:add",
@@ -86,20 +72,6 @@ export const IPC_CHANNELS = {
 export type AgentHostMethod =
   | "getWorkspaceSnapshot"
   | "createWorkspace"
-  | "saveRuntimeNode"
-  | "testRuntimeConnection"
-  | "createAgentDefinition"
-  | "createAgentInstance"
-  | "updateAgentInstanceRuntime"
-  | "createTask"
-  | "updateTaskStatus"
-  | "assignAgentToTask"
-  | "createArtifact"
-  | "getWorkspaceContext"
-  | "publishWorkspaceContext"
-  | "createHandoff"
-  | "createSchedule"
-  | "resolveInboxItem"
   | "addProject"
   | "saveProviderProfile"
   | "deleteProviderProfile"
@@ -278,42 +250,29 @@ export function toDesktopWorkspaceSnapshot(
   snapshot: WorkspaceSnapshot,
 ): DesktopWorkspaceSnapshot {
   return {
-    ...snapshot,
+    workspaces: snapshot.workspaces,
+    projects: snapshot.projects,
     providerProfiles: snapshot.providerProfiles.map(toProviderProfileView),
+    agentProfiles: snapshot.agentProfiles,
+    threads: snapshot.threads,
+    activeRuns: snapshot.activeRuns,
+    recentRuns: snapshot.recentRuns,
+    pendingApprovals: snapshot.pendingApprovals,
+    runtimeNodes: [],
+    agentDefinitions: [],
+    agentInstances: [],
+    tasks: [],
+    assignments: [],
+    artifacts: [],
+    handoffs: [],
+    schedules: [],
+    inboxItems: [],
   };
 }
 
-export type ScopeGuardDesktopApi = {
+export type ScopeGuardDesktopCoreApi = {
   getWorkspaceSnapshot: () => Promise<DesktopWorkspaceSnapshot>;
   createWorkspace: (input: CreateWorkspaceInput) => Promise<Workspace>;
-  saveRuntimeNode: (input: SaveRuntimeNodeInput) => Promise<RuntimeNode>;
-  testRuntimeConnection: (
-    runtimeNodeId: Id,
-  ) => Promise<RuntimeConnectionResult>;
-  createAgentDefinition: (
-    input: CreateAgentDefinitionInput,
-  ) => Promise<AgentDefinition>;
-  createAgentInstance: (
-    input: CreateAgentInstanceInput,
-  ) => Promise<AgentInstance>;
-  updateAgentInstanceRuntime: (
-    input: UpdateAgentInstanceRuntimeRequest,
-  ) => Promise<AgentInstance>;
-  createTask: (input: CreateTaskInput) => Promise<WorkspaceTask>;
-  updateTaskStatus: (
-    request: UpdateTaskStatusRequest,
-  ) => Promise<WorkspaceTask>;
-  assignAgentToTask: (
-    input: CreateTaskAssignmentInput,
-  ) => Promise<TaskAssignment>;
-  createArtifact: (input: CreateArtifactInput) => Promise<Artifact>;
-  getWorkspaceContext: (workspaceId: Id) => Promise<ContextRevision | null>;
-  publishWorkspaceContext: (
-    input: PublishWorkspaceContextRequest,
-  ) => Promise<ContextRevision>;
-  createHandoff: (input: CreateHandoffInput) => Promise<AgentHandoff>;
-  createSchedule: (input: CreateScheduleInput) => Promise<WorkspaceSchedule>;
-  resolveInboxItem: (inboxItemId: Id) => Promise<InboxItem>;
   chooseProjectDirectory: () => Promise<{ canceled: boolean; rootPath?: string }>;
   chooseWorkspaceFiles: (projectId: Id) => Promise<ChooseWorkspaceFilesResult>;
   addProject: (input: CreateProjectInput) => Promise<Project>;
@@ -342,6 +301,39 @@ export type ScopeGuardDesktopApi = {
   ) => Promise<ContextRevision>;
   subscribeRunEvents: (listener: (event: RunEvent) => void) => () => void;
 };
+
+/** Preview-only surface retained until the Web UI fixture follows the core model. */
+export type ScopeGuardPreviewCompatibilityApi = {
+  saveRuntimeNode: (input: SaveRuntimeNodeInput) => Promise<RuntimeNode>;
+  testRuntimeConnection: (runtimeNodeId: Id) => Promise<RuntimeConnectionResult>;
+  createAgentDefinition: (
+    input: CreateAgentDefinitionInput,
+  ) => Promise<AgentDefinition>;
+  createAgentInstance: (
+    input: CreateAgentInstanceInput,
+  ) => Promise<AgentInstance>;
+  updateAgentInstanceRuntime: (
+    input: UpdateAgentInstanceRuntimeRequest,
+  ) => Promise<AgentInstance>;
+  createTask: (input: CreateTaskInput) => Promise<WorkspaceTask>;
+  updateTaskStatus: (
+    request: UpdateTaskStatusRequest,
+  ) => Promise<WorkspaceTask>;
+  assignAgentToTask: (
+    input: CreateTaskAssignmentInput,
+  ) => Promise<TaskAssignment>;
+  createArtifact: (input: CreateArtifactInput) => Promise<Artifact>;
+  getWorkspaceContext: (workspaceId: Id) => Promise<ContextRevision | null>;
+  publishWorkspaceContext: (
+    input: PublishWorkspaceContextRequest,
+  ) => Promise<ContextRevision>;
+  createHandoff: (input: CreateHandoffInput) => Promise<AgentHandoff>;
+  createSchedule: (input: CreateScheduleInput) => Promise<WorkspaceSchedule>;
+  resolveInboxItem: (inboxItemId: Id) => Promise<InboxItem>;
+};
+
+export type ScopeGuardDesktopApi = ScopeGuardDesktopCoreApi &
+  Partial<ScopeGuardPreviewCompatibilityApi>;
 
 export function parseCreateWorkspaceInput(value: unknown): CreateWorkspaceInput {
   const record = requireRecord(value, "Workspace input");
