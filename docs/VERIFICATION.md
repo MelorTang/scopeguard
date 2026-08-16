@@ -50,6 +50,19 @@ API Key: sg-fake-desktop-validation-key
 Model: smoke-model
 ```
 
+For a repeatable local core Pilot using the real HTTP adapter, SQLite, the
+repository as a read-only Workspace, and a disposable writable Workspace, run:
+
+```bash
+pnpm pilot:local
+```
+
+The command covers parallel Conversation cancellation, transcript isolation,
+explicit Workspace Context, approval denial and one-time approval, same-Run
+input continuation, interrupted partial recovery, V1 table identity, and API-key
+absence from SQLite. Set `SCOPEGUARD_KEEP_PILOT=1` only when the disposable
+profile must be retained for diagnosis.
+
 ## 3. Fresh Electron Gate
 
 Launch with isolated user data so a normal ScopeGuard profile is untouched:

@@ -93,6 +93,18 @@ async function streamTurn(response, body) {
     });
     return;
   }
+  if (prompt.includes("[slow-partial]")) {
+    writeEvent(response, {
+      choices: [{ delta: { content: "Partial response before restart." }, finish_reason: null }],
+    });
+    await delay(5_000);
+    writeEvent(response, {
+      choices: [{ delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 12, completion_tokens: 18 },
+    });
+    response.end("data: [DONE]\n\n");
+    return;
+  }
   if (prompt.includes("[slow]")) {
     await delay(5_000);
   }
