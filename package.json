@@ -6,7 +6,7 @@
   "scripts": {
     "build": "pnpm --filter @scopeguard/desktop build",
     "typecheck": "pnpm --filter @scopeguard/desktop typecheck",
-    "test": "pnpm --filter @scopeguard/domain --filter @scopeguard/storage-sqlite --filter @scopeguard/agent-runtime --filter @scopeguard/provider-adapters --filter @scopeguard/remote-runtime --filter @scopeguard/managed-execution --filter @scopeguard/tool-runtime --filter @scopeguard/cli-runtime --filter @scopeguard/application --filter @scopeguard/ipc-contracts --filter @scopeguard/desktop test",
+    "test": "pnpm --filter @scopeguard/domain --filter @scopeguard/storage-sqlite --filter @scopeguard/agent-runtime --filter @scopeguard/provider-adapters --filter @scopeguard/managed-execution --filter @scopeguard/tool-runtime --filter @scopeguard/application --filter @scopeguard/ipc-contracts --filter @scopeguard/desktop test",
     "dev": "pnpm --filter @scopeguard/desktop dev",
     "dev:web": "pnpm --filter @scopeguard/desktop dev:web",
     "start": "pnpm --filter @scopeguard/desktop start",
@@ -14,9 +14,7 @@
     "package:win": "pnpm --filter @scopeguard/desktop package:win",
     "package:managed:win": "pwsh -File packages/managed-execution/native/windows/build-managed-companion.ps1",
     "test:managed:install:win": "pwsh -File packages/managed-execution/native/windows/managed-companion-installation-test.ps1",
-    "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider",
-    "runtime:build": "pnpm --filter @scopeguard/remote-runtime build",
-    "runtime:start": "pnpm --filter @scopeguard/remote-runtime start"
+    "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

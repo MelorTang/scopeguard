@@ -105,15 +105,10 @@ importers:
       '@scopeguard/domain':
         specifier: workspace:*
         version: link:../domain
-      '@scopeguard/remote-runtime':
-        specifier: workspace:*
-        version: link:../remote-runtime
     devDependencies:
       '@scopeguard/storage-sqlite':
         specifier: workspace:*
         version: link:../storage-sqlite
-
-  packages/cli-runtime: {}
 
   packages/domain: {}
 
@@ -140,18 +135,6 @@ importers:
       '@scopeguard/domain':
         specifier: workspace:*
         version: link:../domain
-
-  packages/remote-runtime:
-    dependencies:
-      '@scopeguard/agent-runtime':
-        specifier: workspace:*
-        version: link:../agent-runtime
-      '@scopeguard/domain':
-        specifier: workspace:*
-        version: link:../domain
-      '@scopeguard/provider-adapters':
-        specifier: workspace:*
-        version: link:../provider-adapters
 
   packages/storage-sqlite:
     dependencies:

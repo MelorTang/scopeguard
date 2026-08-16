@@ -145,7 +145,6 @@ const application: ScopeGuardCore = new ScopeGuardApplication({
   secrets,
   providerFactory: (protocol) => createProviderAdapter({ protocol }),
   tools,
-  mirrorLegacyControlPlane: false,
   publish: (event) => {
     parentPort.postMessage({
       type: "host-run-event",

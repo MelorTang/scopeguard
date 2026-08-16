@@ -1,70 +1,73 @@
 # Security Model
 
-ScopeGuard sends user-selected context to model services and offers explicit
-local execution profiles. On Windows, the two bounded profiles use a selected
-LPAC sandbox. Full Access and Local CLI are not sandboxed. ScopeGuard is not a
-general defense against arbitrary malware already running as the desktop user.
+ScopeGuard sends user-selected conversation and Project Context data to the
+configured model Provider. It can also read, write, and execute within a
+user-selected local Workspace according to the conversation's execution
+profile. ScopeGuard is not a defense against arbitrary malware already running
+as the desktop user.
 
 ## Trust Boundaries
 
-- Electron Renderer is sandboxed, has `contextIsolation` enabled, and has no Node.js access.
-- Preload exposes a fixed API. Main validates sender URL and every IPC payload.
-- Opening a local folder requires a one-time native picker authorization bound
-  to the requesting WebContents.
-- Agent host is the only desktop SQLite writer and owns Provider/tool orchestration.
+- Electron Renderer is sandboxed, has `contextIsolation` enabled, and has no
+  Node.js access.
+- Preload exposes a fixed API. Main validates the sender and every IPC payload.
+- Opening a local folder requires native picker authorization bound to the
+  requesting WebContents.
+- Agent host is the only desktop SQLite writer and owns Provider and tool
+  orchestration.
 - Bounded commands cross a private typed Agent Host/Main channel to the Desktop
-  Execution Broker. No matching method exists in Preload or Renderer IPC.
-- Remote Runtime is a separate execution boundary authenticated with a Bearer token.
+  Execution Broker. Renderer and Preload cannot invoke that channel directly.
+- Web preview is an in-memory UI fixture and carries no desktop authority.
 
-## Context Boundary
+## Context Isolation
 
-- Each Agent Run receives only its Thread transcript and selected ContextRevision.
-- Other Agent transcripts are never loaded implicitly.
-- Context publishing and Handoffs validate Workspace, Task, Thread, Run, Agent,
-  and Artifact provenance before persistence.
-- Artifacts and Context revisions expose their source IDs in the UI for auditability.
+- Each Run receives only its own conversation transcript and the current
+  explicit Project Context revision.
+- ScopeGuard never loads another conversation's transcript implicitly.
+- Project Context updates validate their Workspace, source conversation, and
+  source Run relationship before persistence.
+- Approval and user-input continuation stay attached to the originating Run.
 
 ## Local Files And Commands
 
-- A Workspace may have no local folder; in that state all local tools are denied.
-- `read_file` and `write_file` resolve canonical paths beneath `localRootPath`
-  and reject traversal and symlink escapes.
-- `write_file` rejects symlink targets, limits content, and uses same-directory atomic replacement.
-- Request Approval shows the exact mutating tool call. Auto Approve removes the
-  prompt but uses the same Windows LPAC policy. Full Access is explicitly unsandboxed.
-- Bounded `run_command` fails closed when any Broker, Provisioner, Runtime,
-  Profile, ACL, Job, identity, or cleanup check is unavailable or invalid.
-- Each bounded execution has an outer parent-monitoring Job and inner LPAC Job.
-  Cancellation is per execution; Desktop exit clears all managed process trees.
-- Durable Profile intents and service ACL ledgers recover interrupted lifecycle
-  work. Unconfirmed cleanup or termination is reported as an unknown effect.
-- Local CLI Agents require a local folder, use argument arrays rather than shell
-  interpolation, receive a minimal environment, and cannot bind to remote Runtime nodes.
+- A Workspace with no local folder receives no local tools.
+- File paths are resolved beneath the canonical Workspace root; traversal and
+  symlink escapes are rejected.
+- Writes reject symlink targets, limit content, and use same-directory atomic
+  replacement.
+- Request Approval shows each mutating tool call. Auto Approve removes the
+  prompt but keeps the same bounded command path. Full Access is explicitly
+  unsandboxed.
+- Bounded Windows execution fails closed when Broker, Provisioner, runtime,
+  profile, ACL, process, or cleanup evidence is unavailable or invalid.
+- Cancellation is per Run. Desktop shutdown clears managed process trees.
+- An unconfirmed non-idempotent effect is reported as unknown, never projected
+  as successful or as having no effect.
+
+See [MANAGED_EXECUTION.md](./MANAGED_EXECUTION.md) for the Windows LPAC boundary
+and its deployment requirements.
 
 ## Credentials
 
-- Provider keys and Runtime tokens exist transiently in Renderer only while typed.
-- Saved secrets are encrypted by Electron `safeStorage`; SQLite stores only opaque references.
-- Secrets are never returned in Renderer snapshots or written to Run events,
-  Activity summaries, Artifacts, ordinary logs, or remote Runtime SQLite.
-- Provider and Runtime errors are redacted using actual request credential values before persistence.
-- Secret files and desktop SQLite files are restricted to the current OS user on POSIX.
+- Provider keys exist in Renderer memory only while entered.
+- Saved secrets are encrypted by Electron `safeStorage`; SQLite stores only an
+  opaque reference.
+- Secrets are not returned in desktop snapshots or written to Run events,
+  messages, manifests, usage records, or ordinary logs.
+- Provider errors are redacted using actual request credentials before they are
+  persisted or published.
+- Secret files and desktop SQLite files are restricted to the current OS user
+  on POSIX.
 - Linux `safeStorage` using the `basic_text` backend is rejected.
-- Custom Provider headers and persisted CLI environment variables remain disabled.
+- Persisted custom Provider headers remain disabled.
 
-## Remote Runtime
-
-- Non-loopback URLs must use HTTPS; loopback HTTP is accepted only for local testing.
-- Health, submit, poll, and cancel endpoints require the configured Bearer token.
-- Remote jobs persist events and Artifacts, allowing Desktop to disconnect and reconnect.
-- Provider credentials submitted for a Run are held in process memory only. Because
-  first stage has no remote secret escrow, the Runtime process itself must remain
-  alive for an active Run to finish.
-- Deploy behind an authenticated TLS reverse proxy and restrict network access.
+ScopeGuard has no Runtime token or remote-worker credential path. External Agent
+CLIs and terminals are outside its execution and credential boundary.
 
 ## User Responsibility
 
-Use trusted Provider and Runtime endpoints and open only trusted local folders.
-Full Access commands and Local CLI Agents have the operating-system permissions
-of the current user. Bounded execution is currently Windows-only and requires a
-properly installed and registered sandbox service; missing setup is an error.
+Use trusted Provider endpoints, open only trusted local folders, and review the
+selected execution profile before starting a conversation. Full Access commands
+run with the operating-system permissions of the current desktop user. Bounded
+execution is currently Windows-only and requires the installed managed-execution
+companion; missing setup is an error, not a reason to elevate automatically.
