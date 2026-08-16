@@ -112,9 +112,15 @@ export function ThreadPane(props: {
     workspace.selectedWorkspace?.localRootPath && !run && !sending,
   );
 
-  useEffect(() => {
-    localStorage.setItem(`scopeguard.draft.${thread.id}`, draft);
-  }, [draft, thread.id]);
+  const updateDraft = (value: string) => {
+    setDraft(value);
+    const storageKey = `scopeguard.draft.${thread.id}`;
+    if (value) {
+      localStorage.setItem(storageKey, value);
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+  };
 
   useEffect(() => {
     const element = conversationRef.current;
@@ -184,9 +190,8 @@ export function ThreadPane(props: {
         thread.id,
         appendWorkspaceFileReferences(prompt, attachments),
       );
-      setDraft("");
+      updateDraft("");
       setAttachments([]);
-      localStorage.removeItem(`scopeguard.draft.${thread.id}`);
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : String(sendError));
     } finally {
@@ -392,7 +397,7 @@ export function ThreadPane(props: {
                 : `向 ${agent?.name ?? "Agent"} 补充任务要求`
             }
             disabled={Boolean(run && !waitingForInput)}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => updateDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
