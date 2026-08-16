@@ -1,4 +1,5 @@
-export const SCOPEGUARD_SCHEMA_VERSION = 9;
+export const SCOPEGUARD_SCHEMA_ID = "scopeguard-v1-core";
+export const SCOPEGUARD_SCHEMA_VERSION = 1;
 
 export type Id = string;
 export type IsoDateTime = string;
@@ -19,16 +20,6 @@ export type CreateWorkspaceInput = {
 };
 
 export type ProviderProtocol = "openai-compatible" | "anthropic-compatible";
-
-export type Project = {
-  id: Id;
-  name: string;
-  rootPath: string;
-  currentContextRevisionId: Id | null;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-  lastOpenedAt: IsoDateTime;
-};
 
 export type ProviderProfile = {
   id: Id;
@@ -94,292 +85,33 @@ export const DEFAULT_AGENT_TOOL_POLICY: AgentToolPolicy = {
   runCommands: "ask",
 };
 
-export type AgentRuntimeKind = "native" | "local-cli";
-
-export type CliAgentConfig = {
-  command: string;
-  args: string[];
-  cwd: string | null;
-  env: Record<string, string>;
-};
-
-export type AgentProfile = {
+export type Agent = {
   id: Id;
-  projectId: Id;
+  workspaceId: Id;
   name: string;
-  runtimeKind: AgentRuntimeKind;
   instructions: string;
-  providerProfileId: Id | null;
+  providerProfileId: Id;
   modelOverride: string | null;
-  executionProfile: ConversationExecutionProfile;
-  toolPolicy: AgentToolPolicy;
-  cliConfig: CliAgentConfig | null;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-};
-
-export type AgentDefinition = {
-  id: Id;
-  name: string;
-  description: string;
-  instructions: string;
-  providerProfileId: Id | null;
-  modelOverride: string | null;
+  defaultExecutionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 };
 
-export type CreateAgentDefinitionInput = {
+export type CreateAgentInput = {
+  workspaceId: Id;
   name: string;
-  description?: string;
   instructions: string;
-  providerProfileId?: Id | null;
+  providerProfileId: Id;
   modelOverride?: string | null;
+  executionProfile?: ConversationExecutionProfile;
   toolPolicy?: Partial<AgentToolPolicy>;
 };
 
-export type AgentInstanceStatus =
-  | "idle"
-  | "running"
-  | "waiting"
-  | "offline"
-  | "disabled";
-
-export type AgentInstance = {
+export type Conversation = {
   id: Id;
   workspaceId: Id;
-  agentDefinitionId: Id;
-  runtimeNodeId: Id;
-  nameOverride: string | null;
-  status: AgentInstanceStatus;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-};
-
-export type CreateAgentInstanceInput = {
-  workspaceId: Id;
-  agentDefinitionId: Id;
-  runtimeNodeId: Id;
-  nameOverride?: string | null;
-};
-
-export type RuntimeNodeKind = "local" | "remote";
-export type RuntimeNodeStatus = "online" | "offline" | "unknown";
-
-export type RuntimeCapabilities = {
-  nativeAgents: boolean;
-  cliAgents: boolean;
-  fileTools: boolean;
-  commandTools: boolean;
-  persistentRuns: boolean;
-};
-
-export type RuntimeNode = {
-  id: Id;
-  name: string;
-  kind: RuntimeNodeKind;
-  baseUrl: string | null;
-  hasCredential: boolean;
-  status: RuntimeNodeStatus;
-  capabilities: RuntimeCapabilities;
-  lastSeenAt: IsoDateTime | null;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-};
-
-export type SaveRuntimeNodeInput = {
-  id?: Id;
-  name: string;
-  kind: RuntimeNodeKind;
-  baseUrl?: string | null;
-  credential?: string;
-  clearCredential?: boolean;
-};
-
-export type RuntimeConnectionResult = {
-  ok: true;
-  latencyMs: number;
-  status: "online";
-  capabilities: RuntimeCapabilities;
-  message: string;
-};
-
-export type TaskStatus =
-  | "draft"
-  | "ready"
-  | "running"
-  | "waiting-input"
-  | "blocked"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "archived";
-
-export type TaskPriority = "low" | "normal" | "high" | "urgent";
-
-export type WorkspaceTask = {
-  id: Id;
-  workspaceId: Id;
-  title: string;
-  description: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-  completedAt: IsoDateTime | null;
-};
-
-export type CreateTaskInput = {
-  workspaceId: Id;
-  title: string;
-  description?: string;
-  priority?: TaskPriority;
-};
-
-export type AssignmentStatus =
-  | "pending"
-  | "running"
-  | "waiting-input"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export type TaskAssignment = {
-  id: Id;
-  taskId: Id;
-  agentInstanceId: Id;
-  threadId: Id | null;
-  role: string;
-  position: number;
-  status: AssignmentStatus;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-};
-
-export type CreateTaskAssignmentInput = {
-  taskId: Id;
-  agentInstanceId: Id;
-  threadId?: Id | null;
-  role?: string;
-  position?: number;
-};
-
-export type ArtifactKind = "text" | "markdown" | "report" | "file";
-
-export type Artifact = {
-  id: Id;
-  workspaceId: Id;
-  taskId: Id;
-  assignmentId: Id | null;
-  runId: Id | null;
-  agentInstanceId: Id;
-  kind: ArtifactKind;
-  title: string;
-  mimeType: string;
-  content: string | null;
-  filePath: string | null;
-  version: number;
-  createdAt: IsoDateTime;
-};
-
-export type CreateArtifactInput = {
-  workspaceId: Id;
-  taskId: Id;
-  assignmentId?: Id | null;
-  runId?: Id | null;
-  agentInstanceId: Id;
-  kind: ArtifactKind;
-  title: string;
-  mimeType: string;
-  content?: string | null;
-  filePath?: string | null;
-};
-
-export type HandoffStatus = "pending" | "accepted" | "rejected";
-
-export type AgentHandoff = {
-  id: Id;
-  workspaceId: Id;
-  taskId: Id;
-  fromAgentInstanceId: Id;
-  toAgentInstanceId: Id;
-  sourceRunId: Id | null;
-  contextRevisionId: Id;
-  summary: string;
-  status: HandoffStatus;
-  createdAt: IsoDateTime;
-  resolvedAt: IsoDateTime | null;
-};
-
-export type CreateHandoffInput = {
-  workspaceId: Id;
-  taskId: Id;
-  fromAgentInstanceId: Id;
-  toAgentInstanceId: Id;
-  sourceRunId?: Id | null;
-  contextRevisionId: Id;
-  summary: string;
-};
-
-export type WorkspaceSchedule = {
-  id: Id;
-  workspaceId: Id;
-  agentInstanceId: Id;
-  title: string;
-  prompt: string;
-  cronExpression: string;
-  timeZone: string;
-  enabled: boolean;
-  nextRunAt: IsoDateTime | null;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-};
-
-export type CreateScheduleInput = {
-  workspaceId: Id;
-  agentInstanceId: Id;
-  title: string;
-  prompt: string;
-  cronExpression: string;
-  timeZone: string;
-  enabled?: boolean;
-};
-
-export type InboxItemKind =
-  | "approval"
-  | "task-failed"
-  | "task-completed"
-  | "input-required"
-  | "runtime-offline";
-
-export type InboxItemStatus = "unread" | "read" | "resolved";
-
-export type InboxItem = {
-  id: Id;
-  workspaceId: Id;
-  kind: InboxItemKind;
-  status: InboxItemStatus;
-  title: string;
-  summary: string;
-  taskId: Id | null;
-  assignmentId: Id | null;
-  runId: Id | null;
-  approvalId: Id | null;
-  agentInstanceId: Id | null;
-  createdAt: IsoDateTime;
-  resolvedAt: IsoDateTime | null;
-};
-
-export type CreateInboxItemInput = Omit<
-  InboxItem,
-  "id" | "status" | "createdAt" | "resolvedAt"
->;
-
-export type AgentThread = {
-  id: Id;
-  projectId: Id;
-  agentProfileId: Id;
+  agentId: Id;
   title: string;
   status: "active" | "archived";
   modelOverride: string | null;
@@ -388,13 +120,22 @@ export type AgentThread = {
   updatedAt: IsoDateTime;
 };
 
+export type CreateConversationInput = {
+  workspaceId: Id;
+  agentId: Id;
+  title?: string;
+};
+
+export type UpdateConversationSettingsInput = {
+  conversationId: Id;
+  modelOverride?: string | null;
+  executionProfile?: ConversationExecutionProfile;
+};
+
 export type MessageRole = "user" | "assistant" | "system" | "tool";
 
 export type MessageContentBlock =
-  | {
-      type: "text";
-      text: string;
-    }
+  | { type: "text"; text: string }
   | {
       type: "tool-call";
       toolCallId: Id;
@@ -411,9 +152,9 @@ export type MessageContentBlock =
       isError: boolean;
     };
 
-export type ThreadMessage = {
+export type ConversationMessage = {
   id: Id;
-  threadId: Id;
+  conversationId: Id;
   runId: Id | null;
   sequence: number;
   role: MessageRole;
@@ -436,16 +177,14 @@ export type RunStatus =
   | "interrupted";
 
 export type RunConfigSnapshot = {
-  agentProfileId: Id;
-  runtimeKind: AgentRuntimeKind;
-  providerProfileId: Id | null;
-  providerProtocol: ProviderProtocol | null;
-  providerBaseUrl: string | null;
-  model: string | null;
+  agentId: Id;
+  providerProfileId: Id;
+  providerProtocol: ProviderProtocol;
+  providerBaseUrl: string;
+  model: string;
   instructions: string;
   executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
-  cliConfig: CliAgentConfig | null;
 };
 
 export type ModelToolDefinition = {
@@ -461,15 +200,8 @@ export type ModelToolCall = {
 };
 
 export type ModelMessage =
-  | {
-      role: "system" | "user";
-      content: string;
-    }
-  | {
-      role: "assistant";
-      content: string;
-      toolCalls?: ModelToolCall[];
-    }
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: ModelToolCall[] }
   | {
       role: "tool";
       toolCallId: string;
@@ -503,7 +235,7 @@ export type RunUsageRecord = {
 
 export type AgentRun = {
   id: Id;
-  threadId: Id;
+  conversationId: Id;
   triggerMessageId: Id;
   contextRevisionId: Id | null;
   configSnapshot: RunConfigSnapshot;
@@ -512,16 +244,6 @@ export type AgentRun = {
   completedAt: IsoDateTime | null;
   error: string | null;
   createdAt: IsoDateTime;
-};
-
-export type RemoteRunBinding = {
-  runId: Id;
-  runtimeNodeId: Id;
-  remoteRunId: Id;
-  lastSequence: number;
-  resultImportedAt: IsoDateTime | null;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
 };
 
 export type ToolCallStatus =
@@ -566,36 +288,24 @@ export type PendingApprovalItem = {
   toolCall: ToolCallRecord;
 };
 
-export type ContextRevision = {
+export type WorkspaceContextRevision = {
   id: Id;
   workspaceId: Id;
-  /** Temporary v2 compatibility alias. */
-  projectId: Id;
   version: number;
   parentId: Id | null;
-  scope: "workspace" | "task";
-  taskId: Id | null;
   title: string;
   content: string;
-  sourceThreadId: Id | null;
+  sourceConversationId: Id | null;
   sourceRunId: Id | null;
-  sourceAgentInstanceId: Id | null;
-  sourceArtifactId: Id | null;
   publishedBy: "user" | "agent";
   createdAt: IsoDateTime;
-};
-
-export type ContextRevisionUse = {
-  contextRevisionId: Id;
-  runId: Id;
-  usedAt: IsoDateTime;
 };
 
 export type RunEvent =
   | {
       type: "run-status";
       runId: Id;
-      threadId: Id;
+      conversationId: Id;
       status: RunStatus;
       at: IsoDateTime;
       error?: string;
@@ -603,28 +313,28 @@ export type RunEvent =
   | {
       type: "assistant-delta";
       runId: Id;
-      threadId: Id;
+      conversationId: Id;
       delta: string;
       at: IsoDateTime;
     }
   | {
       type: "message-created";
       runId: Id;
-      threadId: Id;
-      message: ThreadMessage;
+      conversationId: Id;
+      message: ConversationMessage;
       at: IsoDateTime;
     }
   | {
       type: "tool-call";
       runId: Id;
-      threadId: Id;
+      conversationId: Id;
       toolCall: ToolCallRecord;
       at: IsoDateTime;
     }
   | {
       type: "approval-required";
       runId: Id;
-      threadId: Id;
+      conversationId: Id;
       approval: ToolApproval;
       toolCall: ToolCallRecord;
       at: IsoDateTime;
@@ -632,130 +342,25 @@ export type RunEvent =
   | {
       type: "managed-execution";
       runId: Id;
-      threadId: Id;
+      conversationId: Id;
       progress: ManagedExecutionProgress;
       at: IsoDateTime;
     };
 
 export type WorkspaceSnapshot = {
   workspaces: Workspace[];
-  runtimeNodes: RuntimeNode[];
-  agentDefinitions: AgentDefinition[];
-  agentInstances: AgentInstance[];
-  tasks: WorkspaceTask[];
-  assignments: TaskAssignment[];
-  artifacts: Artifact[];
-  handoffs: AgentHandoff[];
-  schedules: WorkspaceSchedule[];
-  inboxItems: InboxItem[];
-  /** Temporary v2 compatibility collections used by the current renderer. */
-  projects: Project[];
   providerProfiles: ProviderProfile[];
-  agentProfiles: AgentProfile[];
-  threads: AgentThread[];
+  agents: Agent[];
+  conversations: Conversation[];
   activeRuns: AgentRun[];
   recentRuns: AgentRun[];
   pendingApprovals: PendingApprovalItem[];
 };
 
-export function countWorkspacePendingAttention(input: {
-  workspaceId: Id | null;
-  threads: ReadonlyArray<Pick<AgentThread, "id" | "projectId">>;
-  runs: ReadonlyArray<Pick<AgentRun, "id" | "threadId">>;
-  approvals: ReadonlyArray<{
-    approval: Pick<ToolApproval, "runId">;
-  }>;
-  inboxItems: ReadonlyArray<
-    Pick<InboxItem, "workspaceId" | "status" | "kind">
-  >;
-}): number {
-  if (!input.workspaceId) {
-    return 0;
-  }
-  const threadIds = new Set(
-    input.threads
-      .filter((thread) => thread.projectId === input.workspaceId)
-      .map((thread) => thread.id),
-  );
-  const runIds = new Set(
-    input.runs
-      .filter((run) => threadIds.has(run.threadId))
-      .map((run) => run.id),
-  );
-  const approvals = input.approvals.filter(
-    (item) => runIds.has(item.approval.runId),
-  ).length;
-  const inboxItems = input.inboxItems.filter(
-    (item) =>
-      item.workspaceId === input.workspaceId &&
-      item.status !== "resolved" &&
-      item.kind !== "approval",
-  ).length;
-  return approvals + inboxItems;
-}
-
-export type CreateProjectInput = {
-  name?: string;
-  rootPath: string;
-};
-
-export type CreateAgentProfileInput = {
-  projectId: Id;
-  name: string;
-  runtimeKind?: AgentRuntimeKind;
-  runtimeNodeId?: Id;
-  instructions: string;
-  providerProfileId?: Id | null;
-  modelOverride?: string | null;
-  executionProfile?: ConversationExecutionProfile;
-  toolPolicy?: Partial<AgentToolPolicy>;
-  cliConfig?: CliAgentConfig | null;
-};
-
-export type CreateThreadInput = {
-  projectId: Id;
-  agentProfileId: Id;
-  title?: string;
-};
-
-export type UpdateThreadSettingsInput = {
-  threadId: Id;
-  modelOverride?: string | null;
-  executionProfile?: ConversationExecutionProfile;
-};
-
 export type StartRunInput = {
-  threadId: Id;
+  conversationId: Id;
   prompt: string;
 };
-
-const TASK_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
-  draft: new Set(["ready", "cancelled", "archived"]),
-  ready: new Set(["running", "cancelled", "archived"]),
-  running: new Set([
-    "waiting-input",
-    "blocked",
-    "completed",
-    "failed",
-    "cancelled",
-  ]),
-  "waiting-input": new Set(["running", "blocked", "cancelled"]),
-  blocked: new Set(["ready", "running", "cancelled", "archived"]),
-  completed: new Set(["ready", "archived"]),
-  failed: new Set(["ready", "archived"]),
-  cancelled: new Set(["ready", "archived"]),
-  archived: new Set(),
-};
-
-export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
-  return TASK_TRANSITIONS[from].has(to);
-}
-
-export function assertTaskTransition(from: TaskStatus, to: TaskStatus): void {
-  if (!canTransitionTask(from, to)) {
-    throw new Error(`Invalid task status transition: ${from} -> ${to}`);
-  }
-}
 
 const RUN_TRANSITIONS: Record<RunStatus, ReadonlySet<RunStatus>> = {
   queued: new Set(["preparing", "cancelling", "cancelled", "failed", "interrupted"]),
@@ -841,7 +446,9 @@ export function normalizeProviderBaseUrl(value: string): string {
   return parsed.toString().replace(/\/+$/, "");
 }
 
-export function validateProviderProfileInput(input: ProviderProfileInput): ProviderProfileInput {
+export function validateProviderProfileInput(
+  input: ProviderProfileInput,
+): ProviderProfileInput {
   const name = input.name.trim();
   const defaultModel = input.defaultModel.trim();
   if (!name) {
@@ -873,6 +480,15 @@ export function validateProviderProfileInput(input: ProviderProfileInput): Provi
   };
 }
 
+export function mergeToolPolicy(
+  overrides: Partial<AgentToolPolicy> | undefined,
+): AgentToolPolicy {
+  return {
+    ...DEFAULT_AGENT_TOOL_POLICY,
+    ...overrides,
+  };
+}
+
 function assertMaximumLength(
   value: string,
   maximum: number,
@@ -881,13 +497,4 @@ function assertMaximumLength(
   if (value.length > maximum) {
     throw new Error(`${field} must not exceed ${maximum} characters.`);
   }
-}
-
-export function mergeToolPolicy(
-  overrides: Partial<AgentToolPolicy> | undefined,
-): AgentToolPolicy {
-  return {
-    ...DEFAULT_AGENT_TOOL_POLICY,
-    ...overrides,
-  };
 }

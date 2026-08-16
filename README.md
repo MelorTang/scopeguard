@@ -24,7 +24,7 @@ for UI iteration and has no filesystem, command, provider, or secret capability.
 - Independent Runs, cancellation, retry, approval, and user-input continuation.
 - Request approval, automatic approval, and full-access permission profiles.
 - Root-confined local file tools and managed command execution.
-- Explicit Project Context for user-controlled shared information between
+- Explicit Workspace Context for user-controlled shared information between
   conversations; conversation transcripts remain isolated.
 - SQLite recovery for conversations, runs, usage, layout, and drafts.
 
@@ -72,13 +72,13 @@ packages/application      Conversation and Run use cases
 packages/agent-runtime    Native model and tool loop
 packages/provider-adapters
 packages/tool-runtime     Root-confined file and managed command tools
-packages/storage-sqlite   SQLite schema and forward migrations
+packages/storage-sqlite   Fresh V1 SQLite schema and recovery repositories
 packages/ipc-contracts    Runtime-validated desktop IPC contracts
 ```
 
-The SQLite schema still contains legacy control-plane tables so existing local
-databases migrate without destructive data loss. Those tables are not current
-product capabilities and are not exposed by the core application interface.
+V1 uses the schema identity `scopeguard-v1-core`. Pre-V1 development databases
+are rejected with an explicit error instead of being migrated or treated as an
+empty profile. Historical tags preserve the former implementation.
 
 See [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md),
 [SECURITY.md](./docs/SECURITY.md), and

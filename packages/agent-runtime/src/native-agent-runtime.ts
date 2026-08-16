@@ -42,9 +42,9 @@ const REQUEST_USER_INPUT_TOOL = {
 };
 
 export type NativeAgentRunInput = {
-  projectId: Id;
-  projectRoot: string;
-  threadId: Id;
+  workspaceId: Id;
+  workspaceRoot: string;
+  conversationId: Id;
   runId: Id;
   credentials: ProviderCredentials;
   messages: ModelMessage[];
@@ -404,9 +404,9 @@ export class NativeAgentRuntime {
 
 function toolContext(input: NativeAgentRunInput): ToolExecutionContext {
   return {
-    projectId: input.projectId,
-    projectRoot: input.projectRoot,
-    threadId: input.threadId,
+    workspaceId: input.workspaceId,
+    workspaceRoot: input.workspaceRoot,
+    conversationId: input.conversationId,
     runId: input.runId,
     executionProfile: input.executionProfile,
     toolPolicy: input.toolPolicy,

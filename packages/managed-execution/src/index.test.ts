@@ -19,8 +19,8 @@ import {
 
 const request: ManagedExecutionRequest = {
   executionId: "execution-1",
-  projectId: "project-1",
-  threadId: "thread-1",
+  workspaceId: "project-1",
+  conversationId: "thread-1",
   runId: "run-1",
   workspaceRoot: "C:\\work",
   command: "echo ready",

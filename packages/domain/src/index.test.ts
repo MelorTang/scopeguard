@@ -2,37 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  SCOPEGUARD_SCHEMA_ID,
+  SCOPEGUARD_SCHEMA_VERSION,
   canTransitionRun,
-  canTransitionTask,
   canTransitionToolCall,
-  countWorkspacePendingAttention,
   mergeToolPolicy,
   normalizeProviderBaseUrl,
   validateProviderProfileInput,
 } from "./index.js";
 
-test("counts pending attention only for the selected Workspace", () => {
-  assert.equal(countWorkspacePendingAttention({
-    workspaceId: "workspace-a",
-    threads: [
-      { id: "thread-a", projectId: "workspace-a" },
-      { id: "thread-b", projectId: "workspace-b" },
-    ],
-    runs: [
-      { id: "run-a", threadId: "thread-a" },
-      { id: "run-b", threadId: "thread-b" },
-    ],
-    approvals: [
-      { approval: { runId: "run-a" } },
-      { approval: { runId: "run-b" } },
-    ],
-    inboxItems: [
-      { workspaceId: "workspace-a", status: "unread", kind: "task-failed" },
-      { workspaceId: "workspace-a", status: "resolved", kind: "task-completed" },
-      { workspaceId: "workspace-a", status: "unread", kind: "approval" },
-      { workspaceId: "workspace-b", status: "unread", kind: "task-failed" },
-    ],
-  }), 2);
+test("identifies the fresh V1 core schema", () => {
+  assert.equal(SCOPEGUARD_SCHEMA_ID, "scopeguard-v1-core");
+  assert.equal(SCOPEGUARD_SCHEMA_VERSION, 1);
 });
 
 test("normalizes provider URLs without changing their path", () => {
@@ -85,15 +66,6 @@ test("keeps run transitions explicit", () => {
   assert.equal(canTransitionRun("cancelling", "completed"), true);
   assert.equal(canTransitionRun("completed", "running"), false);
   assert.equal(canTransitionRun("cancelled", "completed"), false);
-});
-
-test("keeps durable task transitions explicit", () => {
-  assert.equal(canTransitionTask("draft", "ready"), true);
-  assert.equal(canTransitionTask("ready", "running"), true);
-  assert.equal(canTransitionTask("running", "waiting-input"), true);
-  assert.equal(canTransitionTask("waiting-input", "running"), true);
-  assert.equal(canTransitionTask("completed", "running"), false);
-  assert.equal(canTransitionTask("archived", "ready"), false);
 });
 
 test("keeps tool call facts monotonic after a terminal outcome", () => {

@@ -279,8 +279,8 @@ function executionRequest(requestId: string, executionId: string) {
     requestId,
     request: {
       executionId,
-      projectId: "project",
-      threadId: `thread-${executionId}`,
+      workspaceId: "project",
+      conversationId: `thread-${executionId}`,
       runId: `run-${executionId}`,
       workspaceRoot: process.cwd(),
       command: "echo ready",

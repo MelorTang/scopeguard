@@ -19,41 +19,41 @@ RAG indexing, multi-user identity, cloud sync, or automatic Agent routing.
 ```text
 Workspace
   ├─ optional localRootPath
-  ├─ ProviderProfile
-  ├─ AgentProfile (native)
-  ├─ Conversation (AgentThread)
-  │    ├─ ThreadMessage
+  ├─ ProviderProfile (referenced by Agent)
+  ├─ Agent (native)
+  ├─ Conversation
+  │    ├─ ConversationMessage
   │    └─ Run
   │         ├─ RunRequestManifest
   │         ├─ RunUsageRecord
   │         ├─ ToolCallRecord
   │         └─ ToolApproval
-  └─ ProjectContext (ContextRevision)
+  └─ WorkspaceContextRevision
 ```
 
 - `Workspace` is the user-visible project boundary; its local folder is optional.
-- `AgentProfile` owns native instructions, Provider selection, default model,
+- `Agent` owns native instructions, Provider selection, default model,
   default execution profile, and tool policy.
 - A conversation binds one Agent at creation. Its model override and execution
   profile may change without changing the Agent or Harness; each Run stores the
   effective values in an immutable configuration snapshot.
 - `Run` is one execution attempt. One conversation has at most one non-terminal
   Run; different conversations may run concurrently and cancel independently.
-- `ProjectContext` is the explicit, user-controlled shared context. ScopeGuard
+- `WorkspaceContextRevision` is the explicit, user-controlled shared context. ScopeGuard
   never injects another conversation's transcript implicitly.
 - Request manifests and usage records preserve the effective execution input
   and accounting without turning the product into a separate control plane.
 
-The current persistence model still uses the internal names `Project`,
-`AgentProfile`, and `AgentThread` in parts of the storage and IPC contract.
-Those are implementation terms, not a second product hierarchy.
+The domain, storage, application, IPC, and Renderer use the same canonical
+Workspace, Agent, Conversation, Message, and Run names. There is no compatibility
+projection for the former Project/Profile/Task/Assignment hierarchy.
 
 ## Execution
 
 Only the native `NativeAgentRuntime` is managed by ScopeGuard. It executes the
 conversation transcript against the configured Provider, exposes allowed tools,
-and emits typed Run events. A legacy profile whose runtime kind is not `native`
-is rejected rather than silently mapped to different behavior.
+and emits typed Run events. External CLI harnesses are not represented as native
+Agents and remain outside ScopeGuard's lifecycle.
 
 Every conversation has one of three current execution profiles:
 
@@ -89,7 +89,7 @@ packages/agent-runtime      Native Provider/tool loop
 packages/provider-adapters  Provider protocol adapters
 packages/tool-runtime       Path confinement, approval, and command routing
 packages/managed-execution  Bounded and Full Access command adapters
-packages/storage-sqlite     Repositories and forward migrations
+packages/storage-sqlite     Fresh V1 schema and recovery repositories
 packages/ipc-contracts      Runtime validators and typed desktop contract
 apps/desktop                Main, preload, Agent host, and Renderer
 ```
@@ -100,13 +100,14 @@ implementations.
 
 ## Persistence And Recovery
 
-- Migrations remain sequential and transactional; newer schemas are rejected.
-- Legacy Runtime, Task, Artifact, Handoff, Schedule, and Inbox tables remain in
-  schema history so existing databases migrate without destructive data loss.
-  They are not projected through the current desktop core.
+- The schema declares identity `scopeguard-v1-core` and version `1`.
+- A database with missing or different identity is rejected. V1 does not migrate
+  the former development schema and never silently creates a new graph over it.
+- Only canonical V1 tables are created; Runtime, Task, Assignment, Artifact,
+  Handoff, Schedule, Inbox, Project, AgentProfile, and AgentThread tables do not
+  exist in the new schema.
 - On Agent-host startup, every non-terminal Run becomes `interrupted`, including
-  records historically marked as remote-bound. No deleted runtime is presumed
-  able to reconcile them.
+  local record. No external owner is presumed able to reconcile it.
 - Interrupted Runs retain checkpointed output and unfinished non-idempotent tool
   effects remain unknown rather than being reported as successful.
 - Layout and unsent drafts are local Renderer state; conversation and Run state

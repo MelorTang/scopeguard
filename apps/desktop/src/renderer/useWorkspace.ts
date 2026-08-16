@@ -1,23 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
-  AgentDefinition,
-  AgentHandoff,
-  AgentInstance,
-  AgentProfile,
+  Agent,
   AgentRun,
-  AgentThread,
   ApprovalDecision,
-  ContextRevision,
-  CreateAgentProfileInput,
+  Conversation,
+  ConversationMessage,
+  CreateAgentInput,
   ManagedExecutionStage,
-  Project,
   ProviderConnectionResult,
   RunEvent,
-  ThreadMessage,
-  UpdateThreadSettingsInput,
+  UpdateConversationSettingsInput,
   Workspace,
-  WorkspaceTask,
 } from "@scopeguard/domain";
 import type {
   DesktopWorkspaceSnapshot,
@@ -29,42 +23,28 @@ import type {
 import { desktopApi } from "./bridge.js";
 
 type PersistedUiState = {
-  selectedProjectId: string | null;
-  activeThreadId: string | null;
-  openThreadIds: string[];
-  paneThreadIds: string[];
-  activePaneIndex: number;
+  selectedWorkspaceId: string | null;
+  activeConversationId: string | null;
+  openConversationIds: string[];
+  paneConversationIds: string[];
   requestedSplitCount: number;
-  projectLayouts: Record<string, ProjectLayout>;
   sidebarCollapsed: boolean;
-  inspectorOpen: boolean;
   professionalMode: boolean;
 };
 
-type ProjectLayout = {
-  activeThreadId: string | null;
-  openThreadIds: string[];
-  paneThreadIds: string[];
-  activePaneIndex: number;
-  requestedSplitCount: number;
-};
-
 type ApprovalFocusRequest = {
-  threadId: string;
+  conversationId: string;
   approvalId: string;
   sequence: number;
 };
 
 const DEFAULT_UI_STATE: PersistedUiState = {
-  selectedProjectId: null,
-  activeThreadId: null,
-  openThreadIds: [],
-  paneThreadIds: [],
-  activePaneIndex: 0,
+  selectedWorkspaceId: null,
+  activeConversationId: null,
+  openConversationIds: [],
+  paneConversationIds: [],
   requestedSplitCount: 1,
-  projectLayouts: {},
   sidebarCollapsed: false,
-  inspectorOpen: false,
   professionalMode: false,
 };
 
@@ -72,16 +52,12 @@ export type WorkspaceController = {
   snapshot: DesktopWorkspaceSnapshot | null;
   loading: boolean;
   error: string | null;
-  selectedProject: Project | null;
+  selectedProject: Workspace | null;
   selectedWorkspace: Workspace | null;
-  activeThread: AgentThread | null;
-  activeAgent: AgentProfile | null;
-  activeTask: WorkspaceTask | null;
-  activeAgentInstance: AgentInstance | null;
-  activeAgentDefinition: AgentDefinition | null;
-  activeContext: ContextRevision | null;
-  visibleThreads: AgentThread[];
-  messagesByThread: Record<string, ThreadMessage[]>;
+  activeThread: Conversation | null;
+  activeAgent: Agent | null;
+  visibleThreads: Conversation[];
+  messagesByThread: Record<string, ConversationMessage[]>;
   streamingByThread: Record<string, string>;
   executionStageByThread: Record<string, ManagedExecutionStage>;
   requestedSplitCount: number;
@@ -89,54 +65,42 @@ export type WorkspaceController = {
   maxSplitCount: number;
   activePaneIndex: number;
   sidebarCollapsed: boolean;
-  inspectorOpen: boolean;
   professionalMode: boolean;
   approvalFocus: ApprovalFocusRequest | null;
-  selectProject: (projectId: string) => void;
-  openThread: (threadId: string) => void;
-  focusApproval: (threadId: string, approvalId: string) => void;
+  selectProject: (workspaceId: string) => void;
+  openThread: (conversationId: string) => void;
+  focusApproval: (conversationId: string, approvalId: string) => void;
   selectPane: (paneIndex: number) => void;
   setRequestedSplitCount: (count: number) => void;
   setSidebarCollapsed: (value: boolean) => void;
-  setInspectorOpen: (value: boolean) => void;
   setProfessionalMode: (value: boolean) => void;
   refresh: () => Promise<void>;
   createWorkspace: (name: string) => Promise<Workspace>;
-  addProject: () => Promise<Project | null>;
+  openLocalWorkspace: () => Promise<Workspace | null>;
   saveProvider: (
     input: SaveProviderProfileRequest,
   ) => Promise<ProviderProfileView>;
   testProvider: (
     input: SaveProviderProfileRequest,
   ) => Promise<ProviderConnectionResult>;
-  createAgentThread: (
-    profileInput: Omit<CreateAgentProfileInput, "projectId">,
+  createAgentConversation: (
+    agentInput: Omit<CreateAgentInput, "workspaceId">,
     title: string,
-  ) => Promise<AgentThread>;
-  createConversation: (
-    agentProfileId: string,
-    title: string,
-  ) => Promise<AgentThread>;
-  updateThreadSettings: (
-    input: UpdateThreadSettingsInput,
-  ) => Promise<AgentThread>;
+  ) => Promise<Conversation>;
+  createConversation: (agentId: string, title: string) => Promise<Conversation>;
+  updateConversationSettings: (
+    input: UpdateConversationSettingsInput,
+  ) => Promise<Conversation>;
   chooseWorkspaceFiles: () => Promise<WorkspaceFileSelection[]>;
-  sendMessage: (threadId: string, prompt: string) => Promise<AgentRun>;
+  sendMessage: (conversationId: string, prompt: string) => Promise<AgentRun>;
   cancelRun: (runId: string) => Promise<void>;
   resolveApproval: (
     approvalId: string,
     decision: ApprovalDecision,
   ) => Promise<void>;
-  resolveInboxItem: (inboxItemId: string) => Promise<void>;
-  updateContext: (content: string) => Promise<ContextRevision>;
-  publishArtifactToContext: (artifactId: string) => Promise<ContextRevision>;
-  createHandoff: (
-    toAgentInstanceId: string,
-    summary: string,
-  ) => Promise<AgentHandoff>;
-  getRunForThread: (threadId: string) => AgentRun | null;
-  getLatestRunForThread: (threadId: string) => AgentRun | null;
-  retryThread: (threadId: string) => Promise<AgentRun>;
+  getRunForThread: (conversationId: string) => AgentRun | null;
+  getLatestRunForThread: (conversationId: string) => AgentRun | null;
+  retryThread: (conversationId: string) => Promise<AgentRun>;
 };
 
 export function useWorkspace(): WorkspaceController {
@@ -145,29 +109,28 @@ export function useWorkspace(): WorkspaceController {
   const [error, setError] = useState<string | null>(null);
   const [ui, setUi] = useState<PersistedUiState>(readUiState);
   const [messagesByThread, setMessagesByThread] = useState<
-    Record<string, ThreadMessage[]>
+    Record<string, ConversationMessage[]>
   >({});
-  const [streamingByThread, setStreamingByThread] = useState<
-    Record<string, string>
-  >({});
+  const [streamingByThread, setStreamingByThread] = useState<Record<string, string>>({});
   const [executionStageByThread, setExecutionStageByThread] = useState<
     Record<string, ManagedExecutionStage>
   >({});
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  const [approvalFocus, setApprovalFocus] =
-    useState<ApprovalFocusRequest | null>(null);
-  const approvalFocusSequence = useRef(0);
+  const [approvalFocus, setApprovalFocus] = useState<ApprovalFocusRequest | null>(null);
+  const approvalSequence = useRef(0);
   const snapshotRef = useRef(snapshot);
+  const messagesRef = useRef(messagesByThread);
   snapshotRef.current = snapshot;
+  messagesRef.current = messagesByThread;
 
   const refresh = useCallback(async () => {
     try {
       const next = await desktopApi.getWorkspaceSnapshot();
       setSnapshot(next);
+      setUi((current) => normalizeUi(current, next));
       setError(null);
-      setUi((current) => normalizeUiState(current, next));
-    } catch (refreshError) {
-      setError(messageFromError(refreshError));
+    } catch (cause) {
+      setError(messageFromError(cause));
     } finally {
       setLoading(false);
     }
@@ -183,411 +146,231 @@ export function useWorkspace(): WorkspaceController {
         setStreamingByThread,
         setExecutionStageByThread,
       );
-      if (
-        event.type === "run-status" &&
-        [
-          "waiting-input",
-          "completed",
-          "failed",
-          "cancelled",
-          "interrupted",
-        ].includes(event.status)
-      ) {
-        void refresh();
-      }
     });
   }, [refresh]);
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const resize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      "scopeguard.ui.v2",
-      JSON.stringify({
-        ...ui,
-        projectLayouts: rememberCurrentProjectLayout(ui),
-      }),
-    );
+    localStorage.setItem("scopeguard.ui.v3", JSON.stringify(ui));
   }, [ui]);
 
-  const selectedProject = useMemo(
-    () =>
-      snapshot?.projects.find((project) => project.id === ui.selectedProjectId)
-      ?? snapshot?.projects[0]
-      ?? null,
-    [snapshot, ui.selectedProjectId],
-  );
-  const selectedWorkspace = useMemo(
-    () =>
-      snapshot?.workspaces.find(
-        (workspace) => workspace.id === (ui.selectedProjectId ?? selectedProject?.id),
-      )
+  const selectedWorkspace = useMemo(() =>
+    snapshot?.workspaces.find((item) => item.id === ui.selectedWorkspaceId)
       ?? snapshot?.workspaces[0]
       ?? null,
-    [selectedProject?.id, snapshot?.workspaces, ui.selectedProjectId],
+  [snapshot, ui.selectedWorkspaceId]);
+  const activeThread = useMemo(() =>
+    snapshot?.conversations.find((item) => item.id === ui.activeConversationId)
+      ?? null,
+  [snapshot, ui.activeConversationId]);
+  const activeAgent = useMemo(() =>
+    snapshot?.agents.find((item) => item.id === activeThread?.agentId) ?? null,
+  [activeThread?.agentId, snapshot?.agents]);
+
+  const openThreads = useMemo(() => ui.openConversationIds.flatMap((id) => {
+    const conversation = snapshot?.conversations.find((item) => item.id === id);
+    return conversation ? [conversation] : [];
+  }), [snapshot?.conversations, ui.openConversationIds]);
+  const responsiveMaximum = maxPaneCount(windowWidth, ui.sidebarCollapsed);
+  const maxSplitCount = Math.min(responsiveMaximum, Math.max(1, openThreads.length));
+  const effectiveSplitCount = Math.min(ui.requestedSplitCount, maxSplitCount);
+  const paneIds = normalizePaneIds(
+    ui.paneConversationIds,
+    ui.openConversationIds,
+    effectiveSplitCount,
   );
-  const activeThread = useMemo(
-    () =>
-      snapshot?.threads.find((thread) => thread.id === ui.activeThreadId) ?? null,
-    [snapshot, ui.activeThreadId],
+  const visibleThreads = paneIds.flatMap((id) => {
+    const conversation = snapshot?.conversations.find((item) => item.id === id);
+    return conversation ? [conversation] : [];
+  });
+  const activePaneIndex = Math.max(
+    0,
+    paneIds.indexOf(ui.activeConversationId ?? ""),
   );
-  const activeAgent = useMemo(
-    () =>
-      snapshot?.agentProfiles.find(
-        (profile) => profile.id === activeThread?.agentProfileId,
-      ) ?? null,
-    [snapshot, activeThread],
-  );
-  const activeAssignment = useMemo(
-    () => snapshot?.assignments.find(
-      (assignment) => assignment.threadId === activeThread?.id,
-    ) ?? null,
-    [activeThread?.id, snapshot?.assignments],
-  );
-  const activeTask = useMemo(
-    () => snapshot?.tasks.find(
-      (task) => task.id === (activeAssignment?.taskId ?? activeThread?.id),
-    ) ?? null,
-    [activeAssignment?.taskId, activeThread?.id, snapshot?.tasks],
-  );
-  const activeAgentInstance = useMemo(
-    () => snapshot?.agentInstances.find(
-      (instance) => instance.id === activeAssignment?.agentInstanceId,
-    ) ?? null,
-    [activeAssignment?.agentInstanceId, snapshot?.agentInstances],
-  );
-  const activeAgentDefinition = useMemo(
-    () => snapshot?.agentDefinitions.find(
-      (definition) => definition.id === activeAgentInstance?.agentDefinitionId,
-    ) ?? null,
-    [activeAgentInstance?.agentDefinitionId, snapshot?.agentDefinitions],
-  );
-  const openThreads = useMemo(
-    () =>
-      ui.openThreadIds.flatMap((threadId) => {
-        const thread = snapshot?.threads.find((item) => item.id === threadId);
-        return thread ? [thread] : [];
-      }),
-    [snapshot, ui.openThreadIds],
-  );
-  const effectiveSplitCount = Math.min(
-    ui.requestedSplitCount,
-    maxPaneCount(windowWidth, ui.sidebarCollapsed, ui.inspectorOpen),
-    Math.max(1, openThreads.length),
-  );
-  const maxSplitCount = Math.min(
-    maxPaneCount(windowWidth, ui.sidebarCollapsed, ui.inspectorOpen),
-    Math.max(1, openThreads.length),
-  );
-  const logicalPaneThreadIds = useMemo(
-    () => normalizePaneThreadIds(
-      ui.paneThreadIds,
-      ui.openThreadIds,
-      Math.min(
-        ui.requestedSplitCount,
-        Math.max(1, ui.openThreadIds.length),
-      ),
-    ),
-    [ui.openThreadIds, ui.paneThreadIds, ui.requestedSplitCount],
-  );
-  const visibleThreadIds = useMemo(
-    () => selectVisiblePaneThreadIds(
-      logicalPaneThreadIds,
-      effectiveSplitCount,
-      ui.activeThreadId,
-    ),
-    [
-      effectiveSplitCount,
-      logicalPaneThreadIds,
-      ui.activeThreadId,
-    ],
-  );
-  const visibleThreads = useMemo(() => {
-    return visibleThreadIds.flatMap((threadId) => {
-      const thread = snapshot?.threads.find((item) => item.id === threadId);
-      return thread ? [thread] : [];
-    });
-  }, [snapshot?.threads, visibleThreadIds]);
-  const visibleActivePaneIndex = visibleThreadIds.indexOf(
-    ui.activeThreadId ?? "",
-  );
-  const activePaneIndex = visibleActivePaneIndex >= 0
-    ? visibleActivePaneIndex
-    : 0;
-  const activeContext: ContextRevision | null = null;
 
   useEffect(() => {
-    for (const thread of openThreads) {
-      if (messagesByThread[thread.id]) {
-        continue;
-      }
-      void desktopApi.listThreadMessages(thread.id)
-        .then((messages) => {
-          setMessagesByThread((current) => ({
-            ...current,
-            [thread.id]: mergeMessages(
-              current[thread.id] ?? [],
-              messages,
-            ),
-          }));
-        })
-        .catch((loadError: unknown) => setError(messageFromError(loadError)));
+    for (const conversation of openThreads) {
+      if (messagesByThread[conversation.id]) continue;
+      void desktopApi.listConversationMessages(conversation.id)
+        .then((messages) => setMessagesByThread((current) => ({
+          ...current,
+          [conversation.id]: mergeMessages(current[conversation.id] ?? [], messages),
+        })))
+        .catch((cause: unknown) => setError(messageFromError(cause)));
     }
   }, [messagesByThread, openThreads]);
 
-  const selectProject = useCallback((projectId: string) => {
+  const selectProject = useCallback((workspaceId: string) => {
+    setUi((current) => selectWorkspace(current, snapshotRef.current, workspaceId));
+  }, []);
+
+  const activateConversation = useCallback((conversationId: string, workspaceId: string) => {
     setUi((current) => {
-      const projectLayouts = rememberCurrentProjectLayout(current);
-      return {
-        ...current,
-        selectedProjectId: projectId,
-        projectLayouts,
-        ...threadSelectionForProject(
-          snapshotRef.current,
-          projectId,
-          projectLayouts[projectId],
+      const openConversationIds = current.openConversationIds.includes(conversationId)
+        ? current.openConversationIds
+        : [...current.openConversationIds, conversationId];
+      const paneConversationIds = assignToPane(
+        normalizePaneIds(
+          current.paneConversationIds,
+          openConversationIds,
+          current.requestedSplitCount,
         ),
-      };
-    });
-  }, []);
-
-  const openThread = useCallback((threadId: string) => {
-    const thread = snapshotRef.current?.threads.find((item) => item.id === threadId);
-    if (!thread) {
-      return;
-    }
-    setUi((current) => {
-      const switchingProject = current.selectedProjectId !== thread.projectId;
-      const projectLayouts = switchingProject
-        ? rememberCurrentProjectLayout(current)
-        : current.projectLayouts;
-      const base = switchingProject
-        ? threadSelectionForProject(
-            snapshotRef.current,
-            thread.projectId,
-            projectLayouts[thread.projectId],
-          )
-        : current;
-      const openThreadIds = base.openThreadIds.includes(threadId)
-        ? base.openThreadIds
-        : [...base.openThreadIds, threadId];
-      const paneCount = Math.max(1, base.requestedSplitCount);
-      const targetPaneIndex = Math.min(
-        base.activePaneIndex,
-        paneCount - 1,
-      );
-      const paneThreadIds = assignThreadToPane(
-        normalizePaneThreadIds(base.paneThreadIds, openThreadIds, paneCount),
-        threadId,
-        targetPaneIndex,
+        conversationId,
+        Math.min(
+          Math.max(0, current.paneConversationIds.indexOf(current.activeConversationId ?? "")),
+          current.requestedSplitCount - 1,
+        ),
       );
       return {
         ...current,
-        selectedProjectId: thread.projectId,
-        projectLayouts,
-        activeThreadId: threadId,
-        openThreadIds,
-        paneThreadIds,
-        activePaneIndex: targetPaneIndex,
-        requestedSplitCount: base.requestedSplitCount,
+        selectedWorkspaceId: workspaceId,
+        activeConversationId: conversationId,
+        openConversationIds,
+        paneConversationIds,
       };
     });
   }, []);
 
-  const focusApproval = useCallback((
-    threadId: string,
-    approvalId: string,
-  ) => {
-    openThread(threadId);
-    if (window.innerWidth < 1440) {
-      setUi((current) => current.inspectorOpen
-        ? { ...current, inspectorOpen: false }
-        : current);
-    }
-    approvalFocusSequence.current += 1;
-    setApprovalFocus({
-      threadId,
-      approvalId,
-      sequence: approvalFocusSequence.current,
-    });
+  const openThread = useCallback((conversationId: string) => {
+    const conversation = snapshotRef.current?.conversations.find(
+      (item) => item.id === conversationId,
+    );
+    if (!conversation) return;
+    activateConversation(conversationId, conversation.workspaceId);
+  }, [activateConversation]);
+
+  const focusApproval = useCallback((conversationId: string, approvalId: string) => {
+    openThread(conversationId);
+    approvalSequence.current += 1;
+    setApprovalFocus({ conversationId, approvalId, sequence: approvalSequence.current });
   }, [openThread]);
 
   const selectPane = useCallback((paneIndex: number) => {
     setUi((current) => {
-      const effectiveCount = Math.min(
+      const panes = normalizePaneIds(
+        current.paneConversationIds,
+        current.openConversationIds,
         current.requestedSplitCount,
-        maxPaneCount(
-          window.innerWidth,
-          current.sidebarCollapsed,
-          current.inspectorOpen,
-        ),
-        Math.max(1, current.openThreadIds.length),
       );
-      const logicalPaneThreadIds = normalizePaneThreadIds(
-        current.paneThreadIds,
-        current.openThreadIds,
-        Math.min(
-          current.requestedSplitCount,
-          Math.max(1, current.openThreadIds.length),
-        ),
-      );
-      const visibleThreadIds = selectVisiblePaneThreadIds(
-        logicalPaneThreadIds,
-        effectiveCount,
-        current.activeThreadId,
-      );
-      const activeThreadId =
-        visibleThreadIds[Math.max(0, Math.min(
-          paneIndex,
-          visibleThreadIds.length - 1,
-        ))] ?? current.activeThreadId;
-      const activePaneIndex = activeThreadId
-        ? Math.max(0, logicalPaneThreadIds.indexOf(activeThreadId))
-        : 0;
+      const conversationId = panes[paneIndex];
+      return conversationId
+        ? { ...current, activeConversationId: conversationId }
+        : current;
+    });
+  }, []);
+
+  const setRequestedSplitCount = useCallback((count: number) => {
+    setUi((current) => {
+      const requestedSplitCount = Math.max(1, Math.min(4, count));
       return {
         ...current,
-        activePaneIndex,
-        activeThreadId,
+        requestedSplitCount,
+        paneConversationIds: normalizePaneIds(
+          current.paneConversationIds,
+          current.openConversationIds,
+          requestedSplitCount,
+        ),
       };
     });
   }, []);
 
-  const addProject = useCallback(async () => {
-    try {
-      const selection = await desktopApi.chooseProjectDirectory();
-      if (selection.canceled || !selection.rootPath) {
-        return null;
-      }
-      const project = await desktopApi.addProject({
-        rootPath: selection.rootPath,
-      });
-      await refresh();
-      setUi((current) => ({
-        ...current,
-        projectLayouts: rememberCurrentProjectLayout(current),
-        selectedProjectId: project.id,
-        activeThreadId: null,
-        openThreadIds: [],
-        paneThreadIds: [],
-        activePaneIndex: 0,
-        requestedSplitCount: 1,
-      }));
-      return project;
-    } catch (projectError) {
-      setError(messageFromError(projectError));
-      throw projectError;
-    }
-  }, [refresh]);
+  const setSidebarCollapsed = useCallback((value: boolean) => {
+    setUi((current) => ({ ...current, sidebarCollapsed: value }));
+  }, []);
+  const setProfessionalMode = useCallback((value: boolean) => {
+    setUi((current) => ({ ...current, professionalMode: value }));
+  }, []);
 
   const createWorkspace = useCallback(async (name: string) => {
-    try {
-      const created = await desktopApi.createWorkspace({ name: name.trim() });
-      await refresh();
-      setUi((current) => ({
-        ...current,
-        projectLayouts: rememberCurrentProjectLayout(current),
-        selectedProjectId: created.id,
-        activeThreadId: null,
-        openThreadIds: [],
-        paneThreadIds: [],
-        activePaneIndex: 0,
-        requestedSplitCount: 1,
-      }));
-      return created;
-    } catch (workspaceError) {
-      setError(messageFromError(workspaceError));
-      throw workspaceError;
-    }
+    const workspace = await desktopApi.createWorkspace({ name });
+    await refresh();
+    setUi((current) => selectWorkspace(current, snapshotRef.current, workspace.id));
+    return workspace;
   }, [refresh]);
 
-  const saveProvider = useCallback(
-    async (input: SaveProviderProfileRequest) => {
-      const provider = await desktopApi.saveProviderProfile(input);
-      await refresh();
-      return provider;
-    },
-    [refresh],
-  );
-
-  const testProvider = useCallback(
-    (input: SaveProviderProfileRequest) =>
-      desktopApi.testProviderConnection(input),
-    [],
-  );
-
-  const createAgentThread = useCallback(
-    async (
-      profileInput: Omit<CreateAgentProfileInput, "projectId">,
-      title: string,
-    ) => {
-      if (!selectedProject) {
-        throw new Error("请先创建工作区，再创建 Agent。");
-      }
-      const profile = await desktopApi.createAgentProfile({
-        ...profileInput,
-        projectId: selectedProject.id,
-      });
-      const thread = await desktopApi.createThread({
-        projectId: selectedProject.id,
-        agentProfileId: profile.id,
-        title,
-      });
-      await refresh();
-      openThread(thread.id);
-      return thread;
-    },
-    [openThread, refresh, selectedProject],
-  );
-
-  const createConversation = useCallback(async (
-    agentProfileId: string,
-    title: string,
-  ) => {
-    if (!selectedProject) {
-      throw new Error("请先创建工作区。");
-    }
-    const agent = snapshot?.agentProfiles.find(
-      (item) => item.id === agentProfileId && item.projectId === selectedProject.id,
-    );
-    if (!agent) {
-      throw new Error("找不到当前工作区中的 Agent。");
-    }
-    const thread = await desktopApi.createThread({
-      projectId: selectedProject.id,
-      agentProfileId: agent.id,
-      title: title.trim(),
+  const openLocalWorkspace = useCallback(async () => {
+    const selection = await desktopApi.chooseWorkspaceDirectory();
+    if (selection.canceled || !selection.localRootPath) return null;
+    const name = selection.localRootPath.split(/[\\/]/).filter(Boolean).at(-1)
+      ?? "Local workspace";
+    const workspace = await desktopApi.createWorkspace({
+      name,
+      localRootPath: selection.localRootPath,
     });
     await refresh();
-    openThread(thread.id);
-    return thread;
-  }, [openThread, refresh, selectedProject, snapshot?.agentProfiles]);
-
-  const updateThreadSettings = useCallback(async (
-    input: UpdateThreadSettingsInput,
-  ) => {
-    const thread = await desktopApi.updateThreadSettings(input);
-    await refresh();
-    return thread;
+    setUi((current) => ({ ...current, selectedWorkspaceId: workspace.id }));
+    return workspace;
   }, [refresh]);
+
+  const saveProvider = useCallback(async (input: SaveProviderProfileRequest) => {
+    const provider = await desktopApi.saveProviderProfile(input);
+    await refresh();
+    return provider;
+  }, [refresh]);
+
+  const testProvider = useCallback((input: SaveProviderProfileRequest) =>
+    desktopApi.testProviderConnection(input), []);
+
+  const createAgentConversation = useCallback(async (
+    input: Omit<CreateAgentInput, "workspaceId">,
+    title: string,
+  ) => {
+    const workspaceId = selectedWorkspace?.id;
+    if (!workspaceId) throw new Error("请先选择工作区。");
+    const agent = await desktopApi.createAgent({ ...input, workspaceId });
+    const conversation = await desktopApi.createConversation({
+      workspaceId,
+      agentId: agent.id,
+      title,
+    });
+    await refresh();
+    activateConversation(conversation.id, conversation.workspaceId);
+    return conversation;
+  }, [activateConversation, refresh, selectedWorkspace?.id]);
+
+  const createConversation = useCallback(async (agentId: string, title: string) => {
+    const workspaceId = selectedWorkspace?.id;
+    if (!workspaceId) throw new Error("请先选择工作区。");
+    const conversation = await desktopApi.createConversation({ workspaceId, agentId, title });
+    await refresh();
+    activateConversation(conversation.id, conversation.workspaceId);
+    return conversation;
+  }, [activateConversation, refresh, selectedWorkspace?.id]);
+
+  const updateConversationSettings = useCallback(async (
+    input: UpdateConversationSettingsInput,
+  ) => {
+    const conversation = await desktopApi.updateConversationSettings(input);
+    setSnapshot((current) => current ? {
+      ...current,
+      conversations: current.conversations.map((item) =>
+        item.id === conversation.id ? conversation : item
+      ),
+    } : current);
+    return conversation;
+  }, []);
 
   const chooseWorkspaceFiles = useCallback(async () => {
-    if (!selectedProject) {
-      throw new Error("请先打开一个 Workspace。");
-    }
-    const result = await desktopApi.chooseWorkspaceFiles(selectedProject.id);
-    return result.canceled ? [] : result.files;
-  }, [selectedProject]);
+    if (!selectedWorkspace) throw new Error("请先选择工作区。");
+    return (await desktopApi.chooseWorkspaceFiles(selectedWorkspace.id)).files;
+  }, [selectedWorkspace]);
 
-  const sendMessage = useCallback(async (threadId: string, prompt: string) => {
-    setStreamingByThread((current) => ({ ...current, [threadId]: "" }));
-    const run = await desktopApi.startRun({ threadId, prompt });
-    await refresh();
+  const sendMessage = useCallback(async (conversationId: string, prompt: string) => {
+    const run = await desktopApi.startRun({ conversationId, prompt });
+    setSnapshot((current) => current ? {
+      ...current,
+      activeRuns: [
+        ...current.activeRuns.filter((item) => item.id !== run.id),
+        run,
+      ],
+    } : current);
     return run;
-  }, [refresh]);
+  }, []);
 
   const cancelRun = useCallback(async (runId: string) => {
     await desktopApi.cancelRun(runId);
@@ -602,61 +385,32 @@ export function useWorkspace(): WorkspaceController {
     await refresh();
   }, [refresh]);
 
-  const resolveInboxItem = useCallback(async (_inboxItemId: string) =>
-    unavailableFeature("收件箱"), []);
-
-  const updateContext = useCallback(async (_content: string) =>
-    unavailableFeature("共享上下文发布"), []);
-
-  const publishArtifactToContext = useCallback(async (_artifactId: string) =>
-    unavailableFeature("Artifact 发布"), []);
-
-  const createHandoff = useCallback(async (
-    toAgentInstanceId: string,
-    summary: string,
-  ) => unavailableFeature(`旧版 Handoff ${toAgentInstanceId}:${summary}`), []);
-
-  const getRunForThread = useCallback(
-    (threadId: string) =>
-      snapshot?.activeRuns.find((run) => run.threadId === threadId) ?? null,
-    [snapshot?.activeRuns],
-  );
-
-  const getLatestRunForThread = useCallback(
-    (threadId: string) =>
-      snapshot?.recentRuns.find((run) => run.threadId === threadId) ?? null,
-    [snapshot?.recentRuns],
-  );
-
-  const retryThread = useCallback(async (threadId: string) => {
-    const knownMessages = messagesByThread[threadId]
-      ?? await desktopApi.listThreadMessages(threadId);
-    const trigger = [...knownMessages]
+  const getRunForThread = useCallback((conversationId: string) =>
+    snapshot?.activeRuns.find((run) => run.conversationId === conversationId) ?? null,
+  [snapshot?.activeRuns]);
+  const getLatestRunForThread = useCallback((conversationId: string) =>
+    snapshot?.recentRuns.find((run) => run.conversationId === conversationId) ?? null,
+  [snapshot?.recentRuns]);
+  const retryThread = useCallback(async (conversationId: string) => {
+    const prompt = [...(messagesRef.current[conversationId] ?? [])]
       .reverse()
-      .find((message) => message.role === "user");
-    const prompt = trigger?.content
+      .find((message) => message.role === "user")?.content
       .filter((block) => block.type === "text")
       .map((block) => block.text)
       .join("")
       .trim();
-    if (!prompt) {
-      throw new Error("原始任务不可用，无法重试。");
-    }
-    return sendMessage(threadId, prompt);
-  }, [messagesByThread, sendMessage]);
+    if (!prompt) throw new Error("没有可重试的用户消息。");
+    return sendMessage(conversationId, prompt);
+  }, [sendMessage]);
 
   return {
     snapshot,
     loading,
     error,
-    selectedProject,
+    selectedProject: selectedWorkspace,
     selectedWorkspace,
     activeThread,
     activeAgent,
-    activeTask,
-    activeAgentInstance,
-    activeAgentDefinition,
-    activeContext,
     visibleThreads,
     messagesByThread,
     streamingByThread,
@@ -666,68 +420,27 @@ export function useWorkspace(): WorkspaceController {
     maxSplitCount,
     activePaneIndex,
     sidebarCollapsed: ui.sidebarCollapsed,
-    inspectorOpen: ui.inspectorOpen,
     professionalMode: ui.professionalMode,
     approvalFocus,
     selectProject,
     openThread,
     focusApproval,
     selectPane,
-    setRequestedSplitCount: (requestedSplitCount) =>
-      setUi((current) => {
-        const nextCount = Math.max(
-          1,
-          Math.min(
-            4,
-            requestedSplitCount,
-            maxPaneCount(
-              window.innerWidth,
-              current.sidebarCollapsed,
-              current.inspectorOpen,
-            ),
-            Math.max(1, current.openThreadIds.length),
-          ),
-        );
-        const paneThreadIds = normalizePaneThreadIds(
-          current.paneThreadIds,
-          current.openThreadIds,
-          nextCount,
-        );
-        const activePaneIndex = Math.min(
-          current.activePaneIndex,
-          nextCount - 1,
-        );
-        return {
-          ...current,
-          requestedSplitCount: nextCount,
-          paneThreadIds,
-          activePaneIndex,
-          activeThreadId:
-            paneThreadIds[activePaneIndex] ?? current.activeThreadId,
-        };
-      }),
-    setSidebarCollapsed: (sidebarCollapsed) =>
-      setUi((current) => ({ ...current, sidebarCollapsed })),
-    setInspectorOpen: (inspectorOpen) =>
-      setUi((current) => ({ ...current, inspectorOpen })),
-    setProfessionalMode: (professionalMode) =>
-      setUi((current) => ({ ...current, professionalMode })),
+    setRequestedSplitCount,
+    setSidebarCollapsed,
+    setProfessionalMode,
     refresh,
     createWorkspace,
-    addProject,
+    openLocalWorkspace,
     saveProvider,
     testProvider,
-    createAgentThread,
+    createAgentConversation,
     createConversation,
-    updateThreadSettings,
+    updateConversationSettings,
     chooseWorkspaceFiles,
     sendMessage,
     cancelRun,
     resolveApproval,
-    resolveInboxItem,
-    updateContext,
-    publishArtifactToContext,
-    createHandoff,
     getRunForThread,
     getLatestRunForThread,
     retryThread,
@@ -736,396 +449,191 @@ export function useWorkspace(): WorkspaceController {
 
 function applyRunEvent(
   event: RunEvent,
-  setSnapshot: React.Dispatch<
-    React.SetStateAction<DesktopWorkspaceSnapshot | null>
-  >,
-  setMessages: React.Dispatch<
-    React.SetStateAction<Record<string, ThreadMessage[]>>
-  >,
+  setSnapshot: React.Dispatch<React.SetStateAction<DesktopWorkspaceSnapshot | null>>,
+  setMessages: React.Dispatch<React.SetStateAction<Record<string, ConversationMessage[]>>>,
   setStreaming: React.Dispatch<React.SetStateAction<Record<string, string>>>,
-  setExecutionStage: React.Dispatch<
-    React.SetStateAction<Record<string, ManagedExecutionStage>>
-  >,
+  setExecutionStage: React.Dispatch<React.SetStateAction<Record<string, ManagedExecutionStage>>>,
 ): void {
-  if (event.type === "managed-execution") {
-    setExecutionStage((current) => ({
-      ...current,
-      [event.threadId]: event.progress.stage,
-    }));
-    return;
-  }
   if (event.type === "assistant-delta") {
     setStreaming((current) => ({
       ...current,
-      [event.threadId]: `${current[event.threadId] ?? ""}${event.delta}`,
+      [event.conversationId]: (current[event.conversationId] ?? "") + event.delta,
     }));
     return;
   }
   if (event.type === "message-created") {
-    setMessages((current) => {
-      const existing = current[event.threadId] ?? [];
-      return {
-        ...current,
-        [event.threadId]: existing.some((message) => message.id === event.message.id)
-          ? existing
-          : [...existing, event.message],
-      };
-    });
+    setMessages((current) => ({
+      ...current,
+      [event.conversationId]: mergeMessages(
+        current[event.conversationId] ?? [],
+        [event.message],
+      ),
+    }));
     if (event.message.role === "assistant") {
-      setStreaming((current) => ({ ...current, [event.threadId]: "" }));
+      setStreaming((current) => ({ ...current, [event.conversationId]: "" }));
     }
     return;
   }
-  if (event.type === "run-status") {
-    const terminal = [
-      "completed",
-      "failed",
-      "cancelled",
-      "interrupted",
-    ].includes(event.status);
-    if (terminal) {
-      setStreaming((current) => ({ ...current, [event.threadId]: "" }));
-      setExecutionStage((current) => {
-        const next = { ...current };
-        delete next[event.threadId];
-        return next;
-      });
-    }
-    setSnapshot((current) => {
-      if (!current) {
-        return current;
-      }
-      const existing = current.activeRuns.find((run) => run.id === event.runId);
-      return {
-        ...current,
-        activeRuns: terminal
-          ? current.activeRuns.filter((run) => run.id !== event.runId)
-          : existing
-            ? current.activeRuns.map((run) =>
-                run.id === event.runId
-                  ? { ...run, status: event.status, error: event.error ?? null }
-                  : run,
-              )
-            : current.activeRuns,
-      };
-    });
+  if (event.type === "managed-execution") {
+    setExecutionStage((current) => ({
+      ...current,
+      [event.conversationId]: event.progress.stage,
+    }));
     return;
   }
   if (event.type === "approval-required") {
-    setSnapshot((current) => current
-      ? {
-          ...current,
-          pendingApprovals: [
-            ...current.pendingApprovals.filter(
-              (item) => item.approval.id !== event.approval.id,
-            ),
-            { approval: event.approval, toolCall: event.toolCall },
-          ],
-        }
-      : current);
+    setSnapshot((current) => current ? {
+      ...current,
+      pendingApprovals: [
+        ...current.pendingApprovals.filter(
+          (item) => item.approval.id !== event.approval.id,
+        ),
+        { approval: event.approval, toolCall: event.toolCall },
+      ],
+    } : current);
+    return;
+  }
+  if (event.type !== "run-status") return;
+  setSnapshot((current) => {
+    if (!current) return current;
+    const existing = [...current.activeRuns, ...current.recentRuns]
+      .find((run) => run.id === event.runId);
+    if (!existing) return current;
+    const terminal = ["completed", "failed", "cancelled", "interrupted"]
+      .includes(event.status);
+    const updated: AgentRun = {
+      ...existing,
+      status: event.status,
+      error: event.error ?? existing.error,
+      completedAt: terminal ? event.at : existing.completedAt,
+    };
+    return {
+      ...current,
+      activeRuns: terminal
+        ? current.activeRuns.filter((run) => run.id !== event.runId)
+        : current.activeRuns.map((run) => run.id === event.runId ? updated : run),
+      recentRuns: terminal
+        ? [updated, ...current.recentRuns.filter((run) => run.id !== event.runId)]
+        : current.recentRuns,
+      pendingApprovals: terminal
+        ? current.pendingApprovals.filter((item) => item.approval.runId !== event.runId)
+        : current.pendingApprovals,
+    };
+  });
+  if (["completed", "failed", "cancelled", "interrupted"].includes(event.status)) {
+    setStreaming((current) => ({ ...current, [event.conversationId]: "" }));
   }
 }
 
-function normalizeUiState(
+function normalizeUi(
   current: PersistedUiState,
   snapshot: DesktopWorkspaceSnapshot,
 ): PersistedUiState {
-  const projectIds = new Set(snapshot.workspaces.map((workspace) => workspace.id));
-  const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
-  const selectedProjectId = current.selectedProjectId &&
-    projectIds.has(current.selectedProjectId)
-    ? current.selectedProjectId
-    : snapshot.workspaces[0]?.id ?? null;
-  const savedLayout = selectedProjectId
-    ? current.projectLayouts[selectedProjectId]
-    : undefined;
-  const sourceLayout = current.selectedProjectId === selectedProjectId
-    ? current
-    : savedLayout ?? current;
-  let openThreadIds = sourceLayout.openThreadIds.filter((id) =>
-    threadIds.has(id)
+  const workspaceId = snapshot.workspaces.some(
+    (item) => item.id === current.selectedWorkspaceId,
+  ) ? current.selectedWorkspaceId : snapshot.workspaces[0]?.id ?? null;
+  const conversations = snapshot.conversations.filter(
+    (item) => item.workspaceId === workspaceId,
   );
-  openThreadIds = openThreadIds.filter((id) =>
-    snapshot.threads.some(
-      (thread) => thread.id === id && thread.projectId === selectedProjectId,
-    ),
-  );
-  if (openThreadIds.length === 0 && selectedProjectId) {
-    const firstThread = snapshot.threads.find(
-      (thread) => thread.projectId === selectedProjectId,
-    );
-    openThreadIds = firstThread ? [firstThread.id] : [];
+  const validIds = new Set(conversations.map((item) => item.id));
+  const openConversationIds = current.openConversationIds.filter((id) => validIds.has(id));
+  if (openConversationIds.length === 0 && conversations[0]) {
+    openConversationIds.push(conversations[0].id);
   }
-  const requestedSplitCount = Math.max(
-    1,
-    Math.min(4, sourceLayout.requestedSplitCount),
-  );
-  const paneThreadIds = normalizePaneThreadIds(
-    sourceLayout.paneThreadIds,
-    openThreadIds,
-    requestedSplitCount,
-  );
-  const activePaneIndex = Math.min(
-    Math.max(0, sourceLayout.activePaneIndex),
-    Math.max(0, paneThreadIds.length - 1),
-  );
-  const activeThreadId = sourceLayout.activeThreadId &&
-    openThreadIds.includes(sourceLayout.activeThreadId)
-    ? sourceLayout.activeThreadId
-    : paneThreadIds[activePaneIndex] ?? openThreadIds[0] ?? null;
+  const activeConversationId = openConversationIds.includes(
+    current.activeConversationId ?? "",
+  ) ? current.activeConversationId : openConversationIds[0] ?? null;
   return {
     ...current,
-    selectedProjectId,
-    activeThreadId,
-    openThreadIds,
-    paneThreadIds,
-    activePaneIndex,
-    requestedSplitCount,
+    selectedWorkspaceId: workspaceId,
+    activeConversationId,
+    openConversationIds,
+    paneConversationIds: normalizePaneIds(
+      current.paneConversationIds,
+      openConversationIds,
+      current.requestedSplitCount,
+    ),
   };
 }
 
-function threadSelectionForProject(
-  snapshot: DesktopWorkspaceSnapshot | null,
-  projectId: string,
-  savedLayout?: ProjectLayout,
-): ProjectLayout {
-  if (!snapshot) {
-    return {
-      activeThreadId: null,
-      openThreadIds: [],
-      paneThreadIds: [],
-      activePaneIndex: 0,
-      requestedSplitCount: 1,
-    };
-  }
-  const projectThreadIds = new Set(
-    snapshot.threads
-      .filter((thread) => thread.projectId === projectId)
-      .map((thread) => thread.id),
-  );
-  const openThreadIds = (savedLayout?.openThreadIds ?? []).filter((id) =>
-    projectThreadIds.has(id),
-  );
-  if (openThreadIds.length === 0) {
-    const firstThreadId = projectThreadIds.values().next().value as
-      | string
-      | undefined;
-    if (firstThreadId) {
-      openThreadIds.push(firstThreadId);
-    }
-  }
-  const requestedSplitCount = Math.max(
-    1,
-    Math.min(4, savedLayout?.requestedSplitCount ?? 1),
-  );
-  const paneThreadIds = normalizePaneThreadIds(
-    savedLayout?.paneThreadIds ?? [],
-    openThreadIds,
-    requestedSplitCount,
-  );
-  const activePaneIndex = Math.min(
-    Math.max(0, savedLayout?.activePaneIndex ?? 0),
-    Math.max(0, paneThreadIds.length - 1),
-  );
-  return {
-    activeThreadId:
-      savedLayout?.activeThreadId &&
-      openThreadIds.includes(savedLayout.activeThreadId)
-        ? savedLayout.activeThreadId
-        : paneThreadIds[activePaneIndex] ?? openThreadIds[0] ?? null,
-    openThreadIds,
-    paneThreadIds,
-    activePaneIndex,
-    requestedSplitCount,
-  };
-}
-
-function rememberCurrentProjectLayout(
+function selectWorkspace(
   current: PersistedUiState,
-): Record<string, ProjectLayout> {
-  if (!current.selectedProjectId) {
-    return current.projectLayouts;
-  }
+  snapshot: DesktopWorkspaceSnapshot | null,
+  workspaceId: string,
+): PersistedUiState {
+  const conversations = snapshot?.conversations.filter(
+    (item) => item.workspaceId === workspaceId,
+  ) ?? [];
+  const openConversationIds = conversations[0] ? [conversations[0].id] : [];
   return {
-    ...current.projectLayouts,
-    [current.selectedProjectId]: {
-      activeThreadId: current.activeThreadId,
-      openThreadIds: current.openThreadIds,
-      paneThreadIds: current.paneThreadIds,
-      activePaneIndex: current.activePaneIndex,
-      requestedSplitCount: current.requestedSplitCount,
-    },
+    ...current,
+    selectedWorkspaceId: workspaceId,
+    activeConversationId: openConversationIds[0] ?? null,
+    openConversationIds,
+    paneConversationIds: openConversationIds,
   };
 }
 
-function normalizePaneThreadIds(
-  paneThreadIds: string[],
-  openThreadIds: string[],
+function normalizePaneIds(
+  paneIds: string[],
+  openIds: string[],
   count: number,
 ): string[] {
-  const open = new Set(openThreadIds);
-  const normalized = paneThreadIds.filter(
-    (id, index) => open.has(id) && paneThreadIds.indexOf(id) === index,
+  const target = Math.min(Math.max(1, count), Math.max(1, openIds.length));
+  const unique = paneIds.filter(
+    (id, index) => openIds.includes(id) && paneIds.indexOf(id) === index,
   );
-  for (const threadId of openThreadIds) {
-    if (normalized.length >= count) {
-      break;
-    }
-    if (!normalized.includes(threadId)) {
-      normalized.push(threadId);
-    }
+  for (const id of openIds) {
+    if (unique.length >= target) break;
+    if (!unique.includes(id)) unique.push(id);
   }
-  return normalized.slice(0, count);
+  return unique.slice(0, target);
 }
 
-function selectVisiblePaneThreadIds(
-  paneThreadIds: string[],
-  count: number,
-  activeThreadId: string | null,
-): string[] {
-  const boundedCount = Math.max(1, count);
-  if (paneThreadIds.length <= boundedCount) {
-    return paneThreadIds;
-  }
-  const activeIndex = activeThreadId
-    ? paneThreadIds.indexOf(activeThreadId)
-    : -1;
-  if (activeIndex < 0 || activeIndex < boundedCount) {
-    return paneThreadIds.slice(0, boundedCount);
-  }
-  const start = Math.min(
-    activeIndex - boundedCount + 1,
-    paneThreadIds.length - boundedCount,
-  );
-  return paneThreadIds.slice(start, start + boundedCount);
-}
-
-function assignThreadToPane(
-  paneThreadIds: string[],
-  threadId: string,
-  paneIndex: number,
-): string[] {
-  const next = [...paneThreadIds];
-  const existingIndex = next.indexOf(threadId);
-  if (existingIndex === paneIndex) {
-    return next;
-  }
-  if (existingIndex >= 0) {
-    const replacedThreadId = next[paneIndex];
-    if (replacedThreadId) {
-      next[existingIndex] = replacedThreadId;
-    } else {
-      next.splice(existingIndex, 1);
-    }
-  }
-  next[paneIndex] = threadId;
+function assignToPane(panes: string[], conversationId: string, index: number): string[] {
+  const next = panes.filter((id) => id !== conversationId);
+  next.splice(Math.max(0, Math.min(index, next.length)), 0, conversationId);
   return next;
 }
 
 function mergeMessages(
-  first: ThreadMessage[],
-  second: ThreadMessage[],
-): ThreadMessage[] {
-  const messages = new Map(
-    [...first, ...second].map((message) => [message.id, message]),
-  );
-  return [...messages.values()].sort((left, right) =>
-    left.sequence - right.sequence || left.createdAt.localeCompare(right.createdAt),
-  );
+  current: ConversationMessage[],
+  incoming: ConversationMessage[],
+): ConversationMessage[] {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
+}
+
+function maxPaneCount(width: number, sidebarCollapsed: boolean): number {
+  const available = width - (sidebarCollapsed ? 72 : 264);
+  if (available >= 1680) return 4;
+  if (available >= 1180) return 3;
+  if (available >= 760) return 2;
+  return 1;
 }
 
 function readUiState(): PersistedUiState {
   try {
-    const value = localStorage.getItem("scopeguard.ui.v2");
-    if (!value) {
-      return DEFAULT_UI_STATE;
-    }
-    const parsed = JSON.parse(value) as Partial<PersistedUiState>;
+    const parsed = JSON.parse(localStorage.getItem("scopeguard.ui.v3") ?? "null") as
+      Partial<PersistedUiState> | null;
+    if (!parsed) return DEFAULT_UI_STATE;
     return {
       ...DEFAULT_UI_STATE,
       ...parsed,
-      openThreadIds: Array.isArray(parsed.openThreadIds)
-        ? parsed.openThreadIds.filter((id): id is string => typeof id === "string")
+      openConversationIds: Array.isArray(parsed.openConversationIds)
+        ? parsed.openConversationIds.filter((id): id is string => typeof id === "string")
         : [],
-      paneThreadIds: Array.isArray(parsed.paneThreadIds)
-        ? parsed.paneThreadIds.filter((id): id is string => typeof id === "string")
+      paneConversationIds: Array.isArray(parsed.paneConversationIds)
+        ? parsed.paneConversationIds.filter((id): id is string => typeof id === "string")
         : [],
-      activePaneIndex: typeof parsed.activePaneIndex === "number"
-        ? parsed.activePaneIndex
-        : 0,
-      inspectorOpen: false,
-      projectLayouts: readProjectLayouts(parsed.projectLayouts),
+      requestedSplitCount: Math.max(1, Math.min(4, parsed.requestedSplitCount ?? 1)),
     };
   } catch {
     return DEFAULT_UI_STATE;
   }
 }
 
-function readProjectLayouts(value: unknown): Record<string, ProjectLayout> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
-  }
-  const layouts: Record<string, ProjectLayout> = {};
-  for (const [projectId, candidate] of Object.entries(value)) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-      continue;
-    }
-    const layout = candidate as Partial<ProjectLayout>;
-    layouts[projectId] = {
-      activeThreadId:
-        typeof layout.activeThreadId === "string" ? layout.activeThreadId : null,
-      openThreadIds: Array.isArray(layout.openThreadIds)
-        ? layout.openThreadIds.filter((id): id is string => typeof id === "string")
-        : [],
-      paneThreadIds: Array.isArray(layout.paneThreadIds)
-        ? layout.paneThreadIds.filter((id): id is string => typeof id === "string")
-        : [],
-      activePaneIndex:
-        typeof layout.activePaneIndex === "number" ? layout.activePaneIndex : 0,
-      requestedSplitCount:
-        typeof layout.requestedSplitCount === "number"
-          ? layout.requestedSplitCount
-          : 1,
-    };
-  }
-  return layouts;
-}
-
-function maxPaneCount(
-  width: number,
-  sidebarCollapsed: boolean,
-  inspectorOpen: boolean,
-): number {
-  const viewportLimit = width >= 1920
-    ? 4
-    : width >= 1600
-      ? 3
-      : width >= 1200
-        ? 2
-        : 1;
-  const sidebarWidth = sidebarCollapsed
-    ? 52
-    : width < 1440
-      ? 220
-      : 252;
-  const inspectorWidth = inspectorOpen && width >= 1440 ? 320 : 0;
-  const workbenchWidth =
-    width - sidebarWidth - inspectorWidth;
-  let availableWidthLimit = 1;
-  if (workbenchWidth >= 1600) {
-    availableWidthLimit = 4;
-  } else if (workbenchWidth >= 1200) {
-    availableWidthLimit = 3;
-  } else if (workbenchWidth >= 860) {
-    availableWidthLimit = 2;
-  }
-  return Math.min(viewportLimit, availableWidthLimit);
-}
-
 function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function unavailableFeature(name: string): never {
-  throw new Error(`${name} 已退出桌面端默认路径。`);
 }

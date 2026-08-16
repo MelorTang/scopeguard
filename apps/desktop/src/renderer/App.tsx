@@ -103,8 +103,8 @@ export function App(): JSX.Element {
           <WorkspaceEmpty
             hasWorkspace={Boolean(workspace.selectedWorkspace)}
             hasProvider={(workspace.snapshot?.providerProfiles.length ?? 0) > 0}
-            hasAgent={workspace.snapshot?.agentProfiles.some(
-              (agent) => agent.projectId === workspace.selectedProject?.id,
+            hasAgent={workspace.snapshot?.agents.some(
+              (agent) => agent.workspaceId === workspace.selectedProject?.id,
             ) ?? false}
             onWorkspace={() => setWorkspaceDialogOpen(true)}
             onProvider={() => setProviderDialogOpen(true)}

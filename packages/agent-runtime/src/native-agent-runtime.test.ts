@@ -384,9 +384,9 @@ class ThrowingTool extends FakeTool {
 
 function runInput() {
   return {
-    projectId: "project",
-    projectRoot: "/tmp/project",
-    threadId: "thread",
+    workspaceId: "project",
+    workspaceRoot: "/tmp/project",
+    conversationId: "thread",
     runId: "run",
     credentials: {
       protocol: "openai-compatible" as const,

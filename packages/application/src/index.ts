@@ -13,20 +13,18 @@ import {
   canTransitionRun,
   normalizeProviderBaseUrl,
   validateProviderProfileInput,
-  type AgentProfile,
+  type Agent,
   type AgentRun,
-  type AgentThread,
   type AgentToolPolicy,
   type ApprovalDecision,
-  type ContextRevision,
-  type CreateAgentProfileInput,
-  type CreateProjectInput,
-  type CreateThreadInput,
+  type Conversation,
+  type ConversationMessage,
+  type CreateAgentInput,
+  type CreateConversationInput,
   type CreateWorkspaceInput,
   type Id,
   type MessageContentBlock,
   type ManagedExecutionProgress,
-  type Project,
   type ProviderConnectionResult,
   type ProviderProfile,
   type ProviderProfileInput,
@@ -37,12 +35,12 @@ import {
   type RunStatus,
   type RunUsageRecord,
   type StartRunInput,
-  type ThreadMessage,
   type ToolApproval,
   type ToolCallRecord,
   type ToolCallStatus,
-  type UpdateThreadSettingsInput,
+  type UpdateConversationSettingsInput,
   type Workspace,
+  type WorkspaceContextRevision,
   type WorkspaceSnapshot,
 } from "@scopeguard/domain";
 
@@ -50,8 +48,6 @@ export interface WorkspaceStore {
   getWorkspaceSnapshot(): WorkspaceSnapshot;
   getWorkspace(workspaceId: Id): Workspace | null;
   createWorkspace(input: CreateWorkspaceInput): Workspace;
-  getProject(projectId: Id): Project | null;
-  addProject(input: CreateProjectInput): Project;
 
   getProviderProfile(providerProfileId: Id): ProviderProfile | null;
   saveProviderProfile(
@@ -60,26 +56,22 @@ export interface WorkspaceStore {
   ): ProviderProfile;
   deleteProviderProfile(providerProfileId: Id): void;
 
-  getAgentProfile(agentProfileId: Id): AgentProfile | null;
-  createAgentProfile(
-    input: CreateAgentProfileInput,
-    options?: { mirrorLegacyControlPlane?: boolean },
-  ): AgentProfile;
-  getThread(threadId: Id): AgentThread | null;
-  createThread(
-    input: CreateThreadInput,
-    options?: { mirrorLegacyControlPlane?: boolean },
-  ): AgentThread;
-  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread;
-  listThreadMessages(threadId: Id): ThreadMessage[];
+  getAgent(agentId: Id): Agent | null;
+  createAgent(input: CreateAgentInput): Agent;
+  getConversation(conversationId: Id): Conversation | null;
+  createConversation(input: CreateConversationInput): Conversation;
+  updateConversationSettings(
+    input: UpdateConversationSettingsInput,
+  ): Conversation;
+  listConversationMessages(conversationId: Id): ConversationMessage[];
   appendMessage(
-    input: Omit<ThreadMessage, "id" | "sequence" | "createdAt">,
-  ): ThreadMessage;
+    input: Omit<ConversationMessage, "id" | "sequence" | "createdAt">,
+  ): ConversationMessage;
   saveRunPartial(runId: Id, content: string): void;
   clearRunPartial(runId: Id): void;
 
   createRun(
-    threadId: Id,
+    conversationId: Id,
     triggerMessageId: Id,
     contextRevisionId: Id | null,
     configSnapshot: RunConfigSnapshot,
@@ -87,7 +79,7 @@ export interface WorkspaceStore {
   getRun(runId: Id): AgentRun | null;
   listActiveRuns(): AgentRun[];
   updateRunStatus(runId: Id, status: RunStatus, error?: string): AgentRun;
-  interruptNonTerminalRuns(options?: { includeRemote?: boolean }): number;
+  interruptNonTerminalRuns(): number;
   appendRunEvent(event: RunEvent): void;
   recordRunRequestManifest(
     input: Omit<RunRequestManifest, "createdAt">,
@@ -119,13 +111,13 @@ export interface WorkspaceStore {
   cancelUnfinishedToolCallsForRun(runId: Id): ToolCallRecord[];
   recoverUnfinishedToolCallsForRun(runId: Id): ToolCallRecord[];
 
-  getProjectContext(projectId: Id): ContextRevision | null;
-  updateProjectContext(
-    projectId: Id,
+  getWorkspaceContext(workspaceId: Id): WorkspaceContextRevision | null;
+  updateWorkspaceContext(
+    workspaceId: Id,
     content: string,
-    sourceThreadId?: Id | null,
+    sourceConversationId?: Id | null,
     sourceRunId?: Id | null,
-  ): ContextRevision;
+  ): WorkspaceContextRevision;
 }
 
 export interface SecretVault {
@@ -147,30 +139,31 @@ export interface ScopeGuardCore {
   shutdown(): Promise<void>;
   getWorkspaceSnapshot(): WorkspaceSnapshot;
   createWorkspace(input: CreateWorkspaceInput): Workspace;
-  addProject(input: CreateProjectInput): Project;
   saveProviderProfile(input: SaveProviderProfileInput): Promise<ProviderProfile>;
   deleteProviderProfile(providerProfileId: Id): Promise<void>;
   testProviderConnection(
     input: SaveProviderProfileInput,
     signal?: AbortSignal,
   ): Promise<ProviderConnectionResult>;
-  createAgentProfile(input: CreateAgentProfileInput): AgentProfile;
-  createThread(input: CreateThreadInput): AgentThread;
-  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread;
-  listThreadMessages(threadId: Id): ThreadMessage[];
+  createAgent(input: CreateAgentInput): Agent;
+  createConversation(input: CreateConversationInput): Conversation;
+  updateConversationSettings(
+    input: UpdateConversationSettingsInput,
+  ): Conversation;
+  listConversationMessages(conversationId: Id): ConversationMessage[];
   startRun(input: StartRunInput): Promise<AgentRun>;
   cancelRun(runId: Id): Promise<void>;
   resolveApproval(
     approvalId: Id,
     decision: ApprovalDecision,
   ): Promise<void>;
-  getProjectContext(projectId: Id): ContextRevision | null;
-  updateProjectContext(
-    projectId: Id,
+  getWorkspaceContext(workspaceId: Id): WorkspaceContextRevision | null;
+  updateWorkspaceContext(
+    workspaceId: Id,
     content: string,
-    sourceThreadId?: Id | null,
+    sourceConversationId?: Id | null,
     sourceRunId?: Id | null,
-  ): ContextRevision;
+  ): WorkspaceContextRevision;
 }
 
 type ActiveRun = {
@@ -220,21 +213,19 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   initialize(): { interruptedRuns: number } {
     const recoverableRunIds = this.#store.listActiveRuns().map((run) => run.id);
-    const interruptedRuns = this.#store.interruptNonTerminalRuns({
-      includeRemote: true,
-    });
+    const interruptedRuns = this.#store.interruptNonTerminalRuns();
     for (const runId of recoverableRunIds) {
       const run = this.#store.getRun(runId);
       if (!run || run.status !== "interrupted") {
         continue;
       }
-      const thread = this.#store.getThread(run.threadId);
-      if (!thread) {
+      const conversation = this.#store.getConversation(run.conversationId);
+      if (!conversation) {
         continue;
       }
       this.persistRecoveredToolCallResults(
         run,
-        thread,
+        conversation,
         this.#store.recoverUnfinishedToolCallsForRun(runId),
       );
       this.emitStatus(run);
@@ -258,21 +249,6 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       assertMaximumLength(localRootPath, 4096, "Workspace local root path");
     }
     return this.#store.createWorkspace({ name, localRootPath });
-  }
-
-  addProject(input: CreateProjectInput): Project {
-    const rootPath = input.rootPath.trim();
-    if (!rootPath) {
-      throw new Error("Project root path is required.");
-    }
-    assertMaximumLength(rootPath, 4096, "Project root path");
-    if (input.name) {
-      assertMaximumLength(input.name.trim(), 200, "Project name");
-    }
-    return this.#store.addProject({
-      ...input,
-      rootPath,
-    });
   }
 
   async saveProviderProfile(
@@ -404,47 +380,37 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     );
   }
 
-  createAgentProfile(input: CreateAgentProfileInput): AgentProfile {
-    const project = this.requireProject(input.projectId);
-    const runtimeKind = input.runtimeKind ?? "native";
+  createAgent(input: CreateAgentInput): Agent {
+    const workspace = this.requireWorkspace(input.workspaceId);
     if (!input.name.trim()) {
       throw new Error("Agent name is required.");
     }
     assertMaximumLength(input.name.trim(), 200, "Agent name");
     assertMaximumLength(input.instructions, 50_000, "Agent instructions");
-    if (runtimeKind !== "native") {
-      throw new Error("Only native Agent Profiles are supported.");
-    }
-    if (!input.providerProfileId) {
-      throw new Error("A native Agent Profile requires a provider.");
-    }
     this.requireProviderProfile(input.providerProfileId);
 
-    return this.#store.createAgentProfile({
+    return this.#store.createAgent({
       ...input,
-      projectId: project.id,
-      runtimeKind: "native",
-      runtimeNodeId: "local-runtime",
-      cliConfig: null,
-    }, { mirrorLegacyControlPlane: false });
-  }
-
-  createThread(input: CreateThreadInput): AgentThread {
-    const project = this.requireProject(input.projectId);
-    const profile = this.requireAgentProfile(input.agentProfileId);
-    if (profile.projectId !== project.id) {
-      throw new Error("Agent Profile and Thread must belong to the same Project.");
-    }
-    if (input.title) {
-      assertMaximumLength(input.title.trim(), 300, "Thread title");
-    }
-    return this.#store.createThread(input, {
-      mirrorLegacyControlPlane: false,
+      workspaceId: workspace.id,
     });
   }
 
-  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread {
-    const thread = this.requireThread(input.threadId);
+  createConversation(input: CreateConversationInput): Conversation {
+    const workspace = this.requireWorkspace(input.workspaceId);
+    const agent = this.requireAgent(input.agentId);
+    if (agent.workspaceId !== workspace.id) {
+      throw new Error("Agent and Conversation must belong to the same Workspace.");
+    }
+    if (input.title) {
+      assertMaximumLength(input.title.trim(), 300, "Conversation title");
+    }
+    return this.#store.createConversation(input);
+  }
+
+  updateConversationSettings(
+    input: UpdateConversationSettingsInput,
+  ): Conversation {
+    const conversation = this.requireConversation(input.conversationId);
     const modelOverride = input.modelOverride === undefined
       ? undefined
       : input.modelOverride?.trim() || null;
@@ -454,16 +420,16 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     if (input.executionProfile === undefined && modelOverride === undefined) {
       throw new Error("No Conversation settings were provided.");
     }
-    return this.#store.updateThreadSettings({
-      threadId: thread.id,
+    return this.#store.updateConversationSettings({
+      conversationId: conversation.id,
       modelOverride,
       executionProfile: input.executionProfile,
     });
   }
 
-  listThreadMessages(threadId: Id): ThreadMessage[] {
-    this.requireThread(threadId);
-    return this.#store.listThreadMessages(threadId);
+  listConversationMessages(conversationId: Id): ConversationMessage[] {
+    this.requireConversation(conversationId);
+    return this.#store.listConversationMessages(conversationId);
   }
 
   async startRun(input: StartRunInput): Promise<AgentRun> {
@@ -472,32 +438,23 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       throw new Error("Message cannot be empty.");
     }
     assertMaximumLength(prompt, 100_000, "Message");
-    const thread = this.requireThread(input.threadId);
-    const activeThreadRun = this.#store.listActiveRuns().find(
-      (run) => run.threadId === thread.id,
+    const conversation = this.requireConversation(input.conversationId);
+    const activeConversationRun = this.#store.listActiveRuns().find(
+      (run) => run.conversationId === conversation.id,
     );
-    if (activeThreadRun?.status === "waiting-input") {
-      return this.#provideRunInput(activeThreadRun, thread, prompt);
+    if (activeConversationRun?.status === "waiting-input") {
+      return this.#provideRunInput(activeConversationRun, conversation, prompt);
     }
-    if (activeThreadRun) {
-      throw new Error("This Thread already has an active Run.");
+    if (activeConversationRun) {
+      throw new Error("This Conversation already has an active Run.");
     }
-    const profile = this.requireAgentProfile(thread.agentProfileId);
-    const project = this.requireProject(thread.projectId);
-    const workspace = this.requireWorkspace(thread.projectId);
-    const context = this.#store.getProjectContext(project.id);
-    const provider = profile.providerProfileId
-      ? this.requireProviderProfile(profile.providerProfileId)
-      : null;
-    if (profile.runtimeKind !== "native") {
-      throw new Error("This legacy Agent Profile is no longer supported.");
-    }
-    if (!provider) {
-      throw new Error("Native Agent Profile has no provider.");
-    }
+    const agent = this.requireAgent(conversation.agentId);
+    const workspace = this.requireWorkspace(conversation.workspaceId);
+    const context = this.#store.getWorkspaceContext(workspace.id);
+    const provider = this.requireProviderProfile(agent.providerProfileId);
 
     const toolPolicy = workspace.localRootPath
-      ? effectiveToolPolicy(thread.executionProfile, profile.toolPolicy)
+      ? effectiveToolPolicy(conversation.executionProfile, agent.toolPolicy)
       : {
           readFiles: "deny" as const,
           writeFiles: "deny" as const,
@@ -505,7 +462,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         };
 
     const trigger = this.#store.appendMessage({
-      threadId: thread.id,
+      conversationId: conversation.id,
       runId: null,
       role: "user",
       status: "committed",
@@ -513,33 +470,30 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       metadata: {},
     });
     const snapshot: RunConfigSnapshot = {
-      agentProfileId: profile.id,
-      runtimeKind: "native",
+      agentId: agent.id,
       providerProfileId: provider.id,
       providerProtocol: provider.protocol,
       providerBaseUrl: provider.baseUrl,
-      model: thread.modelOverride ?? provider.defaultModel,
-      instructions: profile.instructions,
-      executionProfile: thread.executionProfile,
+      model: conversation.modelOverride ?? agent.modelOverride ?? provider.defaultModel,
+      instructions: agent.instructions,
+      executionProfile: conversation.executionProfile,
       toolPolicy,
-      cliConfig: null,
     };
     const run = this.#store.createRun(
-      thread.id,
+      conversation.id,
       trigger.id,
       context?.id ?? null,
       snapshot,
     );
     this.emitStatus(run);
-    this.emitMessage(run, thread, trigger);
+    this.emitMessage(run, conversation, trigger);
 
     const controller = new AbortController();
     const execution = this.#executeNativeRun({
       run,
-      thread,
-      project,
+      conversation,
       workspace,
-      profile,
+      agent,
       provider,
       context,
       controller,
@@ -548,7 +502,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       this.#approvals.cancelRun(run.id);
       this.#inputs.cancelRun(run.id);
       this.#store.expirePendingApprovalsForRun(run.id);
-      this.finalizeCancelledToolCalls(run, thread);
+      this.finalizeCancelledToolCalls(run, conversation);
       this.#activeRuns.delete(run.id);
     });
     this.#activeRuns.set(run.id, {
@@ -586,7 +540,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   #provideRunInput(
     run: AgentRun,
-    thread: AgentThread,
+    conversation: Conversation,
     answer: string,
   ): AgentRun {
     if (!this.#inputs.has(run.id)) {
@@ -595,52 +549,54 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       );
     }
     const message = this.#store.appendMessage({
-      threadId: thread.id,
+      conversationId: conversation.id,
       runId: run.id,
       role: "user",
       status: "committed",
       content: [{ type: "text", text: answer }],
       metadata: { inputResponse: true },
     });
-    this.emitMessage(run, thread, message);
+    this.emitMessage(run, conversation, message);
     this.#inputs.resolve(run.id, answer);
     return this.requireRun(run.id);
   }
 
-  getProjectContext(projectId: Id): ContextRevision | null {
-    this.requireProject(projectId);
-    return this.#store.getProjectContext(projectId);
+  getWorkspaceContext(workspaceId: Id): WorkspaceContextRevision | null {
+    this.requireWorkspace(workspaceId);
+    return this.#store.getWorkspaceContext(workspaceId);
   }
 
-  updateProjectContext(
-    projectId: Id,
+  updateWorkspaceContext(
+    workspaceId: Id,
     content: string,
-    sourceThreadId?: Id | null,
+    sourceConversationId?: Id | null,
     sourceRunId?: Id | null,
-  ): ContextRevision {
-    this.requireProject(projectId);
-    assertMaximumLength(content, 200_000, "Project Context");
-    let sourceThread: AgentThread | null = null;
-    if (sourceThreadId) {
-      sourceThread = this.requireThread(sourceThreadId);
-      if (sourceThread.projectId !== projectId) {
-        throw new Error("Context source Thread belongs to a different Project.");
+  ): WorkspaceContextRevision {
+    this.requireWorkspace(workspaceId);
+    assertMaximumLength(content, 200_000, "Workspace Context");
+    let sourceConversation: Conversation | null = null;
+    if (sourceConversationId) {
+      sourceConversation = this.requireConversation(sourceConversationId);
+      if (sourceConversation.workspaceId !== workspaceId) {
+        throw new Error(
+          "Context source Conversation belongs to a different Workspace.",
+        );
       }
     }
     if (sourceRunId) {
       const run = this.requireRun(sourceRunId);
-      const runThread = this.requireThread(run.threadId);
-      if (runThread.projectId !== projectId) {
-        throw new Error("Context source Run belongs to a different Project.");
+      const runConversation = this.requireConversation(run.conversationId);
+      if (runConversation.workspaceId !== workspaceId) {
+        throw new Error("Context source Run belongs to a different Workspace.");
       }
-      if (sourceThread && sourceThread.id !== runThread.id) {
-        throw new Error("Context source Run belongs to a different Thread.");
+      if (sourceConversation && sourceConversation.id !== runConversation.id) {
+        throw new Error("Context source Run belongs to a different Conversation.");
       }
     }
-    return this.#store.updateProjectContext(
-      projectId,
+    return this.#store.updateWorkspaceContext(
+      workspaceId,
       content.trim(),
-      sourceThreadId ?? null,
+      sourceConversationId ?? null,
       sourceRunId ?? null,
     );
   }
@@ -668,20 +624,18 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   async #executeNativeRun(input: {
     run: AgentRun;
-    thread: AgentThread;
-    project: Project;
+    conversation: Conversation;
     workspace: Workspace;
-    profile: AgentProfile;
+    agent: Agent;
     provider: ProviderProfile;
-    context: ContextRevision | null;
+    context: WorkspaceContextRevision | null;
     controller: AbortController;
   }): Promise<void> {
     const {
       run,
-      thread,
-      project,
+      conversation,
       workspace,
-      profile,
+      agent,
       provider,
       context,
       controller,
@@ -711,8 +665,8 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         customHeaders: {},
       };
       const history = toModelMessages(
-        this.#store.listThreadMessages(thread.id),
-        profile,
+        this.#store.listConversationMessages(conversation.id),
+        agent,
         workspace,
         context,
       );
@@ -724,25 +678,25 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       );
       await runtime.run(
         {
-          projectId: project.id,
-          projectRoot: workspace.localRootPath ?? "",
-          threadId: thread.id,
+          workspaceId: workspace.id,
+          workspaceRoot: workspace.localRootPath ?? "",
+          conversationId: conversation.id,
           runId: run.id,
           credentials,
           messages: history,
           executionProfile: run.configSnapshot.executionProfile,
           toolPolicy: run.configSnapshot.toolPolicy,
           onManagedExecutionEvent: (progress) => {
-            this.emitManagedExecution(run, thread, progress);
+            this.emitManagedExecution(run, conversation, progress);
           },
           signal: controller.signal,
         },
-        this.createObserver(run, thread, controller.signal, partial),
+        this.createObserver(run, conversation, controller.signal, partial),
       );
       throwIfAborted(controller.signal);
       this.emitStatus(this.#store.updateRunStatus(run.id, "completed"));
     } catch (error) {
-      this.persistInterruptedText(run, thread, partial.text);
+      this.persistInterruptedText(run, conversation, partial.text);
       const current = this.#store.getRun(run.id);
       if (!current || isTerminalStatus(current.status)) {
         return;
@@ -781,7 +735,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   createObserver(
     run: AgentRun,
-    thread: AgentThread,
+    conversation: Conversation,
     signal: AbortSignal,
     partial: PartialOutputState,
   ): NativeAgentRunObserver {
@@ -809,7 +763,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         this.#publish({
           type: "assistant-delta",
           runId: run.id,
-          threadId: thread.id,
+          conversationId: conversation.id,
           delta,
           at: new Date().toISOString(),
         });
@@ -855,10 +809,10 @@ export class ScopeGuardApplication implements ScopeGuardCore {
             name: call.name,
             arguments: call.arguments,
           });
-          this.emitToolCall(run, thread, stored);
+          this.emitToolCall(run, conversation, stored);
         }
         const message = this.#store.appendMessage({
-          threadId: thread.id,
+          conversationId: conversation.id,
           runId: run.id,
           role: "assistant",
           status: "committed",
@@ -870,7 +824,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         });
         this.#store.clearRunPartial(run.id);
         resetPartialOutput(partial);
-        this.emitMessage(run, thread, message);
+        this.emitMessage(run, conversation, message);
         return callIds;
       },
       onToolCallStatus: (toolCallId, status, result) => {
@@ -879,7 +833,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
           status,
           result,
         );
-        this.emitToolCall(run, thread, toolCall);
+        this.emitToolCall(run, conversation, toolCall);
       },
       requestApproval: async ({ toolCallId, description }) => {
         throwIfAborted(signal);
@@ -889,7 +843,12 @@ export class ScopeGuardApplication implements ScopeGuardCore {
           description,
         );
         this.emitStatus(this.#store.updateRunStatus(run.id, "waiting-approval"));
-        this.emitApproval(run, thread, approval, this.requireToolCall(toolCallId));
+        this.emitApproval(
+          run,
+          conversation,
+          approval,
+          this.requireToolCall(toolCallId),
+        );
         const decision = await this.#approvals.wait(approval, signal);
         throwIfAborted(signal);
         const current = this.#store.getRun(run.id);
@@ -911,7 +870,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       },
       onToolResult: ({ toolCallId, providerCallId, name, result }) => {
         const message = this.#store.appendMessage({
-          threadId: thread.id,
+          conversationId: conversation.id,
           runId: run.id,
           role: "tool",
           status: "committed",
@@ -925,17 +884,9 @@ export class ScopeGuardApplication implements ScopeGuardCore {
           }],
           metadata: {},
         });
-        this.emitMessage(run, thread, message);
+        this.emitMessage(run, conversation, message);
       },
     };
-  }
-
-  requireProject(projectId: Id): Project {
-    const project = this.#store.getProject(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-    return project;
   }
 
   requireWorkspace(workspaceId: Id): Workspace {
@@ -954,20 +905,20 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     return provider;
   }
 
-  requireAgentProfile(agentProfileId: Id): AgentProfile {
-    const profile = this.#store.getAgentProfile(agentProfileId);
-    if (!profile) {
-      throw new Error(`Agent Profile not found: ${agentProfileId}`);
+  requireAgent(agentId: Id): Agent {
+    const agent = this.#store.getAgent(agentId);
+    if (!agent) {
+      throw new Error(`Agent not found: ${agentId}`);
     }
-    return profile;
+    return agent;
   }
 
-  requireThread(threadId: Id): AgentThread {
-    const thread = this.#store.getThread(threadId);
-    if (!thread) {
-      throw new Error(`Thread not found: ${threadId}`);
+  requireConversation(conversationId: Id): Conversation {
+    const conversation = this.#store.getConversation(conversationId);
+    if (!conversation) {
+      throw new Error(`Conversation not found: ${conversationId}`);
     }
-    return thread;
+    return conversation;
   }
 
   requireRun(runId: Id): AgentRun {
@@ -986,10 +937,10 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     return toolCall;
   }
 
-  finalizeCancelledToolCalls(run: AgentRun, thread: AgentThread): void {
+  finalizeCancelledToolCalls(run: AgentRun, conversation: Conversation): void {
     const toolCalls = this.#store.cancelUnfinishedToolCallsForRun(run.id);
     const resultIds = new Set(
-      this.#store.listThreadMessages(thread.id)
+      this.#store.listConversationMessages(conversation.id)
         .filter((message) => message.runId === run.id)
         .flatMap((message) => message.content)
         .filter((block) => block.type === "tool-result")
@@ -1000,7 +951,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         continue;
       }
       const message = this.#store.appendMessage({
-        threadId: thread.id,
+        conversationId: conversation.id,
         runId: run.id,
         role: "tool",
         status: "interrupted",
@@ -1014,17 +965,17 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         }],
         metadata: { synthetic: true },
       });
-      this.emitMessage(run, thread, message);
+      this.emitMessage(run, conversation, message);
     }
   }
 
   persistRecoveredToolCallResults(
     run: AgentRun,
-    thread: AgentThread,
+    conversation: Conversation,
     toolCalls: ToolCallRecord[],
   ): void {
     const resultIds = new Set(
-      this.#store.listThreadMessages(thread.id)
+      this.#store.listConversationMessages(conversation.id)
         .filter((message) => message.runId === run.id)
         .flatMap((message) => message.content)
         .filter((block) => block.type === "tool-result")
@@ -1035,9 +986,9 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         continue;
       }
       const effectUnknown = toolCall.status === "effect_unknown";
-      this.emitToolCall(run, thread, toolCall);
+      this.emitToolCall(run, conversation, toolCall);
       const message = this.#store.appendMessage({
-        threadId: thread.id,
+        conversationId: conversation.id,
         runId: run.id,
         role: "tool",
         status: "interrupted",
@@ -1053,13 +1004,13 @@ export class ScopeGuardApplication implements ScopeGuardCore {
         }],
         metadata: { synthetic: true, effectUnknown },
       });
-      this.emitMessage(run, thread, message);
+      this.emitMessage(run, conversation, message);
     }
   }
 
   persistInterruptedText(
     run: AgentRun,
-    thread: AgentThread,
+    conversation: Conversation,
     text: string,
   ): void {
     if (!text.trim()) {
@@ -1067,7 +1018,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       return;
     }
     const message = this.#store.appendMessage({
-      threadId: thread.id,
+      conversationId: conversation.id,
       runId: run.id,
       role: "assistant",
       status: "interrupted",
@@ -1075,7 +1026,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       metadata: { partial: true },
     });
     this.#store.clearRunPartial(run.id);
-    this.emitMessage(run, thread, message);
+    this.emitMessage(run, conversation, message);
   }
 
   checkpointPartial(runId: Id, partial: PartialOutputState): void {
@@ -1100,7 +1051,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     const event: RunEvent = {
       type: "run-status",
       runId: run.id,
-      threadId: run.threadId,
+      conversationId: run.conversationId,
       status: run.status,
       at: new Date().toISOString(),
       error: run.error ?? undefined,
@@ -1109,11 +1060,15 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     this.#publish(event);
   }
 
-  emitMessage(run: AgentRun, thread: AgentThread, message: ThreadMessage): void {
+  emitMessage(
+    run: AgentRun,
+    conversation: Conversation,
+    message: ConversationMessage,
+  ): void {
     const event: RunEvent = {
       type: "message-created",
       runId: run.id,
-      threadId: thread.id,
+      conversationId: conversation.id,
       message,
       at: new Date().toISOString(),
     };
@@ -1121,11 +1076,15 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     this.#publish(event);
   }
 
-  emitToolCall(run: AgentRun, thread: AgentThread, toolCall: ToolCallRecord): void {
+  emitToolCall(
+    run: AgentRun,
+    conversation: Conversation,
+    toolCall: ToolCallRecord,
+  ): void {
     const event: RunEvent = {
       type: "tool-call",
       runId: run.id,
-      threadId: thread.id,
+      conversationId: conversation.id,
       toolCall,
       at: new Date().toISOString(),
     };
@@ -1135,14 +1094,14 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   emitApproval(
     run: AgentRun,
-    thread: AgentThread,
+    conversation: Conversation,
     approval: ToolApproval,
     toolCall: ToolCallRecord,
   ): void {
     const event: RunEvent = {
       type: "approval-required",
       runId: run.id,
-      threadId: thread.id,
+      conversationId: conversation.id,
       approval,
       toolCall,
       at: new Date().toISOString(),
@@ -1153,13 +1112,13 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   emitManagedExecution(
     run: AgentRun,
-    thread: AgentThread,
+    conversation: Conversation,
     progress: ManagedExecutionProgress,
   ): void {
     const event: RunEvent = {
       type: "managed-execution",
       runId: run.id,
-      threadId: thread.id,
+      conversationId: conversation.id,
       progress,
       at: progress.at,
     };
@@ -1278,20 +1237,20 @@ class InputWaiters {
 }
 
 function toModelMessages(
-  messages: ThreadMessage[],
-  profile: AgentProfile,
+  messages: ConversationMessage[],
+  agent: Agent,
   workspace: Workspace,
-  context: ContextRevision | null,
+  context: WorkspaceContextRevision | null,
 ): ModelMessage[] {
   const systemSections = [
-    profile.instructions.trim(),
+    agent.instructions.trim(),
     workspace.localRootPath
       ? `Local workspace folder: ${workspace.localRootPath}`
       : "",
     context
       ? `# Shared Workspace Context (revision ${context.version})\n${context.content}`
       : "",
-    "Treat every other Thread as isolated. Use only the shared context shown above.",
+    "Treat every other Conversation as isolated. Use only the shared context shown above.",
   ].filter(Boolean);
   const result: ModelMessage[] = [{
     role: "system",
@@ -1363,11 +1322,11 @@ function toModelMessages(
 }
 
 function takeRecentMessages(
-  messages: ThreadMessage[],
+  messages: ConversationMessage[],
   characterBudget: number,
   countLimit: number,
-): ThreadMessage[] {
-  const selected: ThreadMessage[] = [];
+): ConversationMessage[] {
+  const selected: ConversationMessage[] = [];
   let characters = 0;
   for (
     let index = messages.length - 1;
@@ -1474,7 +1433,7 @@ function assertMaximumLength(
 }
 
 function effectiveToolPolicy(
-  profile: AgentProfile["executionProfile"],
+  profile: Agent["defaultExecutionProfile"],
   configured: AgentToolPolicy,
 ): AgentToolPolicy {
   const permission = (value: AgentToolPolicy["writeFiles"]) => {

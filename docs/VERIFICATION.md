@@ -18,10 +18,11 @@ git diff --check
 
 Required coverage includes:
 
-- schema migration and non-destructive retention of legacy database history;
-- native Agent profile creation and rejection of legacy execution kinds;
+- fresh V1 schema identity, canonical tables, persistence, and explicit rejection
+  of pre-V1 databases;
+- native Agent creation without external harness compatibility fields;
 - independent concurrent Runs and per-Run cancellation;
-- conversation transcript isolation and explicit Project Context use;
+- conversation transcript isolation and explicit Workspace Context use;
 - immutable request manifests, settings snapshots, and usage persistence;
 - approval denial, automatic approval, and cancellation while waiting;
 - user-input continuation in the same Run and conversation;
@@ -77,7 +78,7 @@ Verify:
    snapshot records both values without changing the Agent.
 3. Put a private marker in conversation A and run conversation B; Provider input
    for B must not contain A's transcript.
-4. Publish a short Project Context revision from A, then run B; B may receive the
+4. Publish a short Workspace Context revision from A, then run B; B may receive the
    explicit revision while A's remaining transcript stays private.
 5. Trigger a user-input request, answer in the same composer, and confirm the
    same Run resumes instead of creating another Run.
@@ -102,8 +103,8 @@ Use a disposable folder in a separate Workspace:
 2. Confirm Workspace, Agents, conversations, messages, layout, and draft return.
 3. Quit during a native Run; on restart it must be `interrupted`, retain partial
    output, and allow retry.
-4. Seed a non-terminal legacy remote-bound Run in a migration fixture; startup
-   must interrupt it rather than wait for the removed remote owner.
+4. Attempt to open a pre-V1 database; startup must reject it and must not create
+   V1 tables inside it.
 5. Recover an unfinished non-idempotent tool call and confirm its effect remains
    unknown.
 

@@ -53,7 +53,7 @@ test("replays a two-step file tool run through the production composition withou
 
   try {
     const run = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "Create the replay report.",
     });
     assert.equal(
@@ -102,7 +102,7 @@ test("replays a two-step file tool run through the production composition withou
       ["proposed", "running", "succeeded"],
     );
     assert.match(
-      fixture.store.listThreadMessages(fixture.threadId)
+      fixture.store.listConversationMessages(fixture.conversationId)
         .flatMap((message) => message.content)
         .map((block) => block.type === "text"
           ? block.text
@@ -128,7 +128,7 @@ test("replays a pure text run without provider credentials", async () => {
   const fixture = await createReplayFixture(provider, "request-approval");
   try {
     const run = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "Answer without tools.",
     });
     assert.equal(
@@ -172,7 +172,7 @@ test("replays approval denial without applying the file effect", async () => {
   const fixture = await createReplayFixture(provider, "request-approval");
   try {
     const run = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "Try to write the denied report.",
     });
     await waitForCondition(
@@ -235,7 +235,7 @@ test("replays required user input inside the same run", async () => {
   const fixture = await createReplayFixture(provider, "request-approval");
   try {
     const run = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "Prepare the report.",
     });
     await waitForCondition(
@@ -243,7 +243,7 @@ test("replays required user input inside the same run", async () => {
       "Replay did not request input.",
     );
     const resumed = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "2026 Q2",
     });
     assert.equal(resumed.id, run.id);
@@ -272,7 +272,7 @@ test("replays cancellation with partial output and no automatic resubmission", a
   const fixture = await createReplayFixture(provider, "request-approval");
   try {
     const run = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "Keep running until cancelled.",
     });
     await waitForCondition(
@@ -323,7 +323,7 @@ test("replays a crash after tool start as a monotonic unknown effect", async () 
   );
   try {
     const run = await fixture.application.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "Publish once.",
     });
     await effectTool.started;
@@ -373,7 +373,7 @@ test("replays a crash after tool start as a monotonic unknown effect", async () 
     });
     assert.equal(continuation.initialize().interruptedRuns, 0);
     const continuedRun = await continuation.startRun({
-      threadId: fixture.threadId,
+      conversationId: fixture.conversationId,
       prompt: "I verified the external state. Continue safely.",
     });
     assert.equal(
@@ -422,21 +422,21 @@ async function createReplayFixture(
     baseUrl: "https://not-contacted.invalid/v1",
     defaultModel: "replay-model",
   });
-  const project = application.addProject({
+  const project = application.createWorkspace({
     name: "Replay workspace",
-    rootPath: workspaceRoot,
+    localRootPath: workspaceRoot,
   });
-  const agent = application.createAgentProfile({
-    projectId: project.id,
+  const agent = application.createAgent({
+    workspaceId: project.id,
     name: "Replay Agent",
     instructions: "Follow the replay script.",
     providerProfileId: providerProfile.id,
     executionProfile,
     toolPolicy,
   });
-  const thread = application.createThread({
-    projectId: project.id,
-    agentProfileId: agent.id,
+  const thread = application.createConversation({
+    workspaceId: project.id,
+    agentId: agent.id,
     title: "Replay task",
   });
   return {
@@ -444,7 +444,7 @@ async function createReplayFixture(
     store,
     tools,
     vault,
-    threadId: thread.id,
+    conversationId: thread.id,
     workspaceRoot,
     async close() {
       await application.shutdown();
@@ -506,7 +506,7 @@ function replayTranscript(
   fixture: Awaited<ReturnType<typeof createReplayFixture>>,
   runId: string,
 ): string {
-  return fixture.store.listThreadMessages(fixture.threadId)
+  return fixture.store.listConversationMessages(fixture.conversationId)
     .filter((message) => message.runId === runId)
     .flatMap((message) => message.content)
     .map((block) => block.type === "text"

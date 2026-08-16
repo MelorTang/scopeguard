@@ -1,6 +1,6 @@
 # Security Model
 
-ScopeGuard sends user-selected conversation and Project Context data to the
+ScopeGuard sends user-selected conversation and Workspace Context data to the
 configured model Provider. It can also read, write, and execute within a
 user-selected local Workspace according to the conversation's execution
 profile. ScopeGuard is not a defense against arbitrary malware already running
@@ -22,9 +22,9 @@ as the desktop user.
 ## Context Isolation
 
 - Each Run receives only its own conversation transcript and the current
-  explicit Project Context revision.
+  explicit Workspace Context revision.
 - ScopeGuard never loads another conversation's transcript implicitly.
-- Project Context updates validate their Workspace, source conversation, and
+- Workspace Context updates validate their Workspace, source conversation, and
   source Run relationship before persistence.
 - Approval and user-input continuation stay attached to the originating Run.
 

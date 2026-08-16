@@ -2,18 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  isRunEvent,
-  parseCreateArtifactInput,
-  parseCreateAgentProfileInput,
-  parseCreateTaskInput,
+  parseCreateAgentInput,
   parseManagedExecutionRequest,
-  parsePublishWorkspaceContextRequest,
   parseResolveApprovalRequest,
-  parseSaveRuntimeNodeInput,
   parseSaveProviderProfileRequest,
-  parseUpdateAgentInstanceRuntimeRequest,
-  parseUpdateTaskStatusRequest,
-  parseUpdateThreadSettingsInput,
+  parseUpdateConversationSettingsInput,
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
 } from "./index.js";
@@ -30,220 +23,75 @@ test("removes secret references from Provider profiles returned to Renderer", ()
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   });
-
   assert.equal(view.hasApiKey, true);
   assert.equal("apiKeyRef" in view, false);
 });
 
-test("projects only the desktop core collections to the Renderer", () => {
+test("projects the canonical V1 snapshot without compatibility collections", () => {
   const snapshot = toDesktopWorkspaceSnapshot({
     workspaces: [],
-    projects: [],
     providerProfiles: [],
-    agentProfiles: [],
-    threads: [],
+    agents: [],
+    conversations: [],
     activeRuns: [],
     recentRuns: [],
     pendingApprovals: [],
-    runtimeNodes: [{ id: "runtime" } as never],
-    agentDefinitions: [{ id: "definition" } as never],
-    agentInstances: [{ id: "instance" } as never],
-    tasks: [{ id: "task" } as never],
-    assignments: [{ id: "assignment" } as never],
-    artifacts: [{ id: "artifact" } as never],
-    handoffs: [{ id: "handoff" } as never],
-    schedules: [{ id: "schedule" } as never],
-    inboxItems: [{ id: "inbox" } as never],
   });
-
-  assert.deepEqual(snapshot.runtimeNodes, []);
-  assert.deepEqual(snapshot.tasks, []);
-  assert.deepEqual(snapshot.artifacts, []);
-  assert.deepEqual(snapshot.inboxItems, []);
+  assert.deepEqual(Object.keys(snapshot).sort(), [
+    "activeRuns",
+    "agents",
+    "conversations",
+    "pendingApprovals",
+    "providerProfiles",
+    "recentRuns",
+    "workspaces",
+  ]);
 });
 
-test("validates provider settings at the IPC boundary", () => {
-  assert.deepEqual(
-    parseSaveProviderProfileRequest({
-      name: "Relay",
-      protocol: "openai-compatible",
-      baseUrl: "https://relay.example.com/v1",
-      defaultModel: "model",
-      apiKey: "secret",
-      customHeaders: { "X-Tenant": "scopeguard" },
-    }),
-    {
-      id: undefined,
-      name: "Relay",
-      protocol: "openai-compatible",
-      baseUrl: "https://relay.example.com/v1",
-      defaultModel: "model",
-      apiKey: "secret",
-      clearApiKey: undefined,
-      customHeaders: { "X-Tenant": "scopeguard" },
-    },
-  );
-  assert.throws(
-    () => parseSaveProviderProfileRequest({
-      name: "Relay",
-      protocol: "unknown",
-      baseUrl: "https://relay.example.com",
-      defaultModel: "model",
-    }),
-    /protocol/,
-  );
-});
-
-test("rejects malformed permissions and approval decisions", () => {
-  assert.equal(
-    parseCreateAgentProfileInput({
-      projectId: "project",
-      name: "Agent",
-      instructions: "",
-      executionProfile: "auto-approve",
-    }).executionProfile,
-    "auto-approve",
-  );
-  assert.throws(
-    () => parseCreateAgentProfileInput({
-      projectId: "project",
-      name: "Agent",
-      instructions: "",
-      providerProfileId: "provider",
-      toolPolicy: { runCommands: "always" },
-    }),
-    /runCommands/,
-  );
-  assert.throws(
-    () => parseCreateAgentProfileInput({
-      projectId: "project",
-      name: "Agent",
-      instructions: "",
-      executionProfile: "unrestricted",
-    }),
-    /executionProfile/,
-  );
-  assert.throws(
-    () => parseResolveApprovalRequest({
-      approvalId: "approval",
-      decision: "approved-project",
-    }),
-    /approved-once or denied/,
-  );
-});
-
-test("validates conversation settings at the IPC boundary", () => {
-  assert.deepEqual(
-    parseUpdateThreadSettingsInput({
-      threadId: "thread",
-      modelOverride: "specialist-model",
-      executionProfile: "full-access",
-    }),
-    {
-      threadId: "thread",
-      modelOverride: "specialist-model",
-      executionProfile: "full-access",
-    },
-  );
-  assert.throws(
-    () => parseUpdateThreadSettingsInput({
-      threadId: "thread",
-      executionProfile: "unrestricted",
-    }),
-    /executionProfile/,
-  );
-});
-
-test("validates first-stage control-plane commands at the IPC boundary", () => {
-  assert.deepEqual(parseSaveRuntimeNodeInput({
-    name: "Remote",
-    kind: "remote",
-    baseUrl: "https://runtime.example.com",
-    credential: "secret",
-  }), {
-    id: undefined,
-    name: "Remote",
-    kind: "remote",
-    baseUrl: "https://runtime.example.com",
-    credential: "secret",
-    clearCredential: undefined,
-  });
-  assert.deepEqual(parseCreateTaskInput({
+test("validates provider and Agent inputs at the IPC boundary", () => {
+  assert.equal(parseSaveProviderProfileRequest({
+    name: "Relay",
+    protocol: "openai-compatible",
+    baseUrl: "https://relay.example.com/v1",
+    defaultModel: "model",
+  }).protocol, "openai-compatible");
+  assert.equal(parseCreateAgentInput({
     workspaceId: "workspace",
-    title: "Research",
-    priority: "high",
-  }), {
+    name: "Agent",
+    instructions: "Help.",
+    providerProfileId: "provider",
+    executionProfile: "auto-approve",
+  }).executionProfile, "auto-approve");
+  assert.throws(() => parseCreateAgentInput({
     workspaceId: "workspace",
-    title: "Research",
-    description: undefined,
-    priority: "high",
-  });
-  assert.deepEqual(parseUpdateAgentInstanceRuntimeRequest({
-    agentInstanceId: "agent-instance",
-    runtimeNodeId: "remote-runtime",
-  }), {
-    agentInstanceId: "agent-instance",
-    runtimeNodeId: "remote-runtime",
-  });
-  assert.equal(
-    parseCreateArtifactInput({
-      workspaceId: "workspace",
-      taskId: "task",
-      agentInstanceId: "agent",
-      kind: "markdown",
-      title: "Report",
-      mimeType: "text/markdown",
-      content: "# Report",
-    }).kind,
-    "markdown",
-  );
-  assert.equal(
-    parsePublishWorkspaceContextRequest({
-      workspaceId: "workspace",
-      title: "Decision",
-      content: "Approved.",
-      publishedBy: "user",
-    }).publishedBy,
-    "user",
-  );
-  assert.throws(
-    () => parseUpdateTaskStatusRequest({ taskId: "task", status: "done" }),
-    /valid Task status/,
-  );
-  assert.throws(
-    () => parseSaveRuntimeNodeInput({ name: "Remote", kind: "cloud" }),
-    /local or remote/,
-  );
-  assert.throws(
-    () => parseUpdateAgentInstanceRuntimeRequest({
-      agentInstanceId: "agent-instance",
-      runtimeNodeId: "",
-    }),
-    /runtimeNodeId/,
-  );
+    name: "Agent",
+    instructions: "Help.",
+    providerProfileId: "provider",
+    toolPolicy: { runCommands: "always" },
+  }), /runCommands/);
 });
 
-test("accepts only known run event envelopes", () => {
-  assert.equal(isRunEvent({
-    type: "assistant-delta",
-    runId: "run",
-    threadId: "thread",
-    delta: "hello",
-    at: new Date().toISOString(),
-  }), true);
-  assert.equal(isRunEvent({
-    type: "unknown",
-    runId: "run",
-    threadId: "thread",
-    at: new Date().toISOString(),
-  }), false);
+test("validates Conversation settings and approval decisions", () => {
+  assert.deepEqual(parseUpdateConversationSettingsInput({
+    conversationId: "conversation",
+    modelOverride: "specialist-model",
+    executionProfile: "full-access",
+  }), {
+    conversationId: "conversation",
+    modelOverride: "specialist-model",
+    executionProfile: "full-access",
+  });
+  assert.throws(() => parseResolveApprovalRequest({
+    approvalId: "approval",
+    decision: "approved-workspace",
+  }), /approved-once or denied/);
 });
 
 test("validates managed execution requests at the private IPC boundary", () => {
   const request = parseManagedExecutionRequest({
     executionId: "execution",
-    projectId: "project",
-    threadId: "thread",
+    workspaceId: "workspace",
+    conversationId: "conversation",
     runId: "run",
     workspaceRoot: "C:\\work",
     command: "echo ready",
@@ -256,7 +104,20 @@ test("validates managed execution requests at the private IPC boundary", () => {
     /timeoutMs/,
   );
   assert.throws(
-    () => parseManagedExecutionRequest({ ...request, command: " " }),
-    /command/,
+    () => parseManagedExecutionRequest({ ...request, timeoutMs: 300_001 }),
+    /timeoutMs/,
+  );
+  assert.throws(
+    () => parseManagedExecutionRequest({ ...request, command: "x".repeat(100_001) }),
+    /command exceeds/,
+  );
+  assert.throws(
+    () => parseManagedExecutionRequest({
+      ...request,
+      environment: Object.fromEntries(
+        Array.from({ length: 65 }, (_, index) => [`KEY_${index}`, "value"]),
+      ),
+    }),
+    /environment exceeds/,
   );
 });

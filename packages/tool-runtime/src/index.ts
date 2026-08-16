@@ -143,7 +143,7 @@ export class ReadFileTool implements AgentTool {
     context: ToolExecutionContext,
   ): Promise<ToolExecutionResult> {
     const filePath = await resolveExistingProjectPath(
-      context.projectRoot,
+      context.workspaceRoot,
       requireString(input, "path"),
     );
     throwIfCancelled(context.signal);
@@ -249,7 +249,7 @@ export class WriteFileTool implements AgentTool {
     }
     throwIfCancelled(context.signal);
 
-    const root = await realpath(context.projectRoot);
+    const root = await realpath(context.workspaceRoot);
     const unresolved = resolve(root, requestedPath);
     assertPathInsideRoot(root, unresolved);
     const parent = await realpath(dirname(unresolved));
@@ -349,16 +349,16 @@ export class RunCommandTool implements AgentTool {
     if (!command) {
       throw new Error("Command cannot be empty.");
     }
-    const projectRoot = await realpath(context.projectRoot);
+    const workspaceRoot = await realpath(context.workspaceRoot);
     const timeoutMs = clampTimeout(input.timeoutMs);
     const result = await this.#executionRouter.execute(
       context.executionProfile,
       {
         executionId: randomUUID().replaceAll("-", ""),
-        projectId: context.projectId,
-        threadId: context.threadId,
+        workspaceId: context.workspaceId,
+        conversationId: context.conversationId,
         runId: context.runId,
-        workspaceRoot: projectRoot,
+        workspaceRoot: workspaceRoot,
         command,
         timeoutMs,
         environment: safeToolEnvironment(),
@@ -390,14 +390,14 @@ export class RunCommandTool implements AgentTool {
 }
 
 export async function resolveExistingProjectPath(
-  projectRoot: string,
+  workspaceRoot: string,
   requestedPath: string,
 ): Promise<string> {
   if (!requestedPath.trim()) {
     throw new Error("Path cannot be empty.");
   }
 
-  const root = await realpath(projectRoot);
+  const root = await realpath(workspaceRoot);
   const candidate = resolve(root, requestedPath);
   assertPathInsideRoot(root, candidate);
   await access(candidate, fsConstants.R_OK);
