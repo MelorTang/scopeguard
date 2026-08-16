@@ -32,9 +32,6 @@ importers:
       '@scopeguard/provider-adapters':
         specifier: workspace:*
         version: link:../../packages/provider-adapters
-      '@scopeguard/remote-runtime':
-        specifier: workspace:*
-        version: link:../../packages/remote-runtime
       '@scopeguard/storage-sqlite':
         specifier: workspace:*
         version: link:../../packages/storage-sqlite

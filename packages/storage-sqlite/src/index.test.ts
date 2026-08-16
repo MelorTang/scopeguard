@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { ScopeGuardStore } from "./index.js";
 
 test("can create the desktop core without legacy control-plane mirrors", () => {
-    const store = new ScopeGuardStore(":memory:");
+  const store = new ScopeGuardStore(":memory:");
   try {
     const workspace = store.createWorkspace({ name: "Core workspace" });
     const provider = store.saveProviderProfile({
@@ -1007,6 +1007,12 @@ test("preserves active Runs that are bound to a remote Runtime across restart", 
     assert.equal(recovered.listActiveRemoteRunBindings().length, 1);
     assert.equal(recovered.getRemoteRunBinding(runId)?.runtimeNodeId, runtimeId);
     assert.equal(recovered.getRunPartial(runId), "Remote partial output");
+    assert.equal(
+      recovered.interruptNonTerminalRuns({ includeRemote: true }),
+      1,
+    );
+    assert.equal(recovered.getRun(runId)?.status, "interrupted");
+    assert.equal(recovered.getRunPartial(runId), null);
     recovered.close();
   } finally {
     await rm(directory, { recursive: true, force: true });

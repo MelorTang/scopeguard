@@ -176,7 +176,7 @@ export interface WorkspaceStore {
   getRun(runId: Id): AgentRun | null;
   listActiveRuns(): AgentRun[];
   updateRunStatus(runId: Id, status: RunStatus, error?: string): AgentRun;
-  interruptNonTerminalRuns(): number;
+  interruptNonTerminalRuns(options?: { includeRemote?: boolean }): number;
   appendRunEvent(event: RunEvent): void;
   listRunEvents(runId: Id): RunEvent[];
   recordRunRequestManifest(
@@ -293,6 +293,37 @@ export interface CliAgentRunner {
   }): Promise<{ stdout: string; stderr: string }>;
 }
 
+export interface ScopeGuardCore {
+  initialize(): { interruptedRuns: number };
+  shutdown(): Promise<void>;
+  getWorkspaceSnapshot(): WorkspaceSnapshot;
+  createWorkspace(input: CreateWorkspaceInput): Workspace;
+  addProject(input: CreateProjectInput): Project;
+  saveProviderProfile(input: SaveProviderProfileInput): Promise<ProviderProfile>;
+  deleteProviderProfile(providerProfileId: Id): Promise<void>;
+  testProviderConnection(
+    input: SaveProviderProfileInput,
+    signal?: AbortSignal,
+  ): Promise<ProviderConnectionResult>;
+  createAgentProfile(input: CreateAgentProfileInput): AgentProfile;
+  createThread(input: CreateThreadInput): AgentThread;
+  updateThreadSettings(input: UpdateThreadSettingsInput): AgentThread;
+  listThreadMessages(threadId: Id): ThreadMessage[];
+  startRun(input: StartRunInput): Promise<AgentRun>;
+  cancelRun(runId: Id): Promise<void>;
+  resolveApproval(
+    approvalId: Id,
+    decision: ApprovalDecision,
+  ): Promise<void>;
+  getProjectContext(projectId: Id): ContextRevision | null;
+  updateProjectContext(
+    projectId: Id,
+    content: string,
+    sourceThreadId?: Id | null,
+    sourceRunId?: Id | null,
+  ): ContextRevision;
+}
+
 type ActiveRun = {
   controller: AbortController;
   settled: Promise<void>;
@@ -320,7 +351,7 @@ const NO_TOOLS: ToolRegistry = {
   get: () => null,
 };
 
-export class ScopeGuardApplication {
+export class ScopeGuardApplication implements ScopeGuardCore {
   readonly #store: WorkspaceStore;
   readonly #secrets: SecretVault;
   readonly #providerFactory: ProviderAdapterFactory;
@@ -354,11 +385,15 @@ export class ScopeGuardApplication {
   }
 
   initialize(): { interruptedRuns: number } {
-    const localRunIds = this.#store.listActiveRuns()
-      .filter((run) => !this.#store.getRemoteRunBinding(run.id))
+    const recoverableRunIds = this.#store.listActiveRuns()
+      .filter((run) =>
+        !this.#remoteClientFactory || !this.#store.getRemoteRunBinding(run.id)
+      )
       .map((run) => run.id);
-    const interruptedRuns = this.#store.interruptNonTerminalRuns();
-    for (const runId of localRunIds) {
+    const interruptedRuns = this.#store.interruptNonTerminalRuns({
+      includeRemote: !this.#remoteClientFactory,
+    });
+    for (const runId of recoverableRunIds) {
       const run = this.#store.getRun(runId);
       if (!run || run.status !== "interrupted") {
         continue;
@@ -374,7 +409,7 @@ export class ScopeGuardApplication {
       );
     }
     this.#store.expirePendingApprovalsForTerminalRuns();
-    const interruptedRunIds = new Set(localRunIds);
+    const interruptedRunIds = new Set(recoverableRunIds);
     for (const item of this.#store.listInboxItems()) {
       if (
         item.status !== "resolved" &&
@@ -385,7 +420,7 @@ export class ScopeGuardApplication {
         this.#store.resolveInboxItem(item.id);
       }
     }
-    for (const runId of localRunIds) {
+    for (const runId of recoverableRunIds) {
       const run = this.#store.getRun(runId);
       if (run?.status === "interrupted") {
         this.emitStatus(run);
@@ -1003,6 +1038,8 @@ export class ScopeGuardApplication {
         throw new Error("A native Agent Profile requires a provider.");
       }
       this.requireProviderProfile(input.providerProfileId);
+    } else if (!this.#cliRunner) {
+      throw new Error("Local CLI Agent Profiles are not available in this build.");
     } else if (runtimeNode.kind !== "local") {
       throw new Error("Local CLI Agent Profiles require a local Runtime.");
     } else if (!workspace.localRootPath) {
@@ -1449,8 +1486,8 @@ export class ScopeGuardApplication {
   updateProjectContext(
     projectId: Id,
     content: string,
-    sourceThreadId?: Id,
-    sourceRunId?: Id,
+    sourceThreadId?: Id | null,
+    sourceRunId?: Id | null,
   ): ContextRevision {
     this.requireProject(projectId);
     assertMaximumLength(content, 200_000, "Project Context");
@@ -2221,10 +2258,20 @@ export class ScopeGuardApplication {
       onAssistantTurn: async (turn) => {
         const callIds: Record<string, Id> = {};
         const blocks: MessageContentBlock[] = [];
+        let inputRequest = false;
         if (turn.content) {
           blocks.push({ type: "text", text: turn.content });
         }
         for (const call of turn.toolCalls) {
+          if (call.name === "request_user_input") {
+            inputRequest = true;
+            const question = typeof call.arguments.question === "string"
+              ? call.arguments.question.trim()
+              : "";
+            if (question && !turn.content.includes(question)) {
+              blocks.push({ type: "text", text: question });
+            }
+          }
           const stored = this.#store.createToolCall(run.id, call);
           callIds[call.providerCallId] = stored.id;
           blocks.push({
@@ -2242,7 +2289,10 @@ export class ScopeGuardApplication {
           role: "assistant",
           status: "committed",
           content: blocks,
-          metadata: { finishReason: turn.finishReason },
+          metadata: {
+            finishReason: turn.finishReason,
+            ...(inputRequest ? { inputRequest: true } : {}),
+          },
         });
         this.#store.clearRunPartial(run.id);
         resetPartialOutput(partial);
@@ -2284,13 +2334,10 @@ export class ScopeGuardApplication {
       },
       requestInput: async ({ question }) => {
         throwIfAborted(signal);
-        const inboxItem = this.#createRunInboxItem(run, "input-required", {
+        this.#createRunInboxItem(run, "input-required", {
           title: "Agent 需要补充信息",
           summary: question,
         });
-        if (!inboxItem) {
-          throw new Error("Input requests require a Task assignment.");
-        }
         this.emitStatus(this.#store.updateRunStatus(run.id, "waiting-input"));
         const answer = await this.#inputs.wait(run.id, signal);
         throwIfAborted(signal);

@@ -26,7 +26,6 @@
     "@scopeguard/ipc-contracts": "workspace:*",
     "@scopeguard/managed-execution": "workspace:*",
     "@scopeguard/provider-adapters": "workspace:*",
-    "@scopeguard/remote-runtime": "workspace:*",
     "@scopeguard/storage-sqlite": "workspace:*",
     "@scopeguard/tool-runtime": "workspace:*",
     "lucide-react": "^0.468.0",

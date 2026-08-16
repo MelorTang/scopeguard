@@ -289,6 +289,48 @@ test("runs the desktop core without creating Task, Artifact, or Inbox mirrors", 
   }
 });
 
+test("resumes a desktop core Run from a Conversation input request", async () => {
+  const provider = new InputRequestProvider();
+  const fixture = createApplicationFixture(
+    provider,
+    new FakeRegistry(),
+    undefined,
+    undefined,
+    undefined,
+    false,
+  );
+  try {
+    const workspace = await createWorkspace(fixture.application);
+    const run = await fixture.application.startRun({
+      threadId: workspace.thread.id,
+      prompt: "Prepare the report.",
+    });
+    await waitForCondition(
+      () => fixture.store.getRun(run.id)?.status === "waiting-input",
+      "Desktop core Run did not wait for user input.",
+    );
+
+    const inputRequest = fixture.store.listThreadMessages(workspace.thread.id)
+      .find((message) => message.metadata.inputRequest === true);
+    assert.match(messageText(inputRequest ? [inputRequest] : []), /reporting period/);
+    assert.equal(fixture.store.listInboxItems().length, 0);
+
+    const resumed = await fixture.application.startRun({
+      threadId: workspace.thread.id,
+      prompt: "Use 2026 Q2.",
+    });
+    assert.equal(resumed.id, run.id);
+    assert.equal((await fixture.application.waitForRun(run.id)).status, "completed");
+    assert.equal(provider.requests[1]?.messages.at(-1)?.role, "tool");
+    assert.equal(provider.requests[1]?.messages.at(-1)?.content, "Use 2026 Q2.");
+    assert.equal(fixture.store.listTasks().length, 0);
+    assert.equal(fixture.store.listArtifacts().length, 0);
+    assert.equal(fixture.store.listInboxItems().length, 0);
+  } finally {
+    fixture.store.close();
+  }
+});
+
 test("persists local Native request manifests and provider usage without credentials", async () => {
   const provider = new UsageRecordingProvider();
   const fixture = createApplicationFixture(provider);
@@ -1181,7 +1223,12 @@ test("rolls back Provider metadata when SecretVault cleanup fails", async () => 
 });
 
 test("rejects plaintext custom headers and CLI environment values", async () => {
-  const fixture = createApplicationFixture(new ImmediateProvider());
+  const fixture = createApplicationFixture(
+    new ImmediateProvider(),
+    new FakeRegistry(),
+    undefined,
+    new ImmediateCliRunner(),
+  );
   try {
     await assert.rejects(
       () => fixture.application.saveProviderProfile({
@@ -1266,7 +1313,12 @@ test("runs and persists an optional local CLI Agent without a Provider", async (
 });
 
 test("rejects a local CLI Agent in a Workspace without a local folder", () => {
-  const fixture = createApplicationFixture(new ImmediateProvider());
+  const fixture = createApplicationFixture(
+    new ImmediateProvider(),
+    new FakeRegistry(),
+    undefined,
+    new ImmediateCliRunner(),
+  );
   try {
     const workspace = fixture.application.createWorkspace({
       name: "No-folder Workspace",
@@ -1286,6 +1338,34 @@ test("rejects a local CLI Agent in a Workspace without a local folder", () => {
         },
       }),
       /require a Workspace with a local folder/,
+    );
+  } finally {
+    fixture.store.close();
+  }
+});
+
+test("rejects local CLI profiles when the application has no CLI runner", () => {
+  const fixture = createApplicationFixture(new ImmediateProvider());
+  try {
+    const workspace = fixture.application.createWorkspace({
+      name: "Native-only desktop",
+      localRootPath: "/tmp/scopeguard-native-only",
+    });
+    assert.throws(
+      () => fixture.application.createAgentProfile({
+        projectId: workspace.id,
+        name: "Unavailable CLI",
+        instructions: "",
+        providerProfileId: null,
+        runtimeKind: "local-cli",
+        cliConfig: {
+          command: "codex",
+          args: [],
+          cwd: null,
+          env: {},
+        },
+      }),
+      /not available in this build/,
     );
   } finally {
     fixture.store.close();

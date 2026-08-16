@@ -1314,14 +1314,19 @@ export class ScopeGuardStore {
     };
   }
 
-  interruptNonTerminalRuns(): number {
+  interruptNonTerminalRuns(
+    options: { includeRemote?: boolean } = {},
+  ): number {
     return this.#transaction(() => {
+      const remoteFilter = options.includeRemote
+        ? ""
+        : "AND id NOT IN (SELECT run_id FROM remote_run_bindings)";
       const activeRuns = this.#all(
         `SELECT id, thread_id FROM agent_runs
          WHERE status IN (
            'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
            'cancelling'
-         ) AND id NOT IN (SELECT run_id FROM remote_run_bindings)`,
+         ) ${remoteFilter}`,
       );
       for (const activeRun of activeRuns) {
         const runId = asString(activeRun.id);
@@ -1362,12 +1367,16 @@ export class ScopeGuardStore {
            WHERE status IN (
              'queued', 'preparing', 'running', 'waiting-approval', 'waiting-input',
              'cancelling'
-           ) AND id NOT IN (SELECT run_id FROM remote_run_bindings)`,
+           ) ${remoteFilter}`,
         )
         .run(new Date().toISOString());
       this.#run(
         `DELETE FROM run_partials
-         WHERE run_id NOT IN (SELECT run_id FROM remote_run_bindings)`,
+         ${
+           options.includeRemote
+             ? ""
+             : "WHERE run_id NOT IN (SELECT run_id FROM remote_run_bindings)"
+         }`,
       );
       return Number(result.changes);
     });
