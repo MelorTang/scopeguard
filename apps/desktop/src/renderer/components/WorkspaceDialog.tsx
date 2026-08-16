@@ -45,8 +45,8 @@ export function WorkspaceDialog(props: {
     setCreating(true);
     setError(null);
     try {
-      const project = await props.workspace.addProject();
-      if (project) {
+      const workspace = await props.workspace.openLocalWorkspace();
+      if (workspace) {
         props.onClose();
       }
     } catch (openError) {

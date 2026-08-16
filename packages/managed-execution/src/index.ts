@@ -18,8 +18,8 @@ export type { ManagedExecutionStage } from "@scopeguard/domain";
 
 export type ManagedExecutionRequest = {
   executionId: Id;
-  projectId: Id;
-  threadId: Id;
+  workspaceId: Id;
+  conversationId: Id;
   runId: Id;
   workspaceRoot: string;
   command: string;

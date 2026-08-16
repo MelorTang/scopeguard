@@ -8,8 +8,8 @@ import { AgentHostManagedExecutionAdapter } from "../agent-host-managed-executio
 
 const request: ManagedExecutionRequest = {
   executionId: "execution",
-  projectId: "project",
-  threadId: "thread",
+  workspaceId: "project",
+  conversationId: "thread",
   runId: "run",
   workspaceRoot: "/workspace",
   command: "echo ready",

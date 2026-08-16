@@ -30,16 +30,15 @@ import {
   type AgentHostToMainMessage,
   type MainToAgentHostMessage,
   type ResolveApprovalRequest,
-  type UpdateProjectContextRequest,
+  type UpdateWorkspaceContextRequest,
 } from "@scopeguard/ipc-contracts";
 import type {
-  CreateAgentProfileInput,
-  CreateProjectInput,
-  CreateThreadInput,
+  CreateAgentInput,
+  CreateConversationInput,
   CreateWorkspaceInput,
   Id,
   StartRunInput,
-  UpdateThreadSettingsInput,
+  UpdateConversationSettingsInput,
 } from "@scopeguard/domain";
 
 import { AgentHostManagedExecutionAdapter } from "./agent-host-managed-execution.js";
@@ -232,8 +231,6 @@ async function dispatch(
       return toDesktopWorkspaceSnapshot(core.getWorkspaceSnapshot());
     case "createWorkspace":
       return core.createWorkspace(request.payload as CreateWorkspaceInput);
-    case "addProject":
-      return core.addProject(request.payload as CreateProjectInput);
     case "saveProviderProfile":
       return toProviderProfileView(
         await core.saveProviderProfile(
@@ -246,18 +243,18 @@ async function dispatch(
       return core.testProviderConnection(
         request.payload as SaveProviderProfileInput,
       );
-    case "createAgentProfile":
-      return core.createAgentProfile(
-        request.payload as CreateAgentProfileInput,
+    case "createAgent":
+      return core.createAgent(
+        request.payload as CreateAgentInput,
       );
-    case "createThread":
-      return core.createThread(request.payload as CreateThreadInput);
-    case "updateThreadSettings":
-      return core.updateThreadSettings(
-        request.payload as UpdateThreadSettingsInput,
+    case "createConversation":
+      return core.createConversation(request.payload as CreateConversationInput);
+    case "updateConversationSettings":
+      return core.updateConversationSettings(
+        request.payload as UpdateConversationSettingsInput,
       );
-    case "listThreadMessages":
-      return core.listThreadMessages(request.payload as Id);
+    case "listConversationMessages":
+      return core.listConversationMessages(request.payload as Id);
     case "startRun":
       return core.startRun(request.payload as StartRunInput);
     case "cancelRun":
@@ -266,14 +263,14 @@ async function dispatch(
       const input = request.payload as ResolveApprovalRequest;
       return core.resolveApproval(input.approvalId, input.decision);
     }
-    case "getProjectContext":
-      return core.getProjectContext(request.payload as Id);
-    case "updateProjectContext": {
-      const input = request.payload as UpdateProjectContextRequest;
-      return core.updateProjectContext(
-        input.projectId,
+    case "getWorkspaceContext":
+      return core.getWorkspaceContext(request.payload as Id);
+    case "updateWorkspaceContext": {
+      const input = request.payload as UpdateWorkspaceContextRequest;
+      return core.updateWorkspaceContext(
+        input.workspaceId,
         input.content,
-        input.sourceThreadId,
+        input.sourceConversationId,
         input.sourceRunId,
       );
     }

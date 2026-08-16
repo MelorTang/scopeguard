@@ -85,8 +85,8 @@ test("runs an API Agent without a local folder and exposes no file or command to
       baseUrl: "https://provider.example.com/v1",
       defaultModel: "general-model",
     });
-    const agent = fixture.application.createAgentProfile({
-      projectId: workspace.id,
+    const agent = fixture.application.createAgent({
+      workspaceId: workspace.id,
       name: "Researcher",
       instructions: "Prepare a concise evidence brief.",
       providerProfileId: providerProfile.id,
@@ -96,14 +96,14 @@ test("runs an API Agent without a local folder and exposes no file or command to
         runCommands: "allow",
       },
     });
-    const thread = fixture.application.createThread({
-      projectId: workspace.id,
-      agentProfileId: agent.id,
+    const thread = fixture.application.createConversation({
+      workspaceId: workspace.id,
+      agentId: agent.id,
       title: "Evidence brief",
     });
 
     const run = await fixture.application.startRun({
-      threadId: thread.id,
+      conversationId: thread.id,
       prompt: "Summarize the approved evidence.",
     });
     const completed = await fixture.application.waitForRun(run.id);
@@ -122,7 +122,6 @@ test("runs an API Agent without a local folder and exposes no file or command to
       JSON.stringify(provider.request?.messages).includes("scopeguard://workspace"),
       false,
     );
-    assert.equal(fixture.store.listArtifacts(workspace.id).length, 0);
     assert.deepEqual(
       fixture.store.listRunUsageRecords(run.id).map((record) => ({
         status: record.status,
@@ -136,122 +135,13 @@ test("runs an API Agent without a local folder and exposes no file or command to
   }
 });
 
-test("runs the desktop core without creating Task, Artifact, or Inbox mirrors", async () => {
-  const fixture = createApplicationFixture(new ImmediateProvider());
-  try {
-    const workspace = await createWorkspace(fixture.application);
-    const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
-      prompt: "Complete this conversation.",
-    });
-    const completed = await fixture.application.waitForRun(run.id);
-
-    assert.equal(completed.status, "completed");
-    assert.equal(fixture.store.listAgentDefinitions().length, 0);
-    assert.equal(fixture.store.listAgentInstances().length, 0);
-    assert.equal(fixture.store.listTasks().length, 0);
-    assert.equal(fixture.store.listTaskAssignments().length, 0);
-    assert.equal(fixture.store.listArtifacts().length, 0);
-    assert.equal(fixture.store.listInboxItems().length, 0);
-  } finally {
-    fixture.store.close();
-  }
-});
-
-test("rejects legacy Local CLI Agent profiles instead of changing their harness", () => {
-  const fixture = createApplicationFixture(new ImmediateProvider());
-  try {
-    const workspace = fixture.application.createWorkspace({ name: "Native only" });
-
-    assert.throws(
-      () => fixture.application.createAgentProfile({
-        projectId: workspace.id,
-        name: "Legacy CLI",
-        runtimeKind: "local-cli",
-        instructions: "Run through an external CLI.",
-        cliConfig: {
-          command: "legacy-agent",
-          args: [],
-          cwd: null,
-          env: {},
-        },
-      }),
-      /Only native Agent Profiles are supported/,
-    );
-    assert.equal(fixture.store.getWorkspaceSnapshot().agentProfiles.length, 0);
-  } finally {
-    fixture.store.close();
-  }
-});
-
-test("interrupts legacy remote-bound Runs when the desktop core starts", async () => {
-  const fixture = createApplicationFixture(new ImmediateProvider());
-  try {
-    const workspace = await createWorkspace(fixture.application);
-    const trigger = fixture.store.appendMessage({
-      threadId: workspace.thread.id,
-      runId: null,
-      role: "user",
-      status: "committed",
-      content: [{ type: "text", text: "Legacy remote work" }],
-      metadata: {},
-    });
-    const run = fixture.store.createRun(
-      workspace.thread.id,
-      trigger.id,
-      null,
-      {
-        agentProfileId: workspace.agent.id,
-        runtimeKind: "native",
-        providerProfileId: workspace.provider.id,
-        providerProtocol: workspace.provider.protocol,
-        providerBaseUrl: workspace.provider.baseUrl,
-        model: workspace.provider.defaultModel,
-        instructions: workspace.agent.instructions,
-        executionProfile: workspace.thread.executionProfile,
-        toolPolicy: workspace.agent.toolPolicy,
-        cliConfig: null,
-      },
-    );
-    fixture.store.updateRunStatus(run.id, "preparing");
-    fixture.store.updateRunStatus(run.id, "running");
-    const runtime = fixture.store.saveRuntimeNode({
-      name: "Retired runtime",
-      kind: "remote",
-      baseUrl: "https://runtime.example.com",
-      credentialRef: "runtime-secret:retired",
-      status: "online",
-    });
-    fixture.store.createRemoteRunBinding({
-      runId: run.id,
-      runtimeNodeId: runtime.id,
-      remoteRunId: "retired-job",
-    });
-    fixture.store.saveRunPartial(run.id, "Unconfirmed remote output");
-
-    const recovered = new ScopeGuardApplication({
-      store: fixture.store,
-      secrets: fixture.vault,
-      providerFactory: () => fixture.provider,
-      tools: new FakeRegistry(),
-    });
-
-    assert.equal(recovered.initialize().interruptedRuns, 1);
-    assert.equal(fixture.store.getRun(run.id)?.status, "interrupted");
-    assert.equal(fixture.store.getRunPartial(run.id), null);
-    assert.equal(fixture.store.listActiveRemoteRunBindings().length, 0);
-  } finally {
-    fixture.store.close();
-  }
-});
-
 test("resumes a desktop core Run from a Conversation input request", async () => {
   const provider = new InputRequestProvider();
   const fixture = createApplicationFixture(provider);
   try {
     const workspace = await createWorkspace(fixture.application);
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Prepare the report.",
     });
     await waitForCondition(
@@ -259,22 +149,18 @@ test("resumes a desktop core Run from a Conversation input request", async () =>
       "Desktop core Run did not wait for user input.",
     );
 
-    const inputRequest = fixture.store.listThreadMessages(workspace.thread.id)
+    const inputRequest = fixture.store.listConversationMessages(workspace.thread.id)
       .find((message) => message.metadata.inputRequest === true);
     assert.match(messageText(inputRequest ? [inputRequest] : []), /reporting period/);
-    assert.equal(fixture.store.listInboxItems().length, 0);
 
     const resumed = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Use 2026 Q2.",
     });
     assert.equal(resumed.id, run.id);
     assert.equal((await fixture.application.waitForRun(run.id)).status, "completed");
     assert.equal(provider.requests[1]?.messages.at(-1)?.role, "tool");
     assert.equal(provider.requests[1]?.messages.at(-1)?.content, "Use 2026 Q2.");
-    assert.equal(fixture.store.listTasks().length, 0);
-    assert.equal(fixture.store.listArtifacts().length, 0);
-    assert.equal(fixture.store.listInboxItems().length, 0);
   } finally {
     fixture.store.close();
   }
@@ -292,20 +178,20 @@ test("persists local Native request manifests and provider usage without credent
       defaultModel: "ledger-model",
       apiKey: "sk-ledger-secret",
     });
-    const agent = fixture.application.createAgentProfile({
-      projectId: workspace.id,
+    const agent = fixture.application.createAgent({
+      workspaceId: workspace.id,
       name: "Ledger Agent",
       instructions: "Answer from the durable request.",
       providerProfileId: providerProfile.id,
     });
-    const thread = fixture.application.createThread({
-      projectId: workspace.id,
-      agentProfileId: agent.id,
+    const thread = fixture.application.createConversation({
+      workspaceId: workspace.id,
+      agentId: agent.id,
       title: "Ledger Run",
     });
 
     const run = await fixture.application.startRun({
-      threadId: thread.id,
+      conversationId: thread.id,
       prompt: "Record this request.",
     });
     const completed = await fixture.application.waitForRun(run.id);
@@ -326,13 +212,13 @@ test("persists local Native request manifests and provider usage without credent
     assert.equal(durablePayload.includes("sk-ledger-secret"), false);
     assert.equal(durablePayload.includes("relay.example.com"), false);
 
-    const secondThread = fixture.application.createThread({
-      projectId: workspace.id,
-      agentProfileId: agent.id,
+    const secondThread = fixture.application.createConversation({
+      workspaceId: workspace.id,
+      agentId: agent.id,
       title: "Equivalent Ledger Run",
     });
     const equivalentRun = await fixture.application.startRun({
-      threadId: secondThread.id,
+      conversationId: secondThread.id,
       prompt: "Record this request.",
     });
     await fixture.application.waitForRun(equivalentRun.id);
@@ -381,7 +267,7 @@ test("fails a Native Run before provider invocation when manifest storage fails"
     };
 
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "This must not reach the provider.",
     });
     const failed = await fixture.application.waitForRun(run.id);
@@ -399,19 +285,19 @@ test("snapshots model and execution settings from the current conversation", asy
   const fixture = createApplicationFixture(provider);
   try {
     const { project, agent, thread } = await createWorkspace(fixture.application);
-    const sibling = fixture.application.createThread({
-      projectId: project.id,
-      agentProfileId: agent.id,
+    const sibling = fixture.application.createConversation({
+      workspaceId: project.id,
+      agentId: agent.id,
       title: "Sibling Thread",
     });
 
-    fixture.application.updateThreadSettings({
-      threadId: thread.id,
+    fixture.application.updateConversationSettings({
+      conversationId: thread.id,
       modelOverride: "specialist-model",
       executionProfile: "full-access",
     });
     const run = await fixture.application.startRun({
-      threadId: thread.id,
+      conversationId: thread.id,
       prompt: "Use this conversation's settings.",
     });
     const completed = await fixture.application.waitForRun(run.id);
@@ -420,38 +306,38 @@ test("snapshots model and execution settings from the current conversation", asy
     assert.equal(completed.configSnapshot.executionProfile, "full-access");
     assert.equal(provider.request?.credentials.model, "specialist-model");
     assert.equal(
-      fixture.store.getThread(sibling.id)?.executionProfile,
+      fixture.store.getConversation(sibling.id)?.executionProfile,
       "request-approval",
     );
-    assert.equal(fixture.store.getThread(sibling.id)?.modelOverride, null);
+    assert.equal(fixture.store.getConversation(sibling.id)?.modelOverride, null);
   } finally {
     fixture.store.close();
   }
 });
 
-test("runs two Threads concurrently and cancels only the selected Run", async () => {
+test("runs two Conversations concurrently and cancels only the selected Run", async () => {
   const provider = new ControlledProvider();
   const fixture = createApplicationFixture(provider);
   try {
     const workspace = await createWorkspace(fixture.application);
-    const secondAgent = fixture.application.createAgentProfile({
-      projectId: workspace.project.id,
+    const secondAgent = fixture.application.createAgent({
+      workspaceId: workspace.project.id,
       name: "Second Agent",
       instructions: "Work independently.",
       providerProfileId: workspace.provider.id,
     });
-    const secondThread = fixture.application.createThread({
-      projectId: workspace.project.id,
-      agentProfileId: secondAgent.id,
+    const secondThread = fixture.application.createConversation({
+      workspaceId: workspace.project.id,
+      agentId: secondAgent.id,
       title: "Second Thread",
     });
 
     const firstRun = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "First task",
     });
     const secondRun = await fixture.application.startRun({
-      threadId: secondThread.id,
+      conversationId: secondThread.id,
       prompt: "Second task",
     });
     await provider.waitForStarts(2);
@@ -466,17 +352,14 @@ test("runs two Threads concurrently and cancels only the selected Run", async ()
 
     assert.equal(fixture.store.getRun(firstRun.id)?.status, "cancelled");
     assert.equal(fixture.store.getRun(secondRun.id)?.status, "completed");
-    assert.equal(fixture.store.listTasks().length, 0);
-    assert.equal(fixture.store.listArtifacts().length, 0);
-    assert.equal(fixture.store.listInboxItems().length, 0);
     assert.equal(
-      messageText(fixture.store.listThreadMessages(workspace.thread.id)).includes(
+      messageText(fixture.store.listConversationMessages(workspace.thread.id)).includes(
         "Second task",
       ),
       false,
     );
     assert.equal(
-      messageText(fixture.store.listThreadMessages(secondThread.id)).includes(
+      messageText(fixture.store.listConversationMessages(secondThread.id)).includes(
         "Second task",
       ),
       true,
@@ -498,7 +381,7 @@ test("persists a command approval and never executes after denial", async () => 
   try {
     const workspace = await createWorkspace(fixture.application);
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Run a command",
     });
     const approval = await waitForEvent(
@@ -508,7 +391,6 @@ test("persists a command approval and never executes after denial", async () => 
     );
 
     assert.equal(fixture.store.getRun(run.id)?.status, "waiting-approval");
-    assert.equal(fixture.store.listInboxItems().length, 0);
     await fixture.application.resolveApproval(approval.approval.id, "denied");
     const completed = await fixture.application.waitForRun(run.id);
 
@@ -519,7 +401,7 @@ test("persists a command approval and never executes after denial", async () => 
       "denied",
     );
     assert.equal(
-      messageText(fixture.store.listThreadMessages(workspace.thread.id)).includes(
+      messageText(fixture.store.listConversationMessages(workspace.thread.id)).includes(
         "The user denied this tool call.",
       ),
       true,
@@ -544,7 +426,7 @@ test("auto approve skips the prompt but preserves managed execution progress", a
       "auto-approve",
     );
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Run without another prompt",
     });
     assert.equal((await fixture.application.waitForRun(run.id)).status, "completed");
@@ -576,7 +458,7 @@ test("expires a pending approval when its Run is cancelled", async () => {
   try {
     const workspace = await createWorkspace(fixture.application);
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Run a command",
     });
     const approvalEvent = await waitForEvent(
@@ -600,7 +482,7 @@ test("expires a pending approval when its Run is cancelled", async () => {
     assert.equal(command.executeCount, 0);
 
     const continued = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Continue after cancellation",
     });
     assert.equal(
@@ -637,24 +519,24 @@ test("redacts an arbitrary provider API key before persisting a Run error", asyn
       defaultModel: "test-model",
       apiKey: secret,
     });
-    const project = fixture.application.addProject({
+    const project = fixture.application.createWorkspace({
       name: "Project",
-      rootPath: "/tmp/scopeguard-redaction-test",
+      localRootPath: "/tmp/scopeguard-redaction-test",
     });
-    const agent = fixture.application.createAgentProfile({
-      projectId: project.id,
+    const agent = fixture.application.createAgent({
+      workspaceId: project.id,
       name: "Agent",
       instructions: "",
       providerProfileId: savedProvider.id,
     });
-    const thread = fixture.application.createThread({
-      projectId: project.id,
-      agentProfileId: agent.id,
+    const thread = fixture.application.createConversation({
+      workspaceId: project.id,
+      agentId: agent.id,
       title: "Thread",
     });
 
     const run = await fixture.application.startRun({
-      threadId: thread.id,
+      conversationId: thread.id,
       prompt: "Trigger provider error",
     });
     const failed = await fixture.application.waitForRun(run.id);
@@ -751,11 +633,11 @@ test("persists partial provider output when a Run fails", async () => {
   try {
     const workspace = await createWorkspace(fixture.application);
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Start a partial response",
     });
     const failed = await fixture.application.waitForRun(run.id);
-    const partial = fixture.store.listThreadMessages(workspace.thread.id)
+    const partial = fixture.store.listConversationMessages(workspace.thread.id)
       .find((message) =>
         message.runId === run.id &&
         message.role === "assistant" &&
@@ -780,7 +662,7 @@ test("interrupts active Runs and persists partial output during shutdown", async
   try {
     const workspace = await createWorkspace(fixture.application);
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Long task",
     });
     await provider.waitForStarts(1);
@@ -798,7 +680,7 @@ test("interrupts active Runs and persists partial output during shutdown", async
       interrupted?.error,
       "The agent host stopped before this run completed.",
     );
-    const partial = fixture.store.listThreadMessages(workspace.thread.id)
+    const partial = fixture.store.listConversationMessages(workspace.thread.id)
       .find((message) =>
         message.runId === run.id &&
         message.role === "assistant" &&
@@ -816,7 +698,7 @@ test("recovers a started tool call as effect unknown after an unclean restart", 
   try {
     const workspace = await createWorkspace(fixture.application);
     const run = await fixture.application.startRun({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       prompt: "Start work before the process crashes",
     });
     await provider.waitForStarts(1);
@@ -854,7 +736,7 @@ test("recovers a started tool call as effect unknown after an unclean restart", 
     });
     fixture.store.updateToolCallStatus(alreadyCancelledCall.id, "cancelled");
     fixture.store.appendMessage({
-      threadId: workspace.thread.id,
+      conversationId: workspace.thread.id,
       runId: run.id,
       role: "assistant",
       status: "committed",
@@ -881,7 +763,7 @@ test("recovers a started tool call as effect unknown after an unclean restart", 
       fixture.store.getToolCall(toolCall.id)?.status,
       "effect_unknown",
     );
-    const recoveredResult = fixture.store.listThreadMessages(workspace.thread.id)
+    const recoveredResult = fixture.store.listConversationMessages(workspace.thread.id)
       .find((message) =>
         message.runId === run.id &&
         message.role === "tool" &&
@@ -894,7 +776,7 @@ test("recovers a started tool call as effect unknown after an unclean restart", 
     assert.match(messageText(recoveredResult ? [recoveredResult] : []), /effect is unknown/i);
     for (const call of [proposedCall, awaitingApprovalCall]) {
       assert.equal(fixture.store.getToolCall(call.id)?.status, "cancelled");
-      const result = fixture.store.listThreadMessages(workspace.thread.id)
+      const result = fixture.store.listConversationMessages(workspace.thread.id)
         .find((message) => message.content.some((block) =>
           block.type === "tool-result" && block.toolCallId === call.id
         ));
@@ -902,7 +784,7 @@ test("recovers a started tool call as effect unknown after an unclean restart", 
       assert.match(messageText(result ? [result] : []), /cancelled before execution/i);
     }
     assert.equal(
-      fixture.store.listThreadMessages(workspace.thread.id).some(
+      fixture.store.listConversationMessages(workspace.thread.id).some(
         (message) => message.content.some((block) =>
           block.type === "tool-result" && block.toolCallId === alreadyCancelledCall.id
         ),
@@ -1205,26 +1087,26 @@ async function createWorkspace(
     baseUrl: "https://provider.example.com/v1",
     defaultModel: "test-model",
   });
-  const project = application.addProject({
+  const project = application.createWorkspace({
     name: "Project",
-    rootPath: "/tmp/scopeguard-application-test",
+    localRootPath: "/tmp/scopeguard-application-test",
   });
-  const agent = application.createAgentProfile({
-    projectId: project.id,
+  const agent = application.createAgent({
+    workspaceId: project.id,
     name: "General",
     instructions: "Be concise.",
     providerProfileId: provider.id,
     executionProfile,
   });
-  const thread = application.createThread({
-    projectId: project.id,
-    agentProfileId: agent.id,
+  const thread = application.createConversation({
+    workspaceId: project.id,
+    agentId: agent.id,
     title: "First Thread",
   });
   return { provider, project, agent, thread };
 }
 
-function messageText(messages: ReturnType<ScopeGuardStore["listThreadMessages"]>): string {
+function messageText(messages: ReturnType<ScopeGuardStore["listConversationMessages"]>): string {
   return messages
     .flatMap((message) => message.content)
     .map((block) => block.type === "text"

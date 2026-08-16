@@ -335,13 +335,13 @@ test(
 );
 
 function context(
-  projectRoot: string,
+  workspaceRoot: string,
   signal: AbortSignal = AbortSignal.timeout(10_000),
 ): ToolExecutionContext {
   return {
-    projectId: "project",
-    projectRoot,
-    threadId: "thread",
+    workspaceId: "project",
+    workspaceRoot,
+    conversationId: "thread",
     runId: "run",
     executionProfile: "full-access",
     toolPolicy: {

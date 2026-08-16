@@ -116,10 +116,10 @@ export function Sidebar(props: {
       </div>
 
       <nav className="project-tree" aria-label="工作区和对话">
-        {snapshot?.projects.map((project) => {
+        {snapshot?.workspaces.map((project) => {
           const selected = workspace.selectedProject?.id === project.id;
-          const conversations = snapshot.threads.filter(
-            (conversation) => conversation.projectId === project.id,
+          const conversations = snapshot.conversations.filter(
+            (conversation) => conversation.workspaceId === project.id,
           );
           return (
             <section className="project-node" key={project.id}>
@@ -147,8 +147,8 @@ export function Sidebar(props: {
                     </button>
                   </div>
                   {conversations.map((thread) => {
-                    const agent = snapshot.agentProfiles.find(
-                      (item) => item.id === thread.agentProfileId,
+                    const agent = snapshot.agents.find(
+                      (item) => item.id === thread.agentId,
                     );
                     const run = workspace.getRunForThread(thread.id);
                     const approvalCount = snapshot.pendingApprovals.filter(

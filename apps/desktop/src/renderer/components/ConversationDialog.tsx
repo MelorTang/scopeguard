@@ -18,7 +18,7 @@ export function ConversationDialog(props: {
     const snapshot = props.workspace.snapshot;
     const workspaceId = props.workspace.selectedProject?.id;
     return snapshot && workspaceId
-      ? snapshot.agentProfiles.filter((agent) => agent.projectId === workspaceId)
+      ? snapshot.agents.filter((agent) => agent.workspaceId === workspaceId)
       : [];
   }, [props.workspace.selectedProject?.id, props.workspace.snapshot]);
 

@@ -26,11 +26,11 @@ export function WorkspaceToolbar(props: {
   const layoutRef = useRef<HTMLDivElement>(null);
   const layoutButtonRef = useRef<HTMLButtonElement>(null);
   const workspaceId = workspace.selectedWorkspace?.id;
-  const conversationCount = workspace.snapshot?.threads.filter(
-    (conversation) => conversation.projectId === workspaceId,
+  const conversationCount = workspace.snapshot?.conversations.filter(
+    (conversation) => conversation.workspaceId === workspaceId,
   ).length ?? 0;
-  const agentCount = workspace.snapshot?.agentProfiles.filter(
-    (agent) => agent.projectId === workspaceId,
+  const agentCount = workspace.snapshot?.agents.filter(
+    (agent) => agent.workspaceId === workspaceId,
   ).length ?? 0;
 
   useEffect(() => {

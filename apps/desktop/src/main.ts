@@ -15,16 +15,15 @@ import {
 
 import {
   IPC_CHANNELS,
-  parseCreateAgentProfileInput,
-  parseCreateProjectInput,
-  parseCreateThreadInput,
+  parseCreateAgentInput,
+  parseCreateConversationInput,
   parseCreateWorkspaceInput,
   parseId,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseStartRunInput,
-  parseUpdateProjectContextRequest,
-  parseUpdateThreadSettingsInput,
+  parseUpdateWorkspaceContextRequest,
+  parseUpdateConversationSettingsInput,
 } from "@scopeguard/ipc-contracts";
 import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
@@ -221,7 +220,7 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       localRootPath,
     });
   });
-  ipcMain.handle(IPC_CHANNELS.chooseProjectDirectory, async (event) => {
+  ipcMain.handle(IPC_CHANNELS.chooseWorkspaceDirectory, async (event) => {
     assertTrustedSender(event);
     const senderId = event.sender.id;
     projectDirectoryAuthorizer.revoke(senderId);
@@ -235,24 +234,24 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
     if (result.canceled || !result.filePaths[0]) {
       return { canceled: true };
     }
-    const rootPath = await canonicalizeProjectDirectory(result.filePaths[0]);
-    projectDirectoryAuthorizer.authorize(senderId, rootPath);
+    const localRootPath = await canonicalizeProjectDirectory(result.filePaths[0]);
+    projectDirectoryAuthorizer.authorize(senderId, localRootPath);
     return {
       canceled: false,
-      rootPath,
+      localRootPath,
     };
   });
   ipcMain.handle(IPC_CHANNELS.chooseWorkspaceFiles, async (event, value: unknown) => {
     assertTrustedSender(event);
-    const projectId = parseId(value, "projectId");
+    const workspaceId = parseId(value, "workspaceId");
     const snapshot = await agentHost.request<WorkspaceSnapshot>(
       "getWorkspaceSnapshot",
     );
-    const project = snapshot.projects.find((item) => item.id === projectId);
-    if (!project) {
+    const workspace = snapshot.workspaces.find((item) => item.id === workspaceId);
+    if (!workspace?.localRootPath) {
       throw new Error("Workspace not found.");
     }
-    const rootPath = await canonicalizeProjectDirectory(project.rootPath);
+    const rootPath = await canonicalizeProjectDirectory(workspace.localRootPath);
     const options: OpenDialogOptions = {
       title: "添加 Workspace 文件",
       buttonLabel: "添加",
@@ -270,18 +269,6 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       result.filePaths,
     );
     return { canceled: false, files };
-  });
-  ipcMain.handle(IPC_CHANNELS.addProject, async (event, value: unknown) => {
-    assertTrustedSender(event);
-    const input = parseCreateProjectInput(value);
-    const rootPath = await projectDirectoryAuthorizer.consume(
-      event.sender.id,
-      input.rootPath,
-    );
-    return agentHost.request("addProject", {
-      ...input,
-      rootPath,
-    });
   });
   ipcMain.handle(IPC_CHANNELS.saveProviderProfile, (event, value: unknown) => {
     assertTrustedSender(event);
@@ -301,27 +288,27 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       parseSaveProviderProfileRequest(value),
     );
   });
-  ipcMain.handle(IPC_CHANNELS.createAgentProfile, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.createAgent, (event, value: unknown) => {
     assertTrustedSender(event);
     return agentHost.request(
-      "createAgentProfile",
-      parseCreateAgentProfileInput(value),
+      "createAgent",
+      parseCreateAgentInput(value),
     );
   });
-  ipcMain.handle(IPC_CHANNELS.createThread, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.createConversation, (event, value: unknown) => {
     assertTrustedSender(event);
-    return agentHost.request("createThread", parseCreateThreadInput(value));
+    return agentHost.request("createConversation", parseCreateConversationInput(value));
   });
-  ipcMain.handle(IPC_CHANNELS.updateThreadSettings, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.updateConversationSettings, (event, value: unknown) => {
     assertTrustedSender(event);
     return agentHost.request(
-      "updateThreadSettings",
-      parseUpdateThreadSettingsInput(value),
+      "updateConversationSettings",
+      parseUpdateConversationSettingsInput(value),
     );
   });
-  ipcMain.handle(IPC_CHANNELS.listThreadMessages, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.listConversationMessages, (event, value: unknown) => {
     assertTrustedSender(event);
-    return agentHost.request("listThreadMessages", parseId(value, "threadId"));
+    return agentHost.request("listConversationMessages", parseId(value, "conversationId"));
   });
   ipcMain.handle(IPC_CHANNELS.startRun, (event, value: unknown) => {
     assertTrustedSender(event);
@@ -338,15 +325,15 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       parseResolveApprovalRequest(value),
     );
   });
-  ipcMain.handle(IPC_CHANNELS.getProjectContext, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.getWorkspaceContext, (event, value: unknown) => {
     assertTrustedSender(event);
-    return agentHost.request("getProjectContext", parseId(value, "projectId"));
+    return agentHost.request("getWorkspaceContext", parseId(value, "workspaceId"));
   });
-  ipcMain.handle(IPC_CHANNELS.updateProjectContext, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.updateWorkspaceContext, (event, value: unknown) => {
     assertTrustedSender(event);
     return agentHost.request(
-      "updateProjectContext",
-      parseUpdateProjectContextRequest(value),
+      "updateWorkspaceContext",
+      parseUpdateWorkspaceContextRequest(value),
     );
   });
 }

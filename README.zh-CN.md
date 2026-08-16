@@ -22,7 +22,7 @@ ScopeGuard 让用户在一个 Workspace 中同时打开多个持久对话，由�
 - 每个 Run 独立执行、停止和重试，并支持审批及用户补充信息后续跑。
 - 提供“请求批准”“自动审批”“完全访问”三档会话权限。
 - 本地文件工具受真实路径边界约束，命令通过受管理的工具执行。
-- 通过 Project Context 显式共享用户确认的信息；各对话记录默认隔离。
+- 通过 Workspace Context 显式共享用户确认的信息；各对话记录默认隔离。
 - 使用 SQLite 恢复对话、Run、用量、布局和草稿。
 
 ScopeGuard 不再管理外部 Agent CLI 或常驻远端 Runtime。高级 CLI 可以通过
@@ -70,12 +70,12 @@ packages/application      对话和 Run 用例
 packages/agent-runtime    原生模型与工具循环
 packages/provider-adapters
 packages/tool-runtime     受目录边界约束的文件和命令工具
-packages/storage-sqlite   SQLite schema 与向前迁移
+packages/storage-sqlite   全新 V1 SQLite schema 与恢复仓储
 packages/ipc-contracts    运行时校验的桌面 IPC 契约
 ```
 
-SQLite schema 仍保留旧控制平面表，用于让已有本地数据库非破坏性迁移。这些表
-不是当前产品能力，也不再由核心应用接口暴露。
+V1 使用 schema 标识 `scopeguard-v1-core`。旧开发数据库会被明确拒绝，不会
+迁移，也不会被当成空 profile；历史实现由 Git tag 保留。
 
 详细边界见 [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md)、
 [SECURITY.md](./docs/SECURITY.md) 和

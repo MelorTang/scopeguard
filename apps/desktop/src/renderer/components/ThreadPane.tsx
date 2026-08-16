@@ -25,12 +25,12 @@ import {
 } from "react";
 
 import type {
-  AgentThread,
+  Conversation,
   ApprovalDecision,
   ConversationExecutionProfile,
   MessageContentBlock,
   PendingApprovalItem,
-  ThreadMessage,
+  ConversationMessage,
 } from "@scopeguard/domain";
 import type { WorkspaceFileSelection } from "@scopeguard/ipc-contracts";
 
@@ -39,7 +39,7 @@ import { formatRunStatus, formatToolName } from "../uiText.js";
 import { MarkdownText } from "./MarkdownText.js";
 
 export function ThreadPane(props: {
-  thread: AgentThread;
+  thread: Conversation;
   workspace: WorkspaceController;
   paneIndex: number;
   active: boolean;
@@ -47,26 +47,11 @@ export function ThreadPane(props: {
 }): JSX.Element {
   const { thread, workspace } = props;
   const snapshot = workspace.snapshot;
-  const agent = snapshot?.agentProfiles.find(
-    (profile) => profile.id === thread.agentProfileId,
+  const agent = snapshot?.agents.find(
+    (profile) => profile.id === thread.agentId,
   );
   const provider = snapshot?.providerProfiles.find(
     (profile) => profile.id === agent?.providerProfileId,
-  );
-  const assignment = snapshot?.assignments.find(
-    (item) => item.threadId === thread.id,
-  );
-  const task = snapshot?.tasks.find(
-    (item) => item.id === (assignment?.taskId ?? thread.id),
-  );
-  const agentInstance = snapshot?.agentInstances.find(
-    (item) => item.id === assignment?.agentInstanceId,
-  );
-  const agentDefinition = snapshot?.agentDefinitions.find(
-    (item) => item.id === agentInstance?.agentDefinitionId,
-  );
-  const runtimeNode = snapshot?.runtimeNodes.find(
-    (item) => item.id === agentInstance?.runtimeNodeId,
   );
   const run = workspace.getRunForThread(thread.id);
   const waitingForInput = run?.status === "waiting-input";
@@ -101,7 +86,7 @@ export function ThreadPane(props: {
   const approvals = snapshot?.pendingApprovals.filter(
     (item) => item.approval.runId === run?.id,
   ) ?? [];
-  const approvalFocus = workspace.approvalFocus?.threadId === thread.id
+  const approvalFocus = workspace.approvalFocus?.conversationId === thread.id
     ? workspace.approvalFocus
     : null;
   const focusedApprovalAvailable = Boolean(
@@ -218,7 +203,7 @@ export function ThreadPane(props: {
     setSettingsBusy(true);
     setError(null);
     try {
-      await workspace.updateThreadSettings({ threadId: thread.id, ...input });
+      await workspace.updateConversationSettings({ conversationId: thread.id, ...input });
       setOpenMenu(null);
     } catch (settingsError) {
       setError(
@@ -257,7 +242,7 @@ export function ThreadPane(props: {
         messages.length === 0 && !stream ? "thread-pane--empty" : ""
       }`}
       role="region"
-      aria-label={`${task?.title ?? thread.title}，第 ${props.paneIndex + 1} 个窗格`}
+      aria-label={`${thread.title}，第 ${props.paneIndex + 1} 个窗格`}
       onPointerDownCapture={props.onActivate}
       onFocusCapture={props.onActivate}
     >
@@ -266,11 +251,11 @@ export function ThreadPane(props: {
           <ListTodo size={16} />
         </div>
         <div className="thread-pane-heading">
-          <strong>{task?.title ?? thread.title}</strong>
+          <strong>{thread.title}</strong>
           <span>
-            {agentDefinition?.name ?? agent?.name ?? "Agent"}
+            {agent?.name ?? "Agent"}
             {workspace.professionalMode && provider
-              ? ` · ${runtimeNode?.name ?? "本机"} · ${agent?.modelOverride ?? provider.defaultModel}`
+              ? ` · 本机 · ${agent?.modelOverride ?? provider.defaultModel}`
               : ""}
           </span>
         </div>
@@ -284,7 +269,7 @@ export function ThreadPane(props: {
         {messages.length === 0 && !stream ? (
           <div className="thread-empty">
             <Bot size={22} />
-            <strong>{agentDefinition?.name ?? agent?.name ?? "Agent"}</strong>
+            <strong>{agent?.name ?? "Agent"}</strong>
             <span>输入任务要求，Agent 的工作只进入当前上下文。</span>
           </div>
         ) : (
@@ -321,7 +306,7 @@ export function ThreadPane(props: {
       <footer className="composer-area">
         {messages.length === 0 && !stream && !run && (
           <div className="composer-greeting">
-            <strong>{agentDefinition?.name ?? agent?.name ?? "Agent"}</strong>
+            <strong>{agent?.name ?? "Agent"}</strong>
             <span>输入任务要求，Agent 的工作只进入当前上下文。</span>
           </div>
         )}
@@ -404,7 +389,7 @@ export function ThreadPane(props: {
                 ? "补充 Agent 继续任务所需的信息"
                 : run
                 ? "Agent 正在处理…"
-                : `向 ${agentDefinition?.name ?? agent?.name ?? "Agent"} 补充任务要求`
+                : `向 ${agent?.name ?? "Agent"} 补充任务要求`
             }
             disabled={Boolean(run && !waitingForInput)}
             onChange={(event) => setDraft(event.target.value)}
@@ -414,7 +399,7 @@ export function ThreadPane(props: {
                 void send();
               }
             }}
-            aria-label={`发送消息给 ${agentDefinition?.name ?? agent?.name ?? "Agent"}`}
+            aria-label={`发送消息给 ${agent?.name ?? "Agent"}`}
           />
           <div className="composer-toolbar">
             <div className="composer-toolbar__group">
@@ -434,7 +419,7 @@ export function ThreadPane(props: {
                 <button
                   type="button"
                   className={`composer-text-button composer-access-button composer-access-button--${thread.executionProfile}`}
-                  disabled={settingsDisabled || agent?.runtimeKind === "local-cli"}
+                  disabled={settingsDisabled}
                   onClick={() => setOpenMenu((current) =>
                     current === "access" ? null : "access"
                   )}
@@ -480,7 +465,7 @@ export function ThreadPane(props: {
                 <button
                   type="button"
                   className="composer-text-button composer-model-button"
-                  disabled={settingsDisabled || agent?.runtimeKind !== "native" || !provider}
+                  disabled={settingsDisabled || !provider}
                   onClick={() => {
                     setModelDraft(currentModel);
                     setOpenMenu((current) => current === "model" ? null : "model");
@@ -621,7 +606,7 @@ function appendWorkspaceFileReferences(
 }
 
 function Message(props: {
-  message: ThreadMessage;
+  message: ConversationMessage;
   showTechnicalDetails: boolean;
   toolResults: Map<string, Extract<MessageContentBlock, { type: "tool-result" }>>;
   toolCallIds: Set<string>;

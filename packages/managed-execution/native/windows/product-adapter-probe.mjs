@@ -23,8 +23,8 @@ let result;
 try {
   result = await adapter.execute({
     executionId,
-    projectId: "product-adapter-probe",
-    threadId: "product-adapter-probe",
+    workspaceId: "product-adapter-probe",
+    conversationId: "product-adapter-probe",
     runId: "product-adapter-probe",
     workspaceRoot: options.workspace,
     command: `echo product-adapter-ok> "${outputPath}" && echo streamed-output`,

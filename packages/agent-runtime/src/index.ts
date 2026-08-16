@@ -63,9 +63,9 @@ export interface ProviderAdapter {
 }
 
 export type ToolExecutionContext = {
-  projectId: Id;
-  projectRoot: string;
-  threadId: Id;
+  workspaceId: Id;
+  workspaceRoot: string;
+  conversationId: Id;
   runId: Id;
   executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;

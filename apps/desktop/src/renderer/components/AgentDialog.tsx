@@ -123,16 +123,14 @@ export function AgentDialog(props: {
     setCreating(true);
     setError(null);
     try {
-      await props.workspace.createAgentThread(
+      await props.workspace.createAgentConversation(
         {
           name,
-          runtimeKind: "native",
           instructions,
           providerProfileId: providerId,
           modelOverride: modelOverride.trim() || null,
           executionProfile,
           toolPolicy: policy,
-          cliConfig: null,
         },
         title,
       );
