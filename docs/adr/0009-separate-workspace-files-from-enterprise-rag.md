@@ -1,5 +1,7 @@
 # Separate local Workspace files from enterprise RAG
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will treat local Workspace access and enterprise knowledge retrieval
 as separate capabilities. The Desktop will inspect Workspace Files on demand
 through document-aware listing, search, structural reading, rendering, and

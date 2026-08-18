@@ -1,145 +1,109 @@
-# ScopeGuard Core Verification
+# ScopeGuard V1 Verification
 
-This gate separates deterministic code checks, Renderer-only visual checks, and
-real Electron behavior. Web preview never substitutes for Desktop, SecretVault,
-SQLite, Provider, file-tool, or managed-execution evidence.
+Status: Current acceptance entry for the personal multi-Agent reset. Historical
+Native Harness and Managed Execution checks remain regression evidence for old
+code, not release gates for the new runtime.
 
-## 1. Automated Gate
+## Phase 0: Product Reset
 
-Run from the repository root:
+Exit gate:
+
+- `main` is safely pushed without force and the old route has a remote branch
+  and annotated tag checkpoint.
+- `CONTEXT.md` is a glossary for the personal-first domain.
+- ADR 0024 records the Pi RPC ownership boundary and every conflicting ADR links
+  to its superseding decision.
+- README and architecture entry points describe only the new target and clearly
+  identify the implementation gap.
+- Historical research is retained as dated input, not current authority.
+- One `wayfinder:map` tracks Phase 0 through Phase 5 and all active children.
+- `git diff --check` and local Markdown-link validation pass.
+- No Runtime or UI product code changes are included.
+
+## Phase 1: Pi RPC Qualification
+
+Use a pinned Pi version and a disposable local Workspace. The prototype must
+prove with recorded fixtures:
+
+- supervised process startup, readiness, shutdown, and crash reporting;
+- streaming text and structured Tool call/result events;
+- targeted interruption without stopping another concurrent session;
+- stable session creation, locator persistence, restart, and resume;
+- compaction followed by successful continued execution;
+- Provider and Model configuration without plaintext credential persistence;
+- at least four independent concurrent sessions;
+- explicit classification of every unsupported or lossy mapping.
+
+Exit gate: the evidence supports a go/no-go ADR. A missing session, Tool,
+Provider, interruption, or compaction contract blocks replacement; ScopeGuard
+must not emulate a capability and label it native Pi behavior.
+
+## Phase 2: Runtime And Storage Reset
+
+Exit gate:
+
+- the retired Native Harness path is removed from the active composition root;
+- a fresh schema stores Workspace, Agent, Conversation mapping, Artifact, and
+  Dispatch metadata without migrating old development databases;
+- Pi sessions resume after a real Desktop restart;
+- malformed, missing, or incompatible session state fails explicitly;
+- repository tests, typecheck, and build pass.
+
+## Phase 3: Parallel Workbench And Dispatch
+
+Exit gate:
+
+- one to four Conversations remain visible with independent composers and Run
+  state at supported desktop widths;
+- four real Pi sessions can run concurrently and one can be stopped in isolation;
+- manual Handoff prompts copy cleanly;
+- Agent Dispatch targets an existing Conversation, records source attribution,
+  never copies a full transcript, and is visible at both ends;
+- restart restores Workspace, pane layout, Conversations, and resumable sessions;
+- Playwright screenshots cover desktop and constrained-width layouts without
+  overlap or unreadable controls.
+
+## Phase 4: Artifact And Office Tool Pack
+
+Exit gate:
+
+- Artifact versions and Workspace-file changes are distinct and recoverable;
+- DOCX, XLSX, PPTX, and PDF fixtures cover inspect, generate or revise, preview,
+  and export behavior selected for V1;
+- structure and rendered-output checks use representative public or synthetic
+  fixtures; private enterprise samples are not a release prerequisite;
+- conflicting Workspace writes stop instead of silently overwriting;
+- Artifact Review and return to the multi-Conversation workbench preserve state.
+
+## Phase 5: Usable Desktop Milestone
+
+Exit gate:
+
+- clean installation and first-run setup pass on Windows 10/11 x64 and supported
+  macOS development hardware;
+- a User can configure a Provider, Model, Agent, Skill, and local Workspace
+  without editing source files;
+- a real programming project and a general office workflow both complete through
+  multiple Conversations, Handoff or Dispatch, restart, and Artifact review;
+- secrets are absent from logs and product metadata;
+- tests, typecheck, build, packaging, restart recovery, and a disposable local
+  pilot all pass from documented commands;
+- known limitations are visible and no unsupported Pi behavior is presented as
+  available.
+
+## Current Commands
+
+Until Phase 2 replaces the runtime, these commands verify repository health but
+do not prove the new Pi RPC architecture:
 
 ```bash
-pnpm install
 pnpm test
 pnpm typecheck
 pnpm build
+pnpm pilot:local
 git diff --check
 ```
 
-Required coverage includes:
-
-- fresh V1 schema identity, canonical tables, persistence, and explicit rejection
-  of pre-V1 databases;
-- native Agent creation without external harness compatibility fields;
-- independent concurrent Runs and per-Run cancellation;
-- conversation transcript isolation and explicit Workspace Context use;
-- immutable request manifests, settings snapshots, and usage persistence;
-- approval denial, automatic approval, and cancellation while waiting;
-- user-input continuation in the same Run and conversation;
-- path confinement, command routing, partial-output recovery, and unknown effects;
-- Provider credential redaction and SecretVault rollback;
-- Agent-host shutdown interruption, IPC validation, sender trust, native picker
-  authorization, navigation restrictions, and host supervision.
-
-The Windows managed-execution matrix remains defined in
-`.github/workflows/managed-execution-windows.yml`.
-
-## 2. Deterministic Provider
-
-Start the local test Provider:
-
-```bash
-pnpm smoke:provider
-```
-
-Use:
-
-```text
-URL: http://127.0.0.1:47821/v1
-API Key: sg-fake-desktop-validation-key
-Model: smoke-model
-```
-
-For a repeatable local core Pilot using the real HTTP adapter, SQLite, the
-repository as a read-only Workspace, and a disposable writable Workspace, run:
-
-```bash
-pnpm pilot:local
-```
-
-The command covers parallel Conversation cancellation, transcript isolation,
-explicit Workspace Context, approval denial and one-time approval, same-Run
-input continuation, interrupted partial recovery, V1 table identity, and API-key
-absence from SQLite. Set `SCOPEGUARD_KEEP_PILOT=1` only when the disposable
-profile must be retained for diagnosis.
-
-## 3. Fresh Electron Gate
-
-Launch with isolated user data so a normal ScopeGuard profile is untouched:
-
-```bash
-pnpm build
-SCOPEGUARD_SMOKE_DATA="$(mktemp -d /tmp/scopeguard-desktop-smoke.XXXXXX)"
-pnpm --filter @scopeguard/desktop exec electron . \
-  --user-data-dir="$SCOPEGUARD_SMOKE_DATA"
-```
-
-Verify:
-
-1. Create one Workspace without a folder and configure the test Provider.
-2. Create two native Agents with different instructions.
-3. Create two conversations and display them in parallel panes.
-4. Start both before either finishes; cancel one and confirm the other completes.
-5. Restart the cancelled conversation and confirm it can complete independently.
-6. Confirm no Runtime, Task, Artifact, Handoff, Inbox, or external CLI setup is
-   required by the workflow.
-
-## 4. Conversation And Context Gate
-
-1. Confirm the conversation's Agent cannot be changed.
-2. Change its model override and execution profile, then confirm the next Run
-   snapshot records both values without changing the Agent.
-3. Put a private marker in conversation A and run conversation B; Provider input
-   for B must not contain A's transcript.
-4. Publish a short Workspace Context revision from A, then run B; B may receive the
-   explicit revision while A's remaining transcript stays private.
-5. Trigger a user-input request, answer in the same composer, and confirm the
-   same Run resumes instead of creating another Run.
-
-## 5. Local Tool Gate
-
-Use a disposable folder in a separate Workspace:
-
-1. Confirm `read_file` cannot escape the selected root.
-2. Deny a write once and confirm no file is created.
-3. Retry and approve; confirm the file appears only after approval.
-4. Cancel one command while another conversation runs; the unrelated Run must
-   remain active.
-5. On Windows, run a command under Request Approval, Auto Approve, and Full
-   Access. The first two must use the bounded path; Full Access must be labeled
-   as current-user execution.
-6. Make the bounded adapter unavailable and confirm execution fails closed.
-
-## 6. Restart And Recovery Gate
-
-1. Save an unsent draft and multi-pane layout, then quit and reopen.
-2. Confirm Workspace, Agents, conversations, messages, layout, and draft return.
-3. Quit during a native Run; on restart it must be `interrupted`, retain partial
-   output, and allow retry.
-4. Attempt to open a pre-V1 database; startup must reject it and must not create
-   V1 tables inside it.
-5. Recover an unfinished non-idempotent tool call and confirm its effect remains
-   unknown.
-
-## 7. Security Gate
-
-- Search desktop SQLite, logs, and build output for the test API key; it must not
-  appear.
-- Reopened Provider dialogs expose only credential presence, never the key or
-  SecretVault reference.
-- Attempt directory registration without the native picker; it must fail.
-- Attempt traversal and symlink escapes; they must fail.
-- Confirm BrowserWindow uses `sandbox: true`, `contextIsolation: true`,
-  `nodeIntegration: false`, blocks webviews and popups, and restricts navigation.
-
-## 8. Visual Gate
-
-- Check 1024x720, 1280x800, 1440x900, and 1600x900.
-- One to four panes must preserve reachable composers and independent Run states.
-- Sidebar selection must not duplicate the pane hierarchy.
-- Keyboard focus is visible; dialogs and approval actions are keyboard reachable.
-- Reduced-motion mode removes non-essential animation.
-- A fresh console has no Renderer errors or React hook-order warnings.
-
-Record current evidence only after all applicable gates pass. Historical remote
-Runtime and control-plane demonstrations are not evidence for this core.
+Every milestone report must identify the exact commit, platform, Pi version,
+fixtures, command results, remaining gaps, and whether evidence comes from the
+new runtime or the retired implementation.

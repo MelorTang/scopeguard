@@ -1,5 +1,7 @@
 # Windows Execution Permission and Terminal Process Boundary
 
+> Status: Historical Managed Execution research. It remains security input, but the retired sandbox is not a new V1 acceptance gate under [ADR 0024](../adr/0024-adopt-a-personal-first-pi-rpc-workbench.md).
+
 Research snapshot: 2026-08-13
 Decision update: 2026-08-14
 Tracks: [GitHub issue #5](https://github.com/MelorTang/scopeguard/issues/5)

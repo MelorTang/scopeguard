@@ -1,5 +1,7 @@
 # Security Model
 
+> Status: Pre-reset implementation snapshot. Phase 1 and Phase 2 must establish the Pi RPC security and permission contract before this becomes current V1 authority.
+
 ScopeGuard sends user-selected conversation and Workspace Context data to the
 configured model Provider. It can also read, write, and execute within a
 user-selected local Workspace according to the conversation's execution

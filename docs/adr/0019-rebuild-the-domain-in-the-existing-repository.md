@@ -1,5 +1,7 @@
 # Rebuild the domain in the existing repository
 
+Status: Superseded and restated by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 will be developed through a breaking refactor in the existing Git
 repository rather than a new directory or a prolonged parallel architecture.
 The Electron shell, useful UI and IPC boundaries, Provider tests, and reusable

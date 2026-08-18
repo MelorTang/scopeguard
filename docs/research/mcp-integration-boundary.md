@@ -1,5 +1,7 @@
 # MCP Integration Boundary: Dual Channels and Credential Protocol
 
+> Status: Historical enterprise-route research. MCP is optional integration input under [ADR 0024](../adr/0024-adopt-a-personal-first-pi-rpc-workbench.md), not a V1 control-plane requirement.
+
 Status: research recommendation for [GitHub issue #4](https://github.com/MelorTang/scopeguard/issues/4)
 Research snapshot: 2026-08-13 (Asia/Shanghai)
 Normative baseline: MCP `2026-07-28`, with explicitly bounded compatibility for `2025-11-25`

@@ -1,5 +1,7 @@
 # Require a Managed Execution Sandbox for Agent-triggered code
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 requires an OS-enforced Managed Execution Sandbox before the
 Native Harness may run any Agent-triggered executable, command, script,
 executable Skill, document worker, or local stdio MCP process in Request

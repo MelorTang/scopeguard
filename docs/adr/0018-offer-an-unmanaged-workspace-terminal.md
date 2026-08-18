@@ -1,5 +1,7 @@
 # Offer an unmanaged Workspace Terminal
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 will manage only its Native Harness and will not integrate Codex,
 Kimi Code, or other external Agent Harnesses. Advanced users may instead open a
 resizable bottom Workspace Terminal, rooted at the current Workspace, and run

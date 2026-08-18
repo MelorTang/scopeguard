@@ -1,5 +1,7 @@
 # Use a Local Core and modular enterprise server
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 will concentrate canonical local behavior in one supervised
 Desktop Local Core process and deploy identity, Organization configuration,
 Provider credentials, Model access, and Organization Knowledge access as one

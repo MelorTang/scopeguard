@@ -1,5 +1,7 @@
 # Share live Workspaces with conflict detection
 
+Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 Conversations in one Workspace will operate on the same live local directory
 rather than receiving isolated copies. Reads and writes to different files may
 run concurrently, but every editable read records a file version hash and a

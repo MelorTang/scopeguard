@@ -1,5 +1,7 @@
 # Separate the Admin Console from the Desktop
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will provide the Member workbench only through the Desktop and host a
 separate web Admin Console on the enterprise server. Administrators use the
 Console to manage Members, Agent Templates, Providers and Models, Organization

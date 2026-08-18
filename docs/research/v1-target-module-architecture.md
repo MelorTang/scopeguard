@@ -1,5 +1,7 @@
 # V1 Target Module Architecture
 
+> Status: Historical enterprise-route architecture. It is superseded by [ADR 0024](../adr/0024-adopt-a-personal-first-pi-rpc-workbench.md) and [the current target architecture](../V2_ARCHITECTURE.md).
+
 Snapshot: 2026-08-14. This decision resolves the target module and replacement
 question tracked by [issue #10](https://github.com/MelorTang/scopeguard/issues/10).
 It is constrained by `CONTEXT.md`, ADR 0001 through ADR 0022, and the accepted

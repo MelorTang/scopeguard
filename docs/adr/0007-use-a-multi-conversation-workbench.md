@@ -1,5 +1,7 @@
 # Use a multi-Conversation workbench instead of tabs
 
+Status: Active; reaffirmed by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 The Desktop will use a Codex-like Workspace and Conversation sidebar together
 with a central Conversation Workbench that can keep one to four Conversations
 visible and running in parallel. Each Conversation occupies an independently

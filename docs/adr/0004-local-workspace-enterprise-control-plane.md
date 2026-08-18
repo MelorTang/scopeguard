@@ -1,5 +1,7 @@
 # Keep workspaces local and governance on the enterprise server
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will use a local-first hybrid architecture. The Desktop owns
 Workspace Files, Conversation Transcripts, Artifact Versions, document
 processing, and local file operations; the enterprise server owns Member

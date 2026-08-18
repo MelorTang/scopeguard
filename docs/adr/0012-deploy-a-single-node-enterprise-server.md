@@ -1,5 +1,7 @@
 # Deploy a single-node enterprise server
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 will deploy its enterprise server as a single Docker Compose stack
 containing the application service and PostgreSQL. The application owns login,
 Member administration, Agent Templates, Provider and Model proxying, and the

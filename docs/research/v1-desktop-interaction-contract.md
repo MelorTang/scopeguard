@@ -1,5 +1,7 @@
 # V1 Desktop Interaction Contract
 
+> Status: Historical enterprise-route interaction snapshot. Multi-Conversation and Artifact findings remain design input; Member and governance requirements are retired.
+
 Status: accepted interaction decision for [GitHub issue #12](https://github.com/MelorTang/scopeguard/issues/12)
 Snapshot: 2026-08-13
 Target: Windows 10/11 x64 Desktop; macOS is a development and secondary support platform

@@ -1,5 +1,7 @@
 # Agent Context Model Comparison: Codex, Hermes, and Pi
 
+> Status: Historical research snapshot. Use as source-pinned input only; current product authority is [ADR 0024](../adr/0024-adopt-a-personal-first-pi-rpc-workbench.md).
+
 Research snapshot: 2026-08-09. Sources are limited to official documentation and official repository source. Hermes source was inspected at [`daabb2d`](https://github.com/NousResearch/hermes-agent/tree/daabb2d445d4b3d00da16c5c9b7ffd48768ef499), Pi at [`4181f66`](https://github.com/earendil-works/pi/tree/4181f66e6b3ccbef760c2966ecd8b596b926fec6), and pi-chat at [`9adbd29`](https://github.com/earendil-works/pi-chat/tree/9adbd29b40ee27ff1decf0fc87cbe180b40924f5).
 
 Evidence labels used below:

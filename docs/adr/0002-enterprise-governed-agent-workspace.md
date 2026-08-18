@@ -1,5 +1,7 @@
 # Build an enterprise-governed Agent workspace
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will differentiate through private or dedicated deployment,
 replaceable Organization-approved model Providers, and first-class governed
 Agents whose identity and authority remain stable across Model changes. The

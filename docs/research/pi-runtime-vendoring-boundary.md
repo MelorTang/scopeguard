@@ -1,5 +1,7 @@
 # Pi runtime 源码内嵌边界研究
 
+> Status: Historical vendoring research. The source-vendoring decision is superseded by the Pi RPC boundary in [ADR 0024](../adr/0024-adopt-a-personal-first-pi-rpc-workbench.md).
+
 - 状态：建议采纳
 - 研究日期：2026-08-13
 - 对应议题：[研究：确定 Pi 源码内嵌边界 #6](https://github.com/MelorTang/scopeguard/issues/6)

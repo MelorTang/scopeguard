@@ -1,5 +1,7 @@
 # Switch between Workbench and Artifact Review
 
+Status: Active; reaffirmed by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 The Desktop center will use two mutually exclusive spatial modes rather than
 adding a permanent file inspector beside multiple Conversation panes. The
 Conversation Workbench keeps one to four Conversations visible for parallel

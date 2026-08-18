@@ -1,85 +1,77 @@
 # ScopeGuard
 
-Local-first multi-agent desktop workspace for general knowledge work.
+ScopeGuard is a personal-first desktop workbench for using multiple AI Agents
+on one local Workspace. It is designed for both programming and general office
+work without turning every workflow into a developer tool.
 
-[简体中文](./README.zh-CN.md)
+The center workbench keeps one to four Conversations visible and running in
+parallel. Each Conversation is permanently bound to a user-configured Agent.
+Users coordinate work explicitly by copying a Handoff prompt or dispatching a
+bounded request to another existing Conversation.
 
-ScopeGuard keeps several persistent conversations open inside one Workspace so
-different Agents can work in parallel without sharing hidden context. A
-conversation is bound to its Agent when it is created; the user may switch
-between models supported by that Agent without changing the conversation's
-execution harness.
+## Project Status
 
-![ScopeGuard multi-agent desktop workspace](./docs/assets/scopeguard-workspace.png)
+The product contract was reset on 2026-08-18. [ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)
+is the current architecture decision. The checked-in Native Harness and Managed
+Execution code belongs to the pre-reset implementation and is not the new V1
+runtime target. Phase 1 must qualify Pi RPC before runtime replacement begins.
 
-Electron is the product surface. The Web build is an in-memory renderer preview
-for UI iteration and has no filesystem, command, provider, or secret capability.
+The retired enterprise route remains recoverable at:
 
-## Current Product Core
+- branch `codex/archive-enterprise-v1-2026-08-18`
+- tag `enterprise-v1-checkpoint-2026-08-18`
 
-- Workspaces with an optional local folder.
-- Multiple persistent conversations displayed in one to four parallel panes.
-- OpenAI-compatible and Anthropic-compatible Provider configuration.
-- One native ScopeGuard Agent per conversation, with model selection at run time.
-- Independent Runs, cancellation, retry, approval, and user-input continuation.
-- Request approval, automatic approval, and full-access permission profiles.
-- Root-confined local file tools and managed command execution.
-- Explicit Workspace Context for user-controlled shared information between
-  conversations; conversation transcripts remain isolated.
-- SQLite recovery for conversations, runs, usage, layout, and drafts.
+## V1 Product Boundary
 
-ScopeGuard does not manage external Agent CLIs or persistent remote workers.
-Advanced CLIs can be opened in a separate terminal, outside ScopeGuard's run
-lifecycle. Enterprise knowledge bases are separate systems connected through
-MCP; ScopeGuard does not embed their RAG pipeline.
+- Local Desktop application; the WebUI is a development preview only.
+- User-created Workspaces backed by optional local directories.
+- User-configured Agents: role, instructions, Model, Tools, and Skills.
+- Persistent Conversations with one to four visible at once.
+- Manual Handoff prompts and explicit Agent Dispatch; no automatic routing.
+- Durable Artifacts and an Office Tool Pack for DOCX, XLSX, PPTX, and PDF.
+- Pi RPC for the Agent loop, Providers, runtime Tools, sessions, and compaction.
+- Optional external MCP integrations later; enterprise RAG is a separate system.
 
-The current milestone is single-user and local-first. It does not provide team
-accounts, cloud sync, model hosting, a VPN, or automatic cross-Agent routing.
+Organization administration, Agent Templates, an enterprise control plane,
+automatic multi-Agent orchestration, cloud Workspace synchronization, and old
+development-database migration are not V1 goals.
 
-## Run From Source
+## Ownership
 
-Requires Node.js 22+ and pnpm 10+.
+| ScopeGuard owns | Pi Runtime owns |
+| --- | --- |
+| Desktop workbench and interaction | Agent loop and streaming |
+| Workspace and Agent configuration | Provider protocol execution |
+| Conversation-to-session mapping | Runtime Tool behavior |
+| Local metadata, Artifacts, Dispatch | Session resume and compaction |
+| Office Tool Pack | Runtime event production |
+
+## Development
+
+Requirements: Node.js 22+ and pnpm 10+.
 
 ```bash
 pnpm install
-pnpm dev
-```
-
-Renderer-only preview:
-
-```bash
-pnpm dev:web
-```
-
-## Verify
-
-```bash
 pnpm test
 pnpm typecheck
 pnpm build
-git diff --check
+pnpm dev:web
+pnpm dev
 ```
 
-Run `pnpm smoke:provider` for a deterministic local Provider at
-`http://127.0.0.1:47821/v1`.
-
-## Packages
-
-```text
-apps/desktop              Electron main, preload, renderer, and Agent host
-packages/domain           Core entities and state transitions
-packages/application      Conversation and Run use cases
-packages/agent-runtime    Native model and tool loop
-packages/provider-adapters
-packages/tool-runtime     Root-confined file and managed command tools
-packages/storage-sqlite   Fresh V1 SQLite schema and recovery repositories
-packages/ipc-contracts    Runtime-validated desktop IPC contracts
-```
-
-V1 uses the schema identity `scopeguard-v1-core`. Pre-V1 development databases
-are rejected with an explicit error instead of being migrated or treated as an
-empty profile. Historical tags preserve the former implementation.
-
-See [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md),
-[SECURITY.md](./docs/SECURITY.md), and
+These commands currently exercise the pre-reset implementation until the Pi RPC
+replacement lands. Acceptance gates are defined in
 [VERIFICATION.md](./docs/VERIFICATION.md).
+
+## Documentation
+
+- [Domain glossary](./CONTEXT.md)
+- [Target architecture](./docs/V2_ARCHITECTURE.md)
+- [Verification and phase gates](./docs/VERIFICATION.md)
+- [Architecture decisions](./docs/adr/)
+- [Historical research snapshots](./docs/research/)
+
+Current source of truth is, in order: accepted ADRs and `CONTEXT.md`, the active
+GitHub Wayfinder map, current architecture and verification documents, then
+implementation. Historical research explains prior decisions but is not a
+current product requirement.

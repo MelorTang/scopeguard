@@ -1,5 +1,7 @@
 # Govern local access per Conversation
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will replace the fixed office-tool allowlist with a Member-selected
 Conversation Execution Profile inherited by every local tool and Skill. Request
 Approval and Auto Approve use the same OS-enforced Managed Execution Sandbox for

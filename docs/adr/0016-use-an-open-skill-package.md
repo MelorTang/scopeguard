@@ -1,5 +1,7 @@
 # Use an open Skill package
 
+Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 Skills will use a Codex-compatible directory rooted at `SKILL.md`,
 with optional `scripts`, `references`, and `assets` directories and an optional
 `scopeguard.json` for version, runtime, and network declarations. Skills may be

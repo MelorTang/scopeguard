@@ -1,5 +1,7 @@
 # Use task-oriented persistent Conversations
 
+Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 A Conversation is permanently bound to one Agent and organized around one
 primary Task. It remains stored, resumable, and open to follow-up revisions, but
 new objectives start new Conversations so unrelated transcripts do not become

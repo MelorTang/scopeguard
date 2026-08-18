@@ -1,5 +1,7 @@
 # UI Redesign Handoff: Codex-Style Desktop UI
 
+> Status: Historical UI implementation handoff. Reusable visual findings remain input, but product behavior follows ADR 0024 and the current Wayfinder map.
+
 Date: 2026-08-15
 Scope: `apps/desktop/src/renderer` only. No main-process, IPC, or domain changes
 except the ones explicitly listed below.

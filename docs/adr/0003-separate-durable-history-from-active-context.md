@@ -1,5 +1,7 @@
 # Separate durable history from active context
 
+Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will keep Organization Knowledge, Workspace Context, Conversation
 Transcripts, and Active Context Projections as distinct governed concepts. Full
 Conversation history remains durable and searchable, while each Run receives a

@@ -1,121 +1,124 @@
-# ScopeGuard Core Architecture
+# ScopeGuard Personal Multi-Agent V1 Architecture
 
-## Product Boundary
+Status: Target architecture accepted by
+[ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md). The current
+Native Harness implementation has not yet been replaced.
 
-ScopeGuard is a local-first desktop workspace for one person coordinating
-multiple AI conversations. Each conversation is an independent execution and
-context boundary. The user chooses the Agent when creating the conversation;
-the selected Agent cannot be replaced later.
+## Product Shape
 
-Electron is the production surface. The Web build is an in-memory Renderer
-preview and deliberately has no filesystem, process, Provider, SQLite, or
-SecretVault access.
-
-The core does not own external Agent CLIs, persistent remote workers, enterprise
-RAG indexing, multi-user identity, cloud sync, or automatic Agent routing.
-
-## Core Model
+ScopeGuard is a local Desktop workbench around this user-visible chain:
 
 ```text
-Workspace
-  ├─ optional localRootPath
-  ├─ ProviderProfile (referenced by Agent)
-  ├─ Agent (native)
-  ├─ Conversation
-  │    ├─ ConversationMessage
-  │    └─ Run
-  │         ├─ RunRequestManifest
-  │         ├─ RunUsageRecord
-  │         ├─ ToolCallRecord
-  │         └─ ToolApproval
-  └─ WorkspaceContextRevision
+User
+`- Workspace
+   |- Agent configuration
+   |- Conversation -> Run -> Pi session
+   |- Conversation -> Run -> Pi session
+   |- Dispatch between existing Conversations
+   `- Artifact -> version
 ```
 
-- `Workspace` is the user-visible project boundary; its local folder is optional.
-- `Agent` owns native instructions, Provider selection, default model,
-  default execution profile, and tool policy.
-- A conversation binds one Agent at creation. Its model override and execution
-  profile may change without changing the Agent or Harness; each Run stores the
-  effective values in an immutable configuration snapshot.
-- `Run` is one execution attempt. One conversation has at most one non-terminal
-  Run; different conversations may run concurrently and cancel independently.
-- `WorkspaceContextRevision` is the explicit, user-controlled shared context. ScopeGuard
-  never injects another conversation's transcript implicitly.
-- Request manifests and usage records preserve the effective execution input
-  and accounting without turning the product into a separate control plane.
+A Workspace may reference a local directory. One to four Conversations can be
+visible at the same time, and each can run independently. A Conversation keeps
+one Agent identity for its lifetime. Model changes are allowed only when they do
+not replace that identity or invalidate the runtime session.
 
-The domain, storage, application, IPC, and Renderer use the same canonical
-Workspace, Agent, Conversation, Message, and Run names. There is no compatibility
-projection for the former Project/Profile/Task/Assignment hierarchy.
-
-## Execution
-
-Only the native `NativeAgentRuntime` is managed by ScopeGuard. It executes the
-conversation transcript against the configured Provider, exposes allowed tools,
-and emits typed Run events. External CLI harnesses are not represented as native
-Agents and remain outside ScopeGuard's lifecycle.
-
-Every conversation has one of three current execution profiles:
-
-| Profile | Approval | Command authority |
-| --- | --- | --- |
-| Request Approval | Mutating calls require a decision | Bounded adapter |
-| Auto Approve | Allowed calls run without prompts | Bounded adapter |
-| Full Access | No per-call approval | Current desktop user |
-
-On Windows, bounded command execution uses the LPAC managed-execution path. If
-that path is unavailable, it fails closed and never falls back to Full Access.
-External Agent CLIs may be opened in a separate terminal, but ScopeGuard does
-not own their sessions, permissions, recovery, or output.
-
-## Process Ownership
-
-| Process | Owns |
-| --- | --- |
-| Electron Main | Window lifecycle, native picker, navigation policy, SecretVault, Agent-host supervision, Desktop Execution Broker |
-| Preload | Fixed typed desktop API and Run-event subscription |
-| Renderer | Workspace navigation, parallel panes, dialogs, layout, and drafts |
-| Agent host | Application core, Provider requests, tools, cancellation, and the only SQLite writer |
-
-Renderer payloads never contain Provider API keys or SQLite secret references.
-Main resolves a secret only for an Agent-host request.
-
-## Package Boundaries
+## Runtime Boundary
 
 ```text
-packages/domain             Core entities and transitions
-packages/application        ScopeGuardCore use cases
-packages/agent-runtime      Native Provider/tool loop
-packages/provider-adapters  Provider protocol adapters
-packages/tool-runtime       Path confinement, approval, and command routing
-packages/managed-execution  Bounded and Full Access command adapters
-packages/storage-sqlite     Fresh V1 schema and recovery repositories
-packages/ipc-contracts      Runtime validators and typed desktop contract
-apps/desktop                Main, preload, Agent host, and Renderer
+Electron Renderer
+  -> fixed Preload API
+  -> Electron Main / ScopeGuard application layer
+       |- local metadata store
+       |- Workspace and Agent configuration
+       |- Artifact and Dispatch services
+       |- Office Tool Pack
+       `- Pi RPC client
+            -> supervised Pi process
+                 |- Agent loop
+                 |- Provider adapters
+                 |- runtime Tools
+                 |- session persistence and resume
+                 `- compaction
 ```
 
-Dependencies point toward domain types and the `ScopeGuardCore` interface. The
-Renderer never imports Node APIs, storage, Provider adapters, or tool
-implementations.
+ScopeGuard supervises the Pi process and owns the RPC adapter, but does not
+duplicate Pi's Agent loop, Tool lifecycle, session log, or compaction algorithm.
+ScopeGuard persists the stable mapping between its Conversation ID and the Pi
+session locator plus enough metadata to restore the workbench. Runtime events
+may be projected into the UI, but Pi remains the runtime session truth.
 
-## Persistence And Recovery
+Phase 1 must qualify the real RPC contract before replacement work starts. The
+prototype must cover startup and shutdown, streaming text, Tool call events,
+interrupt and cancellation, crash behavior, session resume, compaction, Provider
+configuration, and multiple concurrent sessions. Unsupported behavior remains
+explicit rather than being simulated by ScopeGuard.
 
-- The schema declares identity `scopeguard-v1-core` and version `1`.
-- A database with missing or different identity is rejected. V1 does not migrate
-  the former development schema and never silently creates a new graph over it.
-- Only canonical V1 tables are created; Runtime, Task, Assignment, Artifact,
-  Handoff, Schedule, Inbox, Project, AgentProfile, and AgentThread tables do not
-  exist in the new schema.
-- On Agent-host startup, every non-terminal Run becomes `interrupted`, including
-  local record. No external owner is presumed able to reconcile it.
-- Interrupted Runs retain checkpointed output and unfinished non-idempotent tool
-  effects remain unknown rather than being reported as successful.
-- Layout and unsent drafts are local Renderer state; conversation and Run state
-  are persisted in SQLite.
+## ScopeGuard Modules
 
-## Deferred Work
+**Desktop shell** owns native windows, lifecycle, menus, local folder selection,
+and the secure Renderer boundary.
 
-Team identity and authorization, cloud synchronization, enterprise MCP policy,
-installer distribution, auto-update, and richer document workflows remain
-separate milestones. Adding one must not reintroduce a second execution control
-plane into the core.
+**Workbench application** owns Workspace, Agent, Conversation metadata, visible
+pane layout, Run presentation, and Conversation-to-Pi-session mapping.
+
+**Dispatch service** records source, destination, bounded prompt, selected
+Artifact references, and delivery state. It never copies the source transcript
+or chooses a destination automatically.
+
+**Artifact service** owns durable work products, versions, preview state, and
+the switch between multi-Conversation Workbench and Artifact Review.
+
+**Office Tool Pack** supplies typed operations for DOCX, XLSX, PPTX, and PDF.
+Plain text, Markdown, and HTML use normal Model and local-file capabilities.
+Historical document-runtime research is input to this module, not an already
+accepted implementation stack.
+
+**Pi RPC adapter** translates between the ScopeGuard application contract and a
+pinned Pi RPC version. It owns protocol compatibility tests and process
+supervision, not product policy or UI state.
+
+## Persistence
+
+ScopeGuard local storage contains product metadata, layouts, Agent definitions,
+Artifact records, Dispatch records, and Pi session locators. Pi owns its runtime
+session and compaction data. Workspace source files remain ordinary local files.
+Provider credentials must use operating-system protected storage or a Pi
+mechanism qualified during Phase 1; they must not be stored in plaintext product
+metadata.
+
+There is no migration from the retired development schema. The first runtime
+replacement migration creates a fresh schema and must reject accidental opening
+of incompatible old databases rather than partially interpreting them.
+
+## Concurrency And Isolation
+
+- One Conversation has at most one active Run.
+- Different Conversations may run concurrently, including with different Agents
+  and Models.
+- A Dispatch targets an existing Conversation in the same Workspace.
+- Conversation history is not implicitly shared.
+- Shared Workspace writes retain version checks and stop on conflicts.
+- Closing a pane does not delete a Conversation or stop an active Run.
+
+## Explicit Non-Goals
+
+- Organization, Administrator, Member, Agent Template, or Admin Console models.
+- ScopeGuard-hosted enterprise RAG or knowledge ingestion.
+- Automatic routing, autonomous Agent creation, or hidden orchestration.
+- A second native Agent Runtime beside Pi.
+- Pretending external coding CLI Harnesses have one uniform contract.
+- Cloud Workspace synchronization or unattended 24/7 remote execution in V1.
+- Long-term support for both the retired and new schemas.
+
+## Delivery Phases
+
+1. Phase 0: product contract, ADR, wayfinding, and historical checkpoint.
+2. Phase 1: Pi RPC qualification prototype and go/no-go decision.
+3. Phase 2: fresh local schema and runtime replacement behind stable interfaces.
+4. Phase 3: multi-Conversation workbench, explicit Dispatch, and recovery.
+5. Phase 4: Artifact Review and the bounded Office Tool Pack.
+6. Phase 5: packaging, cross-platform verification, and real-project pilot.
+
+Each phase advances only after the exit gate in
+[VERIFICATION.md](./VERIFICATION.md) and the active GitHub Wayfinder map passes.

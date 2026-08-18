@@ -1,5 +1,7 @@
 # Managed Execution Desktop Slice
 
+> Status: Historical implementation evidence from the retired Native Harness route. ADR 0022 is superseded by [ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md).
+
 ## Status
 
 The V1 Desktop slice supports three immutable Conversation execution profiles:

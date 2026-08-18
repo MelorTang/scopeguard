@@ -1,5 +1,7 @@
 # Configure Providers explicitly
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 will support explicitly configured OpenAI Responses, OpenAI Chat
 Completions, and Anthropic Messages Providers. An Administrator supplies the
 Provider name, base URL, server-held API key, protocol, and manually curated

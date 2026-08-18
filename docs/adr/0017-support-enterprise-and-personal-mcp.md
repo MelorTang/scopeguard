@@ -1,5 +1,7 @@
 # Support enterprise and personal MCP connections
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard V1 will support an Organization-managed, server-side, read-only MCP
 connection for enterprise knowledge as a core acceptance capability. The
 Desktop may also connect to Member- or Workspace-configured local stdio and

@@ -1,82 +1,72 @@
 # ScopeGuard
 
-本地优先的多 Agent 桌面工作台，面向通用知识工作。
+ScopeGuard 是一个个人优先的桌面多 Agent 工作台，用于让多个 AI Agent 在同一个
+本地 Workspace 中协作。它同时面向编程和普通办公，不要求用户采用开发者工具式
+的工作流。
 
-[English](./README.md)
+中央工作台可以同时显示并运行一到四个 Conversation。每个 Conversation 创建后
+固定绑定一个由用户配置的 Agent。用户可以复制 Handoff 提示词，或者显式地把有
+边界的任务 Dispatch 给另一个已经存在的 Conversation。
 
-ScopeGuard 让用户在一个 Workspace 中同时打开多个持久对话，由不同 Agent
-并行工作，同时避免隐式共享上下文。对话创建后固定使用所选 Agent；运行时可以
-切换该 Agent 支持的模型，但不会更换执行 Harness。
+## 项目状态
 
-![ScopeGuard 多 Agent 桌面工作台](./docs/assets/scopeguard-workspace.png)
+产品契约已于 2026-08-18 重置。当前架构决策是
+[ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)。仓库中现有的
+Native Harness 和 Managed Execution 代码属于重置前实现，不是新 V1 的运行时目标。
+Phase 1 必须先验证 Pi RPC，之后才会开始替换运行时。
 
-正式产品形态是 Electron 桌面端。Web 仅用于快速迭代和预览渲染层，不具备
-文件、命令、模型请求或密钥能力。
+旧企业路线保留在以下可恢复 checkpoint：
 
-## 当前产品核心
+- 分支 `codex/archive-enterprise-v1-2026-08-18`
+- 标签 `enterprise-v1-checkpoint-2026-08-18`
 
-- 创建可选本地目录的 Workspace。
-- 在同一工作区中并列显示 1-4 个持久对话。
-- 配置 OpenAI-compatible 或 Anthropic-compatible 模型服务。
-- 每个对话固定一个 ScopeGuard 原生 Agent，运行时可选择模型。
-- 每个 Run 独立执行、停止和重试，并支持审批及用户补充信息后续跑。
-- 提供“请求批准”“自动审批”“完全访问”三档会话权限。
-- 本地文件工具受真实路径边界约束，命令通过受管理的工具执行。
-- 通过 Workspace Context 显式共享用户确认的信息；各对话记录默认隔离。
-- 使用 SQLite 恢复对话、Run、用量、布局和草稿。
+## V1 产品边界
 
-ScopeGuard 不再管理外部 Agent CLI 或常驻远端 Runtime。高级 CLI 可以通过
-独立终端打开，但不进入 ScopeGuard 的 Run 生命周期。企业知识库是通过 MCP
-接入的独立系统，其 RAG 索引不内置在 ScopeGuard 中。
+- 本地 Desktop 应用；WebUI 只用于开发预览。
+- 用户创建 Workspace，并可关联本地目录。
+- 用户配置 Agent：角色、指令、Model、Tool 和 Skill。
+- Conversation 持久保存，同时可见一到四个。
+- 支持人工 Handoff 提示词和显式 Agent Dispatch，不做自动路由。
+- 管理持久 Artifact，并提供 DOCX、XLSX、PPTX、PDF Office Tool Pack。
+- Pi RPC 负责 Agent loop、Provider、运行时 Tool、Session 和 Compaction。
+- 后续可接外部 MCP；企业知识库和 RAG 作为独立系统开发。
 
-当前里程碑是单用户、本地优先版本，不包含团队账号、云同步、模型托管、VPN
-或自动跨 Agent 路由。
+Organization 管理、Agent Template、企业控制面、自动多 Agent 编排、云端 Workspace
+同步和旧开发数据库迁移均不是 V1 目标。
 
-## 从源码启动
+## 所有权
 
-需要 Node.js 22 或更高版本，以及 pnpm 10 或更高版本。
+| ScopeGuard 负责 | Pi Runtime 负责 |
+| --- | --- |
+| Desktop 工作台和交互 | Agent loop 和流式事件 |
+| Workspace 和 Agent 配置 | Provider 协议执行 |
+| Conversation 到 Session 的映射 | 运行时 Tool 行为 |
+| 本地元数据、Artifact、Dispatch | Session 恢复和 Compaction |
+| Office Tool Pack | 运行时事件产生 |
+
+## 开发
+
+需要 Node.js 22+ 和 pnpm 10+。
 
 ```bash
 pnpm install
-pnpm dev
-```
-
-仅预览前端：
-
-```bash
-pnpm dev:web
-```
-
-Web 预览使用内存 bridge，不能替代桌面验收。
-
-## 验证
-
-```bash
 pnpm test
 pnpm typecheck
 pnpm build
-git diff --check
+pnpm dev:web
+pnpm dev
 ```
 
-运行 `pnpm smoke:provider` 可启动本地可重复 Provider，地址为
-`http://127.0.0.1:47821/v1`。
-
-## 架构
-
-```text
-apps/desktop              Electron 主进程、preload、渲染层、Agent host
-packages/domain           核心实体与状态转换
-packages/application      对话和 Run 用例
-packages/agent-runtime    原生模型与工具循环
-packages/provider-adapters
-packages/tool-runtime     受目录边界约束的文件和命令工具
-packages/storage-sqlite   全新 V1 SQLite schema 与恢复仓储
-packages/ipc-contracts    运行时校验的桌面 IPC 契约
-```
-
-V1 使用 schema 标识 `scopeguard-v1-core`。旧开发数据库会被明确拒绝，不会
-迁移，也不会被当成空 profile；历史实现由 Git tag 保留。
-
-详细边界见 [V2_ARCHITECTURE.md](./docs/V2_ARCHITECTURE.md)、
-[SECURITY.md](./docs/SECURITY.md) 和
+在 Pi RPC 替换完成前，这些命令仍然验证重置前实现。阶段门禁见
 [VERIFICATION.md](./docs/VERIFICATION.md)。
+
+## 文档
+
+- [领域词汇](./CONTEXT.md)
+- [目标架构](./docs/V2_ARCHITECTURE.md)
+- [验证和阶段门禁](./docs/VERIFICATION.md)
+- [架构决策](./docs/adr/)
+- [历史研究快照](./docs/research/)
+
+当前事实源顺序为：已接受 ADR 和 `CONTEXT.md`、当前 GitHub Wayfinder map、当前架构
+与验证文档、实现代码。历史 research 用于解释旧决策，不再作为当前产品要求。

@@ -1,5 +1,7 @@
 # DeepSeek Harness 对 ScopeGuard 的可吸收能力调查
 
+> Status: Historical research from the retired Native Harness route. Its execution-ledger findings remain input, but its ScopeGuard boundary conclusions are superseded by [ADR 0024](../adr/0024-adopt-a-personal-first-pi-rpc-workbench.md).
+
 Research snapshot: 2026-08-14
 
 - DeepSeek Harness source: [`47f943859bef60e4160492346772ded9b24f765a`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a), committed 2026-08-13.

@@ -1,5 +1,7 @@
 # Workbench Prototype Findings
 
+> Status: Historical prototype snapshot retained as current interaction input for the one-to-four Conversation workbench.
+
 Snapshot: 2026-08-13. This note records the confirmed result for [原型：验证多 Conversation 工作台与 Artifact 检视](https://github.com/MelorTang/scopeguard/issues/3). The adaptive pane rule and the final prototype direction were accepted on 2026-08-13.
 
 ## Question

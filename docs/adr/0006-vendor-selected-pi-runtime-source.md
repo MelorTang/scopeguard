@@ -1,5 +1,7 @@
 # Vendor selected Pi runtime source
 
+Status: Superseded by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+
 ScopeGuard will vendor a pinned snapshot of selected MIT-licensed Pi source for
 Provider protocol handling, streaming, tool-call normalization, and the minimal
 Agent loop. ScopeGuard will expose this code only through its own runtime

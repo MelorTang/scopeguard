@@ -1,5 +1,7 @@
 # Legacy Module Boundary Inventory
 
+> Status: Historical inventory for a retired implementation baseline. It is not the current target architecture.
+
 Snapshot: 2026-08-13. This inventory answers [盘点：确定旧模块的保留、替换与删除边界](https://github.com/MelorTang/scopeguard/issues/7) for the ScopeGuard V1 Wayfinder map.
 
 This is a source-level disposition of the current repository. It does not define the final V1 module architecture; that remains the responsibility of the downstream architecture decision. The inventory uses four dispositions:
