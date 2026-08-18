@@ -1,0 +1,38 @@
+{
+  "package": "@earendil-works/pi-coding-agent",
+  "version": "0.84.2",
+  "knownTextOrder": [
+    "agent_start",
+    "turn_start",
+    "message_start",
+    "message_update:text_start",
+    "message_update:text_delta",
+    "message_update:text_end",
+    "message_end",
+    "turn_end",
+    "agent_end",
+    "agent_settled"
+  ],
+  "knownToolEvents": [
+    "tool_execution_start",
+    "tool_execution_end"
+  ],
+  "knownToolCallOrder": [
+    "message_update:toolcall_start",
+    "message_update:toolcall_delta",
+    "message_update:toolcall_end",
+    "message_end",
+    "tool_execution_start",
+    "tool_execution_end"
+  ],
+  "knownCompactionEvents": [
+    "compaction_start",
+    "compaction_end"
+  ],
+  "syntheticUnknownRecord": {
+    "type": "future_event",
+    "payload": {
+      "retained": true
+    }
+  }
+}
