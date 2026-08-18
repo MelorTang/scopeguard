@@ -16,10 +16,9 @@
     "test:managed:install:win": "pwsh -File packages/managed-execution/native/windows/managed-companion-installation-test.ps1",
     "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider",
     "pilot:local": "pnpm --filter @scopeguard/desktop pilot:local",
-    "qualify:pi-rpc": "node prototypes/pi-rpc-qualification/run.mjs"
+    "qualify:pi-rpc": "pnpm --filter @scopeguard/pi-rpc-qualification qualify"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.2",
     "@types/node": "^24.3.0",
     "typescript": "^5.9.3"
   }

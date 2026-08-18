@@ -102,10 +102,14 @@ export async function startFakeProvider({ expectedKey }) {
     const authorization = req.headers.authorization;
     const authOk = authorization === `Bearer ${expectedKey}`;
     const messages = Array.isArray(body.messages) ? body.messages : [];
-    const userTexts = messages.filter((message) => message.role === "user").map((message) => textOf(message.content));
+    const userTexts = messages
+      .filter((message) => message.role === "user")
+      .map((message) => textOf(message.content));
     const lastUser = userTexts.at(-1) ?? "";
     const toolMessages = messages.filter((message) => message.role === "tool");
-    const allText = messages.map((message) => textOf(message.content)).join("\n");
+    const allText = messages
+      .map((message) => textOf(message.content))
+      .join("\n");
     requests.push({
       authOk,
       model: body.model,
@@ -120,12 +124,20 @@ export async function startFakeProvider({ expectedKey }) {
 
     if (!authOk) {
       res.writeHead(401, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: { message: "qualification credential rejected" } }));
+      res.end(
+        JSON.stringify({
+          error: { message: "qualification credential rejected" },
+        }),
+      );
       return;
     }
     if (lastUser.includes("[http-error]")) {
       res.writeHead(503, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: { message: "qualification protocol failure" } }));
+      res.end(
+        JSON.stringify({
+          error: { message: "qualification protocol failure" },
+        }),
+      );
       return;
     }
 
@@ -142,7 +154,11 @@ export async function startFakeProvider({ expectedKey }) {
     }
 
     if (messages.at(-1)?.role === "tool") {
-      await sendText(res, id, `tool-result-observed:${lastUser.includes("[tool-error]") ? "error" : "success"}`);
+      await sendText(
+        res,
+        id,
+        `tool-result-observed:${lastUser.includes("[tool-error]") ? "error" : "success"}`,
+      );
       return;
     }
 
@@ -151,13 +167,21 @@ export async function startFakeProvider({ expectedKey }) {
         res,
         id,
         "bash",
-        { command: `${JSON.stringify(process.execPath)} -e "process.stdout.write('tool-ok')"` },
+        {
+          command: `${JSON.stringify(process.execPath)} -e "process.stdout.write('tool-ok')"`,
+        },
         "call-tool-success",
       );
       return;
     }
     if (lastUser.includes("[tool-error]")) {
-      sendToolCall(res, id, "read", { path: "definitely-missing.txt" }, "call-tool-error");
+      sendToolCall(
+        res,
+        id,
+        "read",
+        { path: "definitely-missing.txt" },
+        "call-tool-error",
+      );
       return;
     }
     if (lastUser.includes("[interrupt-effect]")) {
@@ -172,12 +196,33 @@ export async function startFakeProvider({ expectedKey }) {
       );
       return;
     }
+    const approvalMatch = lastUser.match(/\[approval:([a-z-]+)\]/);
+    if (approvalMatch) {
+      const scenario = approvalMatch[1];
+      const target = `approval-${scenario}.txt`;
+      sendToolCall(
+        res,
+        id,
+        "bash",
+        {
+          command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('${target}','executed')" # SCOPEGUARD_APPROVAL:${scenario}`,
+        },
+        `call-approval-${scenario}`,
+      );
+      return;
+    }
     if (lastUser.includes("[slow-text]")) {
       await sendText(res, id, `slow-complete:${lastUser}`, 35);
       return;
     }
     if (lastUser.includes("[resume-check]")) {
-      await sendText(res, id, userTexts.some((text) => text.includes("[persist-marker]")) ? "resume-ok" : "resume-missing-history");
+      await sendText(
+        res,
+        id,
+        userTexts.some((text) => text.includes("[persist-marker]"))
+          ? "resume-ok"
+          : "resume-missing-history",
+      );
       return;
     }
     if (lastUser.includes("[long-context]")) {
@@ -185,7 +230,13 @@ export async function startFakeProvider({ expectedKey }) {
       return;
     }
     if (lastUser.includes("[after-compaction]")) {
-      await sendText(res, id, allText.includes("QUALIFICATION_COMPACTION_SUMMARY") ? "after-compaction-ok" : "after-compaction-summary-missing");
+      await sendText(
+        res,
+        id,
+        allText.includes("QUALIFICATION_COMPACTION_SUMMARY")
+          ? "after-compaction-ok"
+          : "after-compaction-summary-missing",
+      );
       return;
     }
     await sendText(res, id, `echo:${lastUser}`);
@@ -199,6 +250,10 @@ export async function startFakeProvider({ expectedKey }) {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
-    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    isListening: () => server.listening,
+    close: () =>
+      new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
   };
 }

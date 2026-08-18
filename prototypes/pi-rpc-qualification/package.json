@@ -1,0 +1,12 @@
+{
+  "name": "@scopeguard/pi-rpc-qualification",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "qualify": "node run.mjs"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.2"
+  }
+}

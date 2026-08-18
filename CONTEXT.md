@@ -51,6 +51,15 @@ perform a class of work. Users may install and select Skills.
 A callable capability available to an Agent, such as reading a file, editing a
 document, running an approved local operation, or invoking an external service.
 
+**Tool Effect Certainty**:
+The product's durable classification of what a Tool may have changed outside the
+Agent loop. `effect_unknown` is the canonical terminal Tool-call status when
+execution may have started but ScopeGuard has no trustworthy result or receipt
+that proves whether the side effect was absent, complete, or partial. A Tool
+error, abort, timeout, process exit, or lost host connection does not by itself
+prove that no side effect occurred. `denied` or `cancelled` may mean no effect
+only when ScopeGuard can prove the Tool was blocked before execution began.
+
 **Model**:
 The AI inference model selected for an Agent or Conversation.
 

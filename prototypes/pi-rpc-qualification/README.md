@@ -24,10 +24,26 @@ and Session directories under the operating-system temporary directory, starts
 real Pi RPC child processes, scans temporary files for the fake credential, and
 removes all temporary state before success or failure exit.
 
+The harness loads `approval-extension.ts` through Pi's official `--extension`
+argument. It verifies the actual pre-execution `tool_call` -> RPC confirm ->
+matching-ID host response -> execute/block path. Reject, cancel, timeout,
+extension error, and host disconnect are tested as fail-closed cases; an
+observed `tool_execution_start` is never treated as approval.
+
+`RpcProcess` keeps only bounded, redacted stderr and converts invalid JSONL into
+a propagated protocol error. A forced-failure fixture asserts child and Provider
+termination plus removal of its temporary profile, Workspace, and Sessions.
+
 The harness deliberately removes inherited environment variables whose names
 look like credentials and sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`. It never
 requires or exercises a real Provider key. A real-provider smoke is optional
 future evidence and must not weaken or replace this deterministic gate.
+
+Pi is an exact dependency of this private prototype workspace rather than the
+root or a product package. pnpm still uses one shared lockfile, so Pi's
+transitive `yaml` peer affects Vite's peer-resolution snapshot. This is an
+intentional Phase 1 lockfile effect, not a product import. Phase 2 must move the
+pin to the Runtime-owning package and review the regenerated shared lockfile.
 
 `fixtures/expected-contract.json` contains stable expected event categories and
 one explicitly synthetic future event used only to prove fail-safe unknown-event

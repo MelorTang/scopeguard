@@ -8,9 +8,6 @@ importers:
 
   .:
     devDependencies:
-      '@earendil-works/pi-coding-agent':
-        specifier: 0.84.2
-        version: 0.84.2(ws@8.21.3)
       '@types/node':
         specifier: ^24.3.0
         version: 24.12.2
@@ -156,6 +153,12 @@ importers:
       '@scopeguard/managed-execution':
         specifier: workspace:*
         version: link:../managed-execution
+
+  prototypes/pi-rpc-qualification:
+    devDependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: 0.84.2
+        version: 0.84.2(ws@8.21.3)
 
 packages:
 
