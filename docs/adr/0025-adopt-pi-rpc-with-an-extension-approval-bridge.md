@@ -1,6 +1,10 @@
 # Adopt Pi RPC with a controlled approval extension
 
-Status: Proposed constrained Go on 2026-08-18; pending Phase 1 review.
+Status: Accepted constrained Go on 2026-08-18.
+
+Phase 1 passed independent Standards and Spec review with zero findings on
+2026-08-18. The accepted evidence reran the pinned qualification at 26/26: 21
+exact, 4 lossy, and 1 unsupported mapping.
 
 Qualifies the Pi RPC preference in ADR 0024. It does not start Phase 2 or
 authorize formal Runtime, schema, or Renderer changes.
