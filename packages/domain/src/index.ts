@@ -1,5 +1,7 @@
-export const SCOPEGUARD_SCHEMA_ID = "scopeguard-v1-core";
+export const SCOPEGUARD_SCHEMA_ID = "scopeguard-personal-pi-v1";
 export const SCOPEGUARD_SCHEMA_VERSION = 1;
+export const SCOPEGUARD_PI_VERSION = "0.84.2";
+export const SCOPEGUARD_PI_SESSION_VERSION = 3;
 
 export type Id = string;
 export type IsoDateTime = string;
@@ -12,6 +14,13 @@ export type Workspace = {
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
   lastOpenedAt: IsoDateTime;
+};
+
+export type PiSessionLocator = {
+  sessionFile: string;
+  sessionId: string;
+  piVersion: typeof SCOPEGUARD_PI_VERSION;
+  sessionVersion: typeof SCOPEGUARD_PI_SESSION_VERSION;
 };
 
 export type CreateWorkspaceInput = {
@@ -56,23 +65,6 @@ export type ConversationExecutionProfile =
   | "auto-approve"
   | "full-access";
 
-export type ManagedExecutionStage =
-  | "accepted"
-  | "provisioning"
-  | "running"
-  | "stopping"
-  | "cleaning"
-  | "completed"
-  | "failed";
-
-export type ManagedExecutionProgress = {
-  executionId: Id;
-  stage: ManagedExecutionStage;
-  at: IsoDateTime;
-  stream?: "stdout" | "stderr";
-  chunk?: string;
-};
-
 export type AgentToolPolicy = {
   readFiles: ToolPermission;
   writeFiles: ToolPermission;
@@ -116,6 +108,7 @@ export type Conversation = {
   status: "active" | "archived";
   modelOverride: string | null;
   executionProfile: ConversationExecutionProfile;
+  piSession: PiSessionLocator | null;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 };
@@ -243,6 +236,7 @@ export type AgentRun = {
   startedAt: IsoDateTime | null;
   completedAt: IsoDateTime | null;
   error: string | null;
+  effect: "none" | "confirmed" | "effect_unknown";
   createdAt: IsoDateTime;
 };
 
@@ -279,6 +273,12 @@ export type ToolApproval = {
   runId: Id;
   status: "pending" | "approved" | "denied" | "expired";
   reason: string;
+  processId: string;
+  requestId: string;
+  piToolCallId: string;
+  toolName: string;
+  canonicalInput: Record<string, unknown>;
+  canonicalInputSha256: string;
   createdAt: IsoDateTime;
   resolvedAt: IsoDateTime | null;
 };
@@ -337,13 +337,6 @@ export type RunEvent =
       conversationId: Id;
       approval: ToolApproval;
       toolCall: ToolCallRecord;
-      at: IsoDateTime;
-    }
-  | {
-      type: "managed-execution";
-      runId: Id;
-      conversationId: Id;
-      progress: ManagedExecutionProgress;
       at: IsoDateTime;
     };
 

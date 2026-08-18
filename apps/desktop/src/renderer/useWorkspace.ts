@@ -7,7 +7,6 @@ import type {
   Conversation,
   ConversationMessage,
   CreateAgentInput,
-  ManagedExecutionStage,
   ProviderConnectionResult,
   RunEvent,
   UpdateConversationSettingsInput,
@@ -59,7 +58,6 @@ export type WorkspaceController = {
   visibleThreads: Conversation[];
   messagesByThread: Record<string, ConversationMessage[]>;
   streamingByThread: Record<string, string>;
-  executionStageByThread: Record<string, ManagedExecutionStage>;
   requestedSplitCount: number;
   effectiveSplitCount: number;
   maxSplitCount: number;
@@ -112,9 +110,6 @@ export function useWorkspace(): WorkspaceController {
     Record<string, ConversationMessage[]>
   >({});
   const [streamingByThread, setStreamingByThread] = useState<Record<string, string>>({});
-  const [executionStageByThread, setExecutionStageByThread] = useState<
-    Record<string, ManagedExecutionStage>
-  >({});
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [approvalFocus, setApprovalFocus] = useState<ApprovalFocusRequest | null>(null);
   const approvalSequence = useRef(0);
@@ -144,7 +139,6 @@ export function useWorkspace(): WorkspaceController {
         setSnapshot,
         setMessagesByThread,
         setStreamingByThread,
-        setExecutionStageByThread,
       );
     });
   }, [refresh]);
@@ -414,7 +408,6 @@ export function useWorkspace(): WorkspaceController {
     visibleThreads,
     messagesByThread,
     streamingByThread,
-    executionStageByThread,
     requestedSplitCount: ui.requestedSplitCount,
     effectiveSplitCount,
     maxSplitCount,
@@ -452,7 +445,6 @@ function applyRunEvent(
   setSnapshot: React.Dispatch<React.SetStateAction<DesktopWorkspaceSnapshot | null>>,
   setMessages: React.Dispatch<React.SetStateAction<Record<string, ConversationMessage[]>>>,
   setStreaming: React.Dispatch<React.SetStateAction<Record<string, string>>>,
-  setExecutionStage: React.Dispatch<React.SetStateAction<Record<string, ManagedExecutionStage>>>,
 ): void {
   if (event.type === "assistant-delta") {
     setStreaming((current) => ({
@@ -472,13 +464,6 @@ function applyRunEvent(
     if (event.message.role === "assistant") {
       setStreaming((current) => ({ ...current, [event.conversationId]: "" }));
     }
-    return;
-  }
-  if (event.type === "managed-execution") {
-    setExecutionStage((current) => ({
-      ...current,
-      [event.conversationId]: event.progress.stage,
-    }));
     return;
   }
   if (event.type === "approval-required") {

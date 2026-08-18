@@ -1,6 +1,12 @@
 # Managed Execution Desktop Slice
 
 > Status: Historical implementation evidence from the retired Native Harness route. ADR 0022 is superseded by [ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md).
+>
+> The implementation paths and commands recorded below are not present on the
+> current product branch. They remain recoverable from branch
+> `codex/archive-enterprise-v1-2026-08-18` and annotated tag
+> `enterprise-v1-checkpoint-2026-08-18`. Current security authority is
+> [SECURITY.md](./SECURITY.md).
 
 ## Status
 

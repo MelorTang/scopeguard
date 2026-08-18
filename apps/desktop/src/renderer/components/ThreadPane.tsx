@@ -264,10 +264,7 @@ export function ThreadPane(props: {
               : ""}
           </span>
         </div>
-        <RunState
-          status={run?.status ?? null}
-          executionStage={workspace.executionStageByThread[thread.id] ?? null}
-        />
+        <RunState status={run?.status ?? null} />
       </header>
 
       <div className="conversation" ref={conversationRef}>
@@ -764,26 +761,14 @@ function ApprovalCard(props: {
 
 function RunState(props: {
   status: string | null;
-  executionStage: string | null;
 }): JSX.Element | null {
   if (!props.status) {
     return null;
   }
-  const executionLabel = props.executionStage
-    ? {
-        accepted: "已接收命令",
-        provisioning: "准备沙箱",
-        running: "沙箱运行中",
-        stopping: "正在停止",
-        cleaning: "正在清理",
-        completed: "命令已完成",
-        failed: "沙箱失败",
-      }[props.executionStage]
-    : null;
   return (
-    <span className={`run-state run-state--${props.executionStage ?? props.status}`}>
+    <span className={`run-state run-state--${props.status}`}>
       <span />
-      {executionLabel ?? formatRunStatus(props.status)}
+      {formatRunStatus(props.status)}
     </span>
   );
 }

@@ -10,10 +10,12 @@ ScopeGuard 是一个个人优先的桌面多 Agent 工作台，用于让多个 A
 
 ## 项目状态
 
-产品契约已于 2026-08-18 重置。当前架构决策是
-[ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)。仓库中现有的
-Native Harness 和 Managed Execution 代码属于重置前实现，不是新 V1 的运行时目标。
-Phase 1 必须先验证 Pi RPC，之后才会开始替换运行时。
+产品契约已于 2026-08-18 重置。[ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)
+定义产品边界，[ADR 0025](./docs/adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md)
+接受固定版本 Pi RPC 和受控审批 extension。Phase 2 候选已将活动 Native Harness
+composition 替换为 `@earendil-works/pi-coding-agent@0.84.2` 和全新的个人版 schema；
+最终决策等待 [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md)
+复审。
 
 旧企业路线保留在以下可恢复 checkpoint：
 
@@ -53,12 +55,16 @@ pnpm install
 pnpm test
 pnpm typecheck
 pnpm build
+pnpm qualify:pi-rpc
+pnpm pilot:pi-runtime
+pnpm pilot:pi-runtime:staged
 pnpm dev:web
 pnpm dev
 ```
 
-在 Pi RPC 替换完成前，这些命令仍然验证重置前实现。阶段门禁见
-[VERIFICATION.md](./docs/VERIFICATION.md)。
+`pilot:pi-runtime` 使用一次性 Desktop host、确定性 Provider 和真实固定版本 Pi RPC，
+完成整进程退出、opaque Session 恢复及第二轮继续执行；staged 版本会针对正式打包的
+Runtime 树重复同一验证。阶段门禁见 [VERIFICATION.md](./docs/VERIFICATION.md)。
 
 ## 文档
 

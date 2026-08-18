@@ -1,75 +1,73 @@
 # Security Model
 
-> Status: Pre-reset implementation snapshot. Phase 1 and Phase 2 must establish the Pi RPC security and permission contract before this becomes current V1 authority.
+Status: Current Phase 2 candidate boundary. See
+[ADR 0025](./adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md) and
+[ADR 0026](./adr/0026-replace-the-native-harness-with-pi-runtime.md).
 
-ScopeGuard sends user-selected conversation and Workspace Context data to the
-configured model Provider. It can also read, write, and execute within a
-user-selected local Workspace according to the conversation's execution
-profile. ScopeGuard is not a defense against arbitrary malware already running
-as the desktop user.
+ScopeGuard sends the selected Conversation prompt and Pi-owned Session context
+to the configured model Provider. A Workspace may expose a user-selected local
+folder to Pi Tools. ScopeGuard is local-first, but it is not a defense against
+malware already running as the desktop user.
 
-## Trust Boundaries
+## Desktop Boundaries
 
-- Electron Renderer is sandboxed, has `contextIsolation` enabled, and has no
-  Node.js access.
-- Preload exposes a fixed API. Main validates the sender and every IPC payload.
-- Opening a local folder requires native picker authorization bound to the
-  requesting WebContents.
-- Agent host is the only desktop SQLite writer and owns Provider and tool
-  orchestration.
-- Bounded commands cross a private typed Agent Host/Main channel to the Desktop
-  Execution Broker. Renderer and Preload cannot invoke that channel directly.
-- Web preview is an in-memory UI fixture and carries no desktop authority.
+- Electron Renderer is sandboxed, uses context isolation, and has no Node access.
+- Preload exposes a fixed API; Main validates the sender and IPC payload shape.
+- The Agent Host utility process is the only SQLite writer and Pi supervisor.
+- Provider secrets cross only the private Main/Agent Host secret channel.
+- Web preview is an in-memory UI fixture and has no local execution authority.
 
-## Context Isolation
+## Managed Pi Runtime
 
-- Each Run receives only its own conversation transcript and the current
-  explicit Workspace Context revision.
-- ScopeGuard never loads another conversation's transcript implicitly.
-- Workspace Context updates validate their Workspace, source conversation, and
-  source Run relationship before persistence.
-- Approval and user-input continuation stay attached to the originating Run.
+- Pi is pinned to `@earendil-works/pi-coding-agent@0.84.2`.
+- Automatic extension, Skill, prompt-template, theme, and context discovery is
+  disabled for the managed process.
+- Readiness checks the CLI version and SHA-256 manifest before enabling Tools.
+- Exactly one final ScopeGuard Tool-policy extension is permitted.
+- `read` is confined to a resolvable path inside the canonical Workspace; Agent
+  permission can allow, ask, or deny it.
+- `bash`, `write`, and `edit` require approval bound to process ID, RPC request
+  ID, Tool call ID, Tool name, canonical input, and SHA-256.
+- Unknown Tools, paths outside the Workspace, manifest drift, invalid RPC
+  responses, extension failure, and approval-channel loss fail closed.
+- A Conversation has at most one active Run; different Conversations use
+  separate supervised Pi processes.
 
-## Local Files And Commands
+Approval is not a sandbox. An approved `bash`, `write`, or `edit` runs with the
+operating-system permissions of the Desktop user and can target locations shown
+in its exact canonical input. Request Approval waits for the user. Auto Approve
+answers exact tuples automatically unless Agent policy denies that Tool. Full
+Access answers exact tuples for known Tools and allows Workspace reads, but
+unknown Tools still block and no unmanaged extension is loaded.
 
-- A Workspace with no local folder receives no local tools.
-- File paths are resolved beneath the canonical Workspace root; traversal and
-  symlink escapes are rejected.
-- Writes reject symlink targets, limit content, and use same-directory atomic
-  replacement.
-- Request Approval shows each mutating tool call. Auto Approve removes the
-  prompt but keeps the same bounded command path. Full Access is explicitly
-  unsandboxed.
-- Bounded Windows execution fails closed when Broker, Provisioner, runtime,
-  profile, ACL, process, or cleanup evidence is unavailable or invalid.
-- Cancellation is per Run. Desktop shutdown clears managed process trees.
-- An unconfirmed non-idempotent effect is reported as unknown, never projected
-  as successful or as having no effect.
+## Runtime Truth And Effects
 
-See [MANAGED_EXECUTION.md](./MANAGED_EXECUTION.md) for the Windows LPAC boundary
-and its deployment requirements.
+Pi Session JSONL is the only transcript, Tool-result, and compaction truth.
+ScopeGuard stores only product metadata and an opaque, versioned locator. Startup
+rejects missing, malformed, incompatible, mismatched, or unopenable Sessions and
+never substitutes an empty Session.
 
-## Credentials
+Approval does not prove completion. After an exact side-effect tuple is
+approved, ScopeGuard persists `effect_unknown` until Pi supplies enough evidence
+to classify the result. Crash, cancellation, shutdown, or a lost response keeps
+that uncertainty. A Run interrupted before any approved effect remains `none`.
 
-- Provider keys exist in Renderer memory only while entered.
-- Saved secrets are encrypted by Electron `safeStorage`; SQLite stores only an
-  opaque reference.
-- Secrets are not returned in desktop snapshots or written to Run events,
-  messages, manifests, usage records, or ordinary logs.
-- Provider errors are redacted using actual request credentials before they are
-  persisted or published.
-- Secret files and desktop SQLite files are restricted to the current OS user
-  on POSIX.
-- Linux `safeStorage` using the `basic_text` backend is rejected.
+## Credentials And Diagnostics
+
+- Saved Provider secrets use Electron `safeStorage`; SQLite stores an opaque
+  reference only.
+- Secrets are injected through an isolated temporary Pi profile and environment,
+  never sent as RPC fields or written to Session fixtures.
+- Temporary profiles are removed after each process.
+- stderr is UTF-8-byte bounded and configured secrets are redacted before an
+  error can enter product state.
+- Product SQLite files are restricted to the current OS user on POSIX.
 - Persisted custom Provider headers remain disabled.
-
-ScopeGuard has no Runtime token or remote-worker credential path. External Agent
-CLIs and terminals are outside its execution and credential boundary.
 
 ## User Responsibility
 
-Use trusted Provider endpoints, open only trusted local folders, and review the
-selected execution profile before starting a conversation. Full Access commands
-run with the operating-system permissions of the current desktop user. Bounded
-execution is currently Windows-only and requires the installed managed-execution
-companion; missing setup is an error, not a reason to elevate automatically.
+Use trusted Provider endpoints and inspect side-effect approval input before
+allowing it. User-opened terminals and external Agent CLIs are outside the
+managed Pi lifecycle and retain the user's full operating-system authority.
+The retired Windows LPAC prototype is historical evidence only; it is not part
+of the current Runtime or a claim made by the Phase 2 candidate.

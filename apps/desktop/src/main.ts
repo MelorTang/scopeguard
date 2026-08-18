@@ -28,7 +28,6 @@ import {
 import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
-import { createDesktopExecutionBroker } from "./main/desktop-execution-broker.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
 import { preparePrivateDataDirectory } from "./main/private-data-directory.js";
 import {
@@ -126,6 +125,9 @@ async function startApplication(): Promise<void> {
   });
 
   const userDataPath = app.getPath("userData");
+  const packagedRuntimeRoot = app.isPackaged
+    ? join(process.resourcesPath, "app.asar.unpacked", "runtime")
+    : null;
   await preparePrivateDataDirectory(userDataPath);
   const vault = new EncryptedSecretVault(
     join(userDataPath, "credentials", "providers.json"),
@@ -133,20 +135,26 @@ async function startApplication(): Promise<void> {
       safeStorage,
     },
   );
-  const managedExecution = await createDesktopExecutionBroker({
-    resourcesPath: process.resourcesPath,
-    userDataPath,
-    isPackaged: app.isPackaged,
-  });
   host = new AgentHostClient({
     modulePath: join(moduleDir, "agent-host.js"),
     databasePath: join(userDataPath, "scopeguard.db"),
+    piSessionRoot: join(userDataPath, "pi-sessions"),
+    piCliPath: packagedRuntimeRoot
+      ? join(
+          packagedRuntimeRoot,
+          "node_modules",
+          "@earendil-works",
+          "pi-coding-agent",
+          "dist",
+          "cli.js",
+        )
+      : undefined,
+    piRuntimeAssetRoot: packagedRuntimeRoot ?? undefined,
     vault,
     fork: (modulePath, args, options) =>
       utilityProcess.fork(modulePath, args, options),
     onRunEvent: forwardRunEvent,
     onReady: refreshRendererAfterHostReady,
-    managedExecution,
   });
   registerIpcHandlers(host);
   await host.start();

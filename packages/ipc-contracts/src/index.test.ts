@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   parseCreateAgentInput,
-  parseManagedExecutionRequest,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseUpdateConversationSettingsInput,
@@ -85,39 +84,4 @@ test("validates Conversation settings and approval decisions", () => {
     approvalId: "approval",
     decision: "approved-workspace",
   }), /approved-once or denied/);
-});
-
-test("validates managed execution requests at the private IPC boundary", () => {
-  const request = parseManagedExecutionRequest({
-    executionId: "execution",
-    workspaceId: "workspace",
-    conversationId: "conversation",
-    runId: "run",
-    workspaceRoot: "C:\\work",
-    command: "echo ready",
-    timeoutMs: 30_000,
-    environment: { PATH: "C:\\Windows\\System32" },
-  });
-  assert.equal(request.command, "echo ready");
-  assert.throws(
-    () => parseManagedExecutionRequest({ ...request, timeoutMs: 999 }),
-    /timeoutMs/,
-  );
-  assert.throws(
-    () => parseManagedExecutionRequest({ ...request, timeoutMs: 300_001 }),
-    /timeoutMs/,
-  );
-  assert.throws(
-    () => parseManagedExecutionRequest({ ...request, command: "x".repeat(100_001) }),
-    /command exceeds/,
-  );
-  assert.throws(
-    () => parseManagedExecutionRequest({
-      ...request,
-      environment: Object.fromEntries(
-        Array.from({ length: 65 }, (_, index) => [`KEY_${index}`, "value"]),
-      ),
-    }),
-    /environment exceeds/,
-  );
 });

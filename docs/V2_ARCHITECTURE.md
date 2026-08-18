@@ -1,8 +1,10 @@
 # ScopeGuard Personal Multi-Agent V1 Architecture
 
-Status: Target architecture accepted by
-[ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md). The current
-Native Harness implementation has not yet been replaced.
+Status: Product boundary accepted by
+[ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md), Pi RPC
+contract accepted by [ADR 0025](./adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md),
+and the Phase 2 Runtime/storage reset is a review candidate under
+[ADR 0026](./adr/0026-replace-the-native-harness-with-pi-runtime.md).
 
 ## Product Shape
 
@@ -42,17 +44,24 @@ Electron Renderer
                  `- compaction
 ```
 
-ScopeGuard supervises the Pi process and owns the RPC adapter, but does not
+ScopeGuard supervises one Pi process per running Conversation and owns the RPC
+adapter, but does not
 duplicate Pi's Agent loop, Tool lifecycle, session log, or compaction algorithm.
 ScopeGuard persists the stable mapping between its Conversation ID and the Pi
 session locator plus enough metadata to restore the workbench. Runtime events
 may be projected into the UI, but Pi remains the runtime session truth.
 
-Phase 1 must qualify the real RPC contract before replacement work starts. The
-prototype must cover startup and shutdown, streaming text, Tool call events,
-interrupt and cancellation, crash behavior, session resume, compaction, Provider
-configuration, and multiple concurrent sessions. Unsupported behavior remains
-explicit rather than being simulated by ScopeGuard.
+The fixed Runtime is `@earendil-works/pi-coding-agent@0.84.2`. Before Pi starts
+with Tools enabled, ScopeGuard verifies the CLI version plus a manifest that
+contains exactly one final Tool-policy extension and SHA-256 pins for every
+policy file. `read` remains inside the active Workspace and follows Agent
+allow/ask/deny policy. `bash`, `write`, and `edit` always cross an approval bound
+to the exact process, RPC request, Tool call, Tool name, canonical input, and
+input hash; the Conversation profile decides whether the User or ScopeGuard
+answers that tuple. Agent deny policy still blocks Auto Approve. Full Access
+automatically answers known Tools, while unknown Tools remain blocked. Manifest
+drift, wrong composition, or a lost approval channel fails closed. Qualification
+remains an independent frozen-lock upgrade gate.
 
 ## ScopeGuard Modules
 
@@ -74,22 +83,27 @@ Plain text, Markdown, and HTML use normal Model and local-file capabilities.
 Historical document-runtime research is input to this module, not an already
 accepted implementation stack.
 
-**Pi RPC adapter** translates between the ScopeGuard application contract and a
-pinned Pi RPC version. It owns protocol compatibility tests and process
-supervision, not product policy or UI state.
+**Pi RPC adapter** translates between the ScopeGuard application contract and
+the pinned Pi RPC version. It owns process supervision, strict response unions,
+bounded redacted diagnostics, readiness and policy composition, not UI state or
+Pi's transcript.
 
 ## Persistence
 
-ScopeGuard local storage contains product metadata, layouts, Agent definitions,
-Artifact records, Dispatch records, and Pi session locators. Pi owns its runtime
-session and compaction data. Workspace source files remain ordinary local files.
-Provider credentials must use operating-system protected storage or a Pi
-mechanism qualified during Phase 1; they must not be stored in plaintext product
-metadata.
+ScopeGuard schema family `scopeguard-personal-pi-v1`, version 1, contains
+Workspace, Provider reference, Agent, Conversation-to-Pi-locator, Run,
+approval-tuple, Workspace context, Artifact, Dispatch, and layout metadata.
+Artifact, Dispatch, and layout tables reserve product ownership for later
+phases; Phase 2 does not implement their UX. The database has no message, Tool
+result, transcript, or compaction tables. Pi's Session JSONL is the sole Runtime
+truth. Workspace source files remain ordinary local files, and Provider secrets
+remain in the operating-system vault rather than SQLite or RPC payloads.
 
-There is no migration from the retired development schema. The first runtime
-replacement migration creates a fresh schema and must reject accidental opening
-of incompatible old databases rather than partially interpreting them.
+There is no migration from the retired development schema. Startup validates
+the schema family/version, complete table and column shape, SQLite integrity,
+the complete Pi locator, fixed Pi/Session versions, Session file readability,
+Session ID, and Workspace identity. Missing, malformed, incompatible, or
+unopenable state stops startup; it never creates an empty replacement Session.
 
 ## Concurrency And Isolation
 
@@ -113,9 +127,9 @@ of incompatible old databases rather than partially interpreting them.
 
 ## Delivery Phases
 
-1. Phase 0: product contract, ADR, wayfinding, and historical checkpoint.
-2. Phase 1: Pi RPC qualification prototype and go/no-go decision.
-3. Phase 2: fresh local schema and runtime replacement behind stable interfaces.
+1. Phase 0: product contract, ADR, wayfinding, and historical checkpoint. Complete.
+2. Phase 1: Pi RPC qualification prototype and go/no-go decision. Complete.
+3. Phase 2: fresh local schema and runtime replacement behind stable interfaces. Review candidate.
 4. Phase 3: multi-Conversation workbench, explicit Dispatch, and recovery.
 5. Phase 4: Artifact Review and the bounded Office Tool Pack.
 6. Phase 5: packaging, cross-platform verification, and real-project pilot.

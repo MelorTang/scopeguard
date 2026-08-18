@@ -12,9 +12,11 @@ bounded request to another existing Conversation.
 ## Project Status
 
 The product contract was reset on 2026-08-18. [ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)
-is the current architecture decision. The checked-in Native Harness and Managed
-Execution code belongs to the pre-reset implementation and is not the new V1
-runtime target. Phase 1 must qualify Pi RPC before runtime replacement begins.
+defines the product boundary, and [ADR 0025](./docs/adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md)
+accepts pinned Pi RPC with a controlled approval extension. The Phase 2
+candidate replaces the active Native Harness composition with
+`@earendil-works/pi-coding-agent@0.84.2` and a fresh personal schema; its final
+decision is pending review in [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md).
 
 The retired enterprise route remains recoverable at:
 
@@ -55,13 +57,17 @@ pnpm install
 pnpm test
 pnpm typecheck
 pnpm build
+pnpm qualify:pi-rpc
+pnpm pilot:pi-runtime
+pnpm pilot:pi-runtime:staged
 pnpm dev:web
 pnpm dev
 ```
 
-These commands currently exercise the pre-reset implementation until the Pi RPC
-replacement lands. Acceptance gates are defined in
-[VERIFICATION.md](./docs/VERIFICATION.md).
+`pilot:pi-runtime` runs a disposable Desktop host, deterministic Provider, real
+pinned Pi RPC, full host restart, opaque Session resume, and a continued second
+turn. The staged variant repeats that proof against the packaged Runtime tree.
+Acceptance gates are defined in [VERIFICATION.md](./docs/VERIFICATION.md).
 
 ## Documentation
 

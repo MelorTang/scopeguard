@@ -7,17 +7,8 @@ import {
   type SaveProviderProfileInput,
   type SecretVault,
 } from "@scopeguard/application";
-import {
-  createProviderAdapter,
-} from "@scopeguard/provider-adapters";
+import { PiRuntimeSupervisor } from "@scopeguard/pi-runtime";
 import { ScopeGuardStore } from "@scopeguard/storage-sqlite";
-import {
-  ScopeGuardToolRegistry,
-} from "@scopeguard/tool-runtime";
-import {
-  CurrentUserManagedExecutionAdapter,
-  ManagedExecutionRouter,
-} from "@scopeguard/managed-execution";
 import {
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
@@ -25,8 +16,6 @@ import {
   type AgentHostResponse,
   type AgentHostSecretRequest,
   type AgentHostSecretResponse,
-  type AgentHostManagedExecutionEvent,
-  type AgentHostManagedExecutionResponse,
   type AgentHostToMainMessage,
   type MainToAgentHostMessage,
   type ResolveApprovalRequest,
@@ -40,8 +29,6 @@ import type {
   StartRunInput,
   UpdateConversationSettingsInput,
 } from "@scopeguard/domain";
-
-import { AgentHostManagedExecutionAdapter } from "./agent-host-managed-execution.js";
 
 class MainProcessSecretVault implements SecretVault {
   readonly #port: Electron.ParentPort;
@@ -128,22 +115,22 @@ const databasePath = process.env.SCOPEGUARD_DB_PATH;
 if (!databasePath) {
   throw new Error("SCOPEGUARD_DB_PATH is required.");
 }
+const piSessionRoot = process.env.SCOPEGUARD_PI_SESSION_ROOT;
+if (!piSessionRoot) {
+  throw new Error("SCOPEGUARD_PI_SESSION_ROOT is required.");
+}
 
 const store = new ScopeGuardStore(databasePath);
 const secrets = new MainProcessSecretVault(parentPort);
-const boundedExecution = new AgentHostManagedExecutionAdapter(parentPort);
-const tools = new ScopeGuardToolRegistry(
-  undefined,
-  new ManagedExecutionRouter({
-    bounded: boundedExecution,
-    fullAccess: new CurrentUserManagedExecutionAdapter(),
-  }),
-);
+const runtime = new PiRuntimeSupervisor({
+  sessionRoot: piSessionRoot,
+  cliPath: process.env.SCOPEGUARD_PI_CLI_PATH,
+  assetRoot: process.env.SCOPEGUARD_PI_RUNTIME_ASSET_ROOT,
+});
 const application: ScopeGuardCore = new ScopeGuardApplication({
   store,
   secrets,
-  providerFactory: (protocol) => createProviderAdapter({ protocol }),
-  tools,
+  runtime,
   publish: (event) => {
     parentPort.postMessage({
       type: "host-run-event",
@@ -161,14 +148,6 @@ parentPort.on("message", (messageEvent) => {
   }
   if (message?.type === "host-secret-response") {
     secrets.handleResponse(message);
-    return;
-  }
-  if (message?.type === "host-managed-execution-event") {
-    boundedExecution.handleEvent(message as AgentHostManagedExecutionEvent);
-    return;
-  }
-  if (message?.type === "host-managed-execution-response") {
-    boundedExecution.handleResponse(message as AgentHostManagedExecutionResponse);
     return;
   }
   if (message?.type === "host-request") {
@@ -196,8 +175,7 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   try {
     const applicationShutdown = application.shutdown();
-    const runtimeShutdown = tools.shutdown();
-    await Promise.allSettled([applicationShutdown, runtimeShutdown]);
+    await applicationShutdown;
   } finally {
     store.close();
     process.exit(0);

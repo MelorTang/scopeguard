@@ -11,8 +11,8 @@ import {
   validateProviderProfileInput,
 } from "./index.js";
 
-test("identifies the fresh V1 core schema", () => {
-  assert.equal(SCOPEGUARD_SCHEMA_ID, "scopeguard-v1-core");
+test("identifies the fresh personal Pi schema family", () => {
+  assert.equal(SCOPEGUARD_SCHEMA_ID, "scopeguard-personal-pi-v1");
   assert.equal(SCOPEGUARD_SCHEMA_VERSION, 1);
 });
 

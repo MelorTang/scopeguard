@@ -20,11 +20,6 @@ import type {
   WorkspaceContextRevision,
   WorkspaceSnapshot,
 } from "@scopeguard/domain";
-import type {
-  ManagedExecutionEvent,
-  ManagedExecutionRequest,
-  ManagedExecutionResult,
-} from "@scopeguard/managed-execution";
 
 export const IPC_CHANNELS = {
   getWorkspaceSnapshot: "scopeguard:workspace:get-snapshot",
@@ -97,42 +92,17 @@ export type AgentHostSecretResponse = {
   secret?: string | null;
   error?: string;
 };
-export type AgentHostManagedExecutionRequest = {
-  type: "host-managed-execution-request";
-  requestId: string;
-  request: ManagedExecutionRequest;
-};
-export type AgentHostManagedExecutionCancel = {
-  type: "host-managed-execution-cancel";
-  requestId: string;
-};
-export type AgentHostManagedExecutionEvent = {
-  type: "host-managed-execution-event";
-  requestId: string;
-  event: ManagedExecutionEvent;
-};
-export type AgentHostManagedExecutionResponse = {
-  type: "host-managed-execution-response";
-  requestId: string;
-  ok: boolean;
-  result?: ManagedExecutionResult;
-  error?: string;
-};
 export type AgentHostShutdownRequest = { type: "host-shutdown" };
 
 export type AgentHostToMainMessage =
   | AgentHostResponse
   | AgentHostRunEvent
   | AgentHostReady
-  | AgentHostSecretRequest
-  | AgentHostManagedExecutionRequest
-  | AgentHostManagedExecutionCancel;
+  | AgentHostSecretRequest;
 
 export type MainToAgentHostMessage =
   | AgentHostRequest
   | AgentHostSecretResponse
-  | AgentHostManagedExecutionEvent
-  | AgentHostManagedExecutionResponse
   | AgentHostShutdownRequest;
 
 export type SaveProviderProfileRequest = ProviderProfileInput & {
@@ -309,34 +279,6 @@ export function parseUpdateWorkspaceContextRequest(
       "sourceConversationId",
     ),
     sourceRunId: optionalNullableString(record.sourceRunId, "sourceRunId"),
-  };
-}
-
-export function parseManagedExecutionRequest(
-  value: unknown,
-): ManagedExecutionRequest {
-  const record = requireRecord(value, "Managed execution request");
-  const timeoutMs = requireInteger(record.timeoutMs, "timeoutMs");
-  if (timeoutMs < 1_000 || timeoutMs > 300_000) {
-    throw new Error("timeoutMs must be between 1000 and 300000.");
-  }
-  const command = requireNonEmptyString(record.command, "command");
-  if (command.length > 100_000) {
-    throw new Error("command exceeds 100000 characters.");
-  }
-  const environment = parseStringRecord(record.environment, "environment") ?? {};
-  if (Object.keys(environment).length > 64) {
-    throw new Error("environment exceeds 64 entries.");
-  }
-  return {
-    executionId: requireNonEmptyString(record.executionId, "executionId"),
-    workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
-    conversationId: requireNonEmptyString(record.conversationId, "conversationId"),
-    runId: requireNonEmptyString(record.runId, "runId"),
-    workspaceRoot: requireNonEmptyString(record.workspaceRoot, "workspaceRoot"),
-    command,
-    timeoutMs,
-    environment,
   };
 }
 

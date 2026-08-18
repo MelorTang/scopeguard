@@ -10,6 +10,8 @@ files:
   - "**/*"
 
 asar: true
+asarUnpack:
+  - "runtime/**"
 npmRebuild: false
 compression: maximum
 artifactName: "${productName}-${version}-${arch}-setup.${ext}"

@@ -235,6 +235,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         startedAt: timestamp,
         completedAt: null,
         error: null,
+        effect: "none",
         createdAt: timestamp,
       };
       snapshot = { ...snapshot, activeRuns: [...snapshot.activeRuns, run] };
@@ -343,6 +344,7 @@ function makeConversation(
     status: "active",
     modelOverride: null,
     executionProfile,
+    piSession: null,
     createdAt: now,
     updatedAt: now,
   };

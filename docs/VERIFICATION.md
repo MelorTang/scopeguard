@@ -1,8 +1,8 @@
 # ScopeGuard V1 Verification
 
-Status: Current acceptance entry for the personal multi-Agent reset. Historical
-Native Harness and Managed Execution checks remain regression evidence for old
-code, not release gates for the new runtime.
+Status: Current acceptance entry for the personal multi-Agent reset. Phases 0
+and 1 are accepted; Phase 2 is a review candidate. Historical Native Harness
+and Managed Execution checks are not release gates for the active Runtime.
 
 ## Phase 0: Product Reset
 
@@ -43,11 +43,19 @@ must not emulate a capability and label it native Pi behavior.
 Exit gate:
 
 - the retired Native Harness path is removed from the active composition root;
-- a fresh schema stores Workspace, Agent, Conversation mapping, Artifact, and
-  Dispatch metadata without migrating old development databases;
-- Pi sessions resume after a real Desktop restart;
-- malformed, missing, or incompatible session state fails explicitly;
-- repository tests, typecheck, and build pass.
+- a fresh `scopeguard-personal-pi-v1` schema stores product metadata and the
+  Conversation-to-Pi locator, but no transcript, Tool result, or compaction;
+- old or malformed schemas and missing, corrupt, incompatible, or mismatched Pi
+  locators fail explicitly without migration or an empty replacement Session;
+- the manifest permits exactly one final hashed Tool policy; Workspace `read`
+  is the only automatic allowlist, known side effects require exact-tuple
+  approval, and unknown Tools block;
+- a real Desktop host completes a Pi turn, exits fully, restarts against the
+  same database and opaque Session, continues, and proves the Provider received
+  prior context;
+- development and packaged Runtime trees both pass that restart/resume pilot;
+- qualification, frozen install, repository tests, typecheck, build, package
+  staging, link checks, secret/temp scans, and `git diff --check` pass.
 
 ## Phase 3: Parallel Workbench And Dispatch
 
@@ -93,16 +101,23 @@ Exit gate:
 
 ## Current Commands
 
-Until Phase 2 replaces the runtime, these commands verify repository health but
-do not prove the new Pi RPC architecture:
+The Phase 2 candidate is verified with:
 
 ```bash
+pnpm install --frozen-lockfile
+pnpm qualify:pi-rpc
 pnpm test
 pnpm typecheck
 pnpm build
-pnpm pilot:local
+pnpm pilot:pi-runtime
+pnpm pilot:pi-runtime:staged
+pnpm --filter @scopeguard/desktop package:prepare
 git diff --check
 ```
+
+The pilots use a deterministic local Provider and delete their temporary
+database, Workspace, credential profile, and Pi Session before exiting. A real
+external Provider smoke is optional and must not print or fixture its credential.
 
 Every milestone report must identify the exact commit, platform, Pi version,
 fixtures, command results, remaining gaps, and whether evidence comes from the

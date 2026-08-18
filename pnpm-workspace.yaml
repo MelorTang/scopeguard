@@ -1,5 +1,9 @@
 packages:
   - apps/*
-  - packages/*
+  - packages/domain
+  - packages/storage-sqlite
+  - packages/pi-runtime
+  - packages/application
+  - packages/ipc-contracts
 allowBuilds:
   esbuild: true

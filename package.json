@@ -6,16 +6,16 @@
   "scripts": {
     "build": "pnpm --filter @scopeguard/desktop build",
     "typecheck": "pnpm --filter @scopeguard/desktop typecheck",
-    "test": "pnpm --filter @scopeguard/domain --filter @scopeguard/storage-sqlite --filter @scopeguard/agent-runtime --filter @scopeguard/provider-adapters --filter @scopeguard/managed-execution --filter @scopeguard/tool-runtime --filter @scopeguard/application --filter @scopeguard/ipc-contracts --filter @scopeguard/desktop test",
+    "test": "pnpm --filter @scopeguard/domain --filter @scopeguard/storage-sqlite --filter @scopeguard/pi-runtime --filter @scopeguard/application --filter @scopeguard/ipc-contracts --filter @scopeguard/desktop test",
     "dev": "pnpm --filter @scopeguard/desktop dev",
     "dev:web": "pnpm --filter @scopeguard/desktop dev:web",
     "start": "pnpm --filter @scopeguard/desktop start",
     "package:win:dir": "pnpm --filter @scopeguard/desktop package:win:dir",
     "package:win": "pnpm --filter @scopeguard/desktop package:win",
-    "package:managed:win": "pwsh -File packages/managed-execution/native/windows/build-managed-companion.ps1",
-    "test:managed:install:win": "pwsh -File packages/managed-execution/native/windows/managed-companion-installation-test.ps1",
     "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider",
-    "pilot:local": "pnpm --filter @scopeguard/desktop pilot:local",
+    "pilot:local": "pnpm pilot:pi-runtime",
+    "pilot:pi-runtime": "pnpm --filter @scopeguard/desktop pilot:pi-runtime",
+    "pilot:pi-runtime:staged": "pnpm --filter @scopeguard/desktop pilot:pi-runtime:staged",
     "qualify:pi-rpc": "pnpm --dir prototypes/pi-rpc-qualification install --ignore-workspace --frozen-lockfile && pnpm --dir prototypes/pi-rpc-qualification typecheck && pnpm --dir prototypes/pi-rpc-qualification qualify"
   },
   "devDependencies": {
