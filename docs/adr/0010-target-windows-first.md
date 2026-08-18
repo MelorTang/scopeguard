@@ -1,6 +1,6 @@
 # Target Windows first
 
-Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+Status: Partially superseded. Only the ADR 0010 principle in [ADR 0024's amendment matrix](./0024-adopt-a-personal-first-pi-rpc-workbench.md#amendment-matrix) remains normative; all conflicting or additional clauses below are historical.
 
 ScopeGuard V1 will treat Windows 10 and 11 on x64 as the release acceptance
 platform and macOS on Apple Silicon as a development and secondary support

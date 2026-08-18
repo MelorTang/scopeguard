@@ -29,7 +29,9 @@ an explicit Dispatch. A Conversation has at most one active Run.
 **Dispatch**:
 An explicit request sent from one Conversation to another existing Conversation
 in the same Workspace. A Dispatch identifies its source and destination and does
-not implicitly share either Conversation's full history.
+not implicitly share either Conversation's full history. **Agent Dispatch** is
+the user-visible name for this action; `Dispatch` is the canonical entity. The
+two names do not identify separate concepts.
 
 **Handoff**:
 The broader act of transferring bounded work between Agents or Conversations.

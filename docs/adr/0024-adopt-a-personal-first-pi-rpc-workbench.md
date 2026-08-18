@@ -7,6 +7,26 @@ Supersedes ADR 0002, 0004, 0005, 0006, 0009, 0012, 0013, 0014, 0017,
 boundary of ADR 0001, 0003, 0008, 0010, 0011, 0015, and 0016, while preserving
 their applicable principles. ADR 0007 and 0021 remain active.
 
+## Amendment Matrix
+
+For each partially superseded ADR below, exactly one principle remains
+normative. The old ADR body remains unchanged as historical evidence, but every
+role, term, implementation requirement, and additional policy not included in
+the retained-principle column is non-normative for the new V1.
+
+| ADR | Sole retained principle | Retired clauses |
+| --- | --- | --- |
+| 0001 | A Conversation is persistent and permanently bound to one Agent. | A required primary Task, the rule that every new objective must create a Conversation, the old Task/Thread consolidation rationale, and enterprise-office terminology. |
+| 0003 | Durable Conversation history is not deleted by runtime compaction; compaction changes only the model-visible working context. | Organization Knowledge, governed Workspace Context and Active Context Projection as ScopeGuard-owned runtime abstractions, and the old memory-policy requirements. Pi owns session and compaction behavior under this ADR. |
+| 0008 | Cross-Conversation coordination is explicit and bounded: the User either copies a Handoff prompt or sends a Dispatch to an existing Conversation without implicitly sharing the source history. | Member, Template authorization, Task packages, Conversation Attachment rules, per-action disclosure policy, and any claim that the old ScopeGuard runtime starts the target Agent. |
+| 0010 | Windows 10/11 x64 remains the V1 release-acceptance platform, with macOS Apple Silicon as the development and secondary-support platform. | Member terminology and fixed packaging, profile-location, installation, or update mechanics that have not passed the new Phase 5 gate. |
+| 0011 | Local Workspace files, Conversation access, and Artifacts remain usable when Model or external-service access is unavailable. | Mandatory enterprise login, Organization/Member identity binding, enterprise-server authentication, enterprise knowledge availability rules, and the old local-encryption design. Credential and identity behavior must be requalified for Pi RPC. |
+| 0015 | Conversations share the live Workspace directory, and conflicting writes stop rather than silently overwrite a changed file. | Member terminology, the exact hash/temp-file algorithm, default Artifact Version behavior, and Git-worktree product commitments until revalidated under the new runtime. |
+| 0016 | Skills use an open `SKILL.md`-rooted package that a User may install and select. | Organization/Member scopes and precedence, the old Conversation Execution Profile and Managed Execution Sandbox requirements, and unvalidated schema, update, signing, or marketplace policy. |
+
+ADR 0007 and 0021 are reaffirmed without amendment. All ADRs listed as
+superseded above are wholly historical and non-normative.
+
 ## Decision
 
 ScopeGuard V1 is a personal-first, local desktop workbench for programming and

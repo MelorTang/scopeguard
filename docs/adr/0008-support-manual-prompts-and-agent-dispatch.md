@@ -1,6 +1,6 @@
 # Support manual prompts and Agent Dispatch
 
-Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+Status: Partially superseded. Only the ADR 0008 principle in [ADR 0024's amendment matrix](./0024-adopt-a-personal-first-pi-rpc-workbench.md#amendment-matrix) remains normative; all conflicting or additional clauses below are historical.
 
 ScopeGuard will support two explicit Handoff paths. For manual coordination, an
 Agent can produce a structured Handoff Prompt rendered as a plain-text block

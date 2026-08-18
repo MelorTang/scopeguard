@@ -1,6 +1,6 @@
 # Share live Workspaces with conflict detection
 
-Status: Active in principle; amended by [ADR 0024](./0024-adopt-a-personal-first-pi-rpc-workbench.md) on 2026-08-18.
+Status: Partially superseded. Only the ADR 0015 principle in [ADR 0024's amendment matrix](./0024-adopt-a-personal-first-pi-rpc-workbench.md#amendment-matrix) remains normative; all conflicting or additional clauses below are historical.
 
 Conversations in one Workspace will operate on the same live local directory
 rather than receiving isolated copies. Reads and writes to different files may

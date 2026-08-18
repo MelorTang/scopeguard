@@ -1,5 +1,10 @@
 # Windows LPAC Managed Execution native components
 
+> Status: Historical Native Harness snapshot. The LPAC product-adapter and
+> release-gate claims below apply only to the checkpointed enterprise route and
+> are not current V1 requirements. See [ADR 0024](../../../../docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)
+> and the current [verification gates](../../../../docs/VERIFICATION.md).
+
 This directory preserves the source and hostile-input matrices that selected
 the ScopeGuard-owned LPAC runner for [issue #14](https://github.com/MelorTang/scopeguard/issues/14).
 The launcher, lifetime Broker, and installed Provisioner service are now called
