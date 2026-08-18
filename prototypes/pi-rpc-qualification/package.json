@@ -3,10 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.0.0",
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
     "qualify": "node run.mjs"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.2"
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@types/node": "24.12.2",
+    "typescript": "5.9.3"
   }
 }

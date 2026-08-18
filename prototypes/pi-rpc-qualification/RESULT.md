@@ -1,98 +1,91 @@
 # Pi RPC Qualification Result
 
-Status: Revised candidate evidence for Phase 1 review on 2026-08-18.
+Status: Third candidate evidence for Phase 1 review on 2026-08-18.
 
 ## Verdict
 
-**Go with constraints for Pi RPC plus a required ScopeGuard approval
-extension.** The pinned package reliably provides process, streaming, Tool,
-Session, interrupt, compaction, Provider, and four-process concurrency contracts.
-Its official pre-execution `tool_call` hook and RPC extension UI protocol form a
-working host approval bridge.
+**Go with constraints for Pi RPC plus a mandatory, default-fail-closed
+ScopeGuard Tool policy extension.** The pinned package provides usable process,
+streaming, Tool, Session, interrupt, compaction, Provider, and four-process
+concurrency contracts.
 
-This is not a Go for bare Pi RPC. Request Approval requires the packaged
-extension to load successfully and remain connected to the owning host. A lost
-or corrupt approval channel must fail Runtime readiness or stop the owning Run.
-Already-started Tool effects remain a separate certainty problem and map to
-ScopeGuard's `effect_unknown` when no trustworthy result exists.
+This is not a Go for bare Pi RPC or arbitrary extensions. Request Approval is
+valid only when startup disables discovery, verifies the committed extension
+manifest and hashes, loads exactly one final Tool policy, and binds approval to the exact process,
+RPC request ID, Tool call ID/name, canonical input, and input SHA-256. A missing,
+changed, reordered, or disconnected policy fails closed.
 
 ## Fixed Runtime
 
-| Item | Qualified value |
-| --- | --- |
-| Package | `@earendil-works/pi-coding-agent@0.84.2` |
-| Git tag / commit | `v0.84.2` / `914cf1472e715297caa30db4b9535d534a9eb718` |
-| npm integrity | `sha512-l4E+B7hgXKWddRo8bC/eSue2aWZjEgJ9xIpf5p0Og+lq8a2TArCwJ0HCoCPCgaBP/tN4zbYH/wOwvx9pJpeLCA==` |
-| License | MIT |
-| Qualification host | macOS arm64, Node.js `v26.0.0` |
-| Provider | Deterministic local OpenAI-compatible SSE fake; no real credential used |
-| Approval extension | `approval-extension.ts`, loaded by official `--extension` |
-
-The exact Pi dependency belongs to the private
-`@scopeguard/pi-rpc-qualification` workspace, not the repository root or a
-product package. The pnpm workspace has one shared lockfile, so Pi's transitive
-`yaml` peer still changes Vite's peer-resolution snapshot. No product source or
-bundle imports Pi in Phase 1. Phase 2 must move the exact dependency to the
-Runtime-owning package and regenerate/review the shared lockfile.
+| Item                | Qualified value                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| Package             | `@earendil-works/pi-coding-agent@0.84.2`                                                          |
+| Git tag / commit    | `v0.84.2` / `914cf1472e715297caa30db4b9535d534a9eb718`                                            |
+| npm integrity       | `sha512-l4E+B7hgXKWddRo8bC/eSue2aWZjEgJ9xIpf5p0Og+lq8a2TArCwJ0HCoCPCgaBP/tN4zbYH/wOwvx9pJpeLCA==` |
+| License             | MIT                                                                                               |
+| Qualification host  | macOS arm64, Node.js `v26.0.0`                                                                    |
+| Provider            | Deterministic local OpenAI-compatible SSE fake                                                    |
+| Dependency boundary | Prototype-owned package and frozen lockfile; absent from root workspace and root lock             |
 
 ## Observed Matrix
 
-| Contract | Result | Classification | Evidence |
-| --- | --- | --- | --- |
-| Spawn, version, ready | Pass | lossy | CLI reports `0.84.2`; correlated `get_state` is the bounded readiness policy because RPC has no handshake/version command. |
-| Graceful shutdown | Pass | lossy | Closing stdin exits 0. There is no shutdown acknowledgement. |
-| Host termination and crash | Pass | lossy | SIGTERM becomes exit 143; SIGKILL remains a distinct signal; startup/model errors use non-zero exit and redacted stderr. |
-| Streaming text | Pass | exact | LF JSONL preserves U+2028 and orders message start, deltas, authoritative message end, and `agent_settled`. |
-| Tool call mapping | Pass | exact | `toolcall_end.toolCall` ID/name/full arguments equal execution ID/name/args; partial deltas are not executed. |
-| Tool result mapping | Pass | exact | `tool_execution_end` content, optional details presence/value, `isError`, and concrete success/error text equal the persisted Pi `toolResult` payload. |
-| Extension approve | Pass | exact | Tool effect is absent before confirm; matching-ID `confirmed:true` permits execution and persists the correlated success result. |
-| Extension reject/cancel/timeout | Pass | exact | Each resolves to `block:true`; no Tool effect exists and a scenario-specific error body is persisted. Timeout uses Pi's 150 ms dialog timeout. |
-| Extension error | Pass | exact | A thrown `tool_call` handler becomes a persisted error Tool result and the Tool implementation does not run. |
-| Host disconnect during approval | Pass | exact | Closing stdin while confirm is pending exits 0 without executing the Tool effect. No completed blocked result is claimed for this process-loss case. |
-| Approval isolation | Pass | exact | Two Pi processes emit different opaque IDs; approve and reject responses affect only their owning Conversation. |
-| Four concurrent Sessions | Pass | exact | Four independent Pi processes expose distinct Session IDs and settle concurrently. One Pi process has one active Session. |
-| Targeted interrupt | Pass | exact | Aborting one process stops only its Session; three peers complete. |
-| Interrupted Tool effect | Pass | lossy | The target wrote a marker before abort. Pi reports abort/error but not effect certainty; ScopeGuard must record `effect_unknown`. |
-| Session create and locator | Pass | exact | `new_session` returns `cancelled=false`; `get_state` exposes the new ID and opaque file locator. |
-| Restart and resume | Pass | exact | Restart with the locator preserves Session ID, Pi-owned history, and provider-visible prior context. |
-| Session compatibility | Pass with constraint | lossy | Qualified files use format v3. RPC has no compatibility negotiation; upgrades require pin, backup, open-copy test, and rollback. |
-| Compaction and recovery | Pass | exact | Real manual `compact` calls the Provider, emits start/end, persists a Pi entry, survives restart, and continues. |
-| Provider/model | Pass | exact | Isolated `models.json` selects the fixed Provider/model; invalid model and HTTP 503 paths remain distinct. |
-| Credential boundary | Pass | lossy | The fake key reaches only the Provider and is absent from profile, Workspace, Session, and committed fixtures. Dynamic Provider/auth mutation is not RPC. |
-| Unknown event | Pass with constraint | unsupported | A synthetic future record is preserved and classified unknown without success semantics. RPC has no event-schema negotiation. |
-| Forced protocol failure cleanup | Pass | exact | Invalid JSONL becomes a propagated bounded/redacted error; child, fake Provider, profile, Workspace, Sessions, and temporary root are removed. |
-| Normal cleanup | Pass | exact | All Pi children, Provider, profile, Workspace, and Sessions are removed. |
+| Contract                           | Result               | Classification        | Evidence                                                                                                                                                                                 |
+| ---------------------------------- | -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Spawn, version, ready              | Pass                 | lossy                 | CLI reports `0.84.2`; correlated `get_state` is readiness because RPC has no handshake/version command.                                                                                  |
+| Graceful shutdown                  | Pass                 | lossy                 | Closing stdin exits 0 without a shutdown acknowledgement.                                                                                                                                |
+| Host termination and crash         | Pass                 | lossy                 | SIGTERM becomes exit 143; SIGKILL remains distinct; errors preserve bounded redacted diagnostics.                                                                                        |
+| Streaming text                     | Pass                 | exact                 | LF JSONL preserves U+2028 and ordered message events through `agent_settled`.                                                                                                            |
+| Tool call and result               | Pass                 | exact                 | Authoritative arguments, execution IDs/content/details/error, and persisted `toolResult` payloads correlate.                                                                             |
+| Default Tool policy                | Pass                 | exact                 | Unmarked `bash`, `write`, and `edit` all requested approval; reject paths persisted errors with no effect.                                                                               |
+| Read-only allowlist                | Pass                 | exact                 | Only explicit `read` auto-allowed and completed without an approval request.                                                                                                             |
+| Unknown Tool default               | Pass                 | exact                 | A registered unknown mutating Tool was blocked, persisted, and produced no file effect.                                                                                                  |
+| Approval binding                   | Pass                 | exact                 | Request carries canonical input and SHA-256; host tuple includes process, request ID, Tool ID/name, and hash.                                                                            |
+| Approve/reject/cancel/timeout      | Pass                 | exact                 | Approve executes only after response; all false paths persist correlated blocks without effects.                                                                                         |
+| RPC response validation            | Pass                 | exact                 | Forged type/ID, mixed members, wrong types, false cancel, and extra fields throw before wire write.                                                                                      |
+| Extension composition              | Pass                 | exact                 | Manifest hash drift, unknown IDs, multiple/misordered policy composition, and post-policy mutators fail before spawn.                                                                    |
+| Pre-policy mutation                | Pass                 | exact with constraint | A declared earlier mutator changed input; the final policy approved the changed hash and only the changed command executed. Production should omit mutators unless explicitly qualified. |
+| Extension error                    | Pass                 | exact                 | A thrown final policy handler persists an error and does not execute the Tool.                                                                                                           |
+| Host disconnect                    | Pass                 | exact                 | Closing the owning process during confirmation produces no Tool effect; no completed blocked result is claimed.                                                                          |
+| Approval isolation                 | Pass                 | exact                 | Two processes produced distinct IDs and affected only their owning Conversation.                                                                                                         |
+| Four concurrent Sessions           | Pass                 | exact                 | Four independent processes exposed distinct Session IDs and settled concurrently.                                                                                                        |
+| Targeted interrupt                 | Pass                 | exact                 | Aborting one process did not stop three peers.                                                                                                                                           |
+| Interrupted Tool effect            | Pass                 | lossy                 | The Tool left a partial file, so ScopeGuard must record `effect_unknown`.                                                                                                                |
+| Session create/resume              | Pass                 | exact                 | Opaque locator and format v3 survived process restart with prior provider-visible history.                                                                                               |
+| Session compatibility              | Pass with constraint | lossy                 | RPC has no format negotiation; upgrades require pin, backup, open-copy test, and rollback.                                                                                               |
+| Compaction and recovery            | Pass                 | exact                 | Real manual compaction persisted, survived restart, and continued.                                                                                                                       |
+| Provider/model and errors          | Pass                 | exact                 | Fixed profile selects the model; invalid model and HTTP 503 remain distinct.                                                                                                             |
+| Credential boundary                | Pass                 | lossy                 | The fake key reached only the Provider and was absent from temporary files.                                                                                                              |
+| Unknown event                      | Pass with constraint | unsupported           | A synthetic future event is preserved without success semantics.                                                                                                                         |
+| UTF-8 diagnostic bound and cleanup | Pass                 | exact                 | Multibyte stderr remained at or below 2,048 bytes without broken code points; protocol failure propagated and all temporary resources were removed.                                      |
 
 ## Approval Sequence
 
-The executable bridge is:
-
 ```text
-assistant toolcall_end
-  -> Pi tool_execution_start
-  -> extension tool_call (Tool implementation has not run)
-  -> ctx.ui.confirm
-  -> RPC extension_ui_request { id, method: "confirm" }
-  -> host extension_ui_response { id, confirmed | cancelled }
-  -> extension allow or { block: true, reason }
-  -> Tool execution or persisted blocked toolResult
+controlled extension manifest + SHA-256 verification
+  -> earlier declared registration/mutator fixtures, if any
+  -> final ScopeGuard tool_call policy
+  -> explicit read allow OR unknown block OR canonical approval payload
+  -> RPC extension_ui_request owned by one Pi process
+  -> strict matching-ID extension_ui_response
+  -> execute exact approved input or persist blocked toolResult
 ```
 
-`tool_execution_start` is not treated as approval. The extension hook is the
-pre-execution boundary, and the opaque RPC UI ID is valid only in its owning Pi
-process.
+`tool_execution_start` is not approval. Pi emits it before the pre-execution
+extension decision. In a composition with mutation, the model's
+`toolcall_end` remains the original input; the final policy request is the
+authoritative approval input. This is why production startup must control the
+entire extension list and forbid any handler after the policy.
 
 ## Command And Output
 
-Run from the repository root:
+From the repository root:
 
 ```bash
-pnpm install --frozen-lockfile
 pnpm qualify:pi-rpc
 ```
 
-The command exits non-zero on any failed assertion. The revised successful run
-reported:
+The command performs the prototype's independent frozen install and exits
+non-zero on any failed assertion. The successful third-candidate run reported:
 
 ```json
 {
@@ -100,29 +93,25 @@ reported:
   "license": "MIT",
   "node": "v26.0.0",
   "platform": "darwin-arm64",
-  "checks": 21,
-  "exact": 16,
+  "checks": 26,
+  "exact": 21,
   "lossy": 4,
   "unsupported": 1,
   "result": "qualification-complete"
 }
 ```
 
-Classifications are runtime-validated finite values. The unsupported count is
-safe unknown-event interpretation, not a failed required contract. The 21 count
-is the number of emitted evidence records; the matrix separates some combined
-records into individual contract rows.
+Classifications are runtime-validated finite values. The unsupported record is
+safe unknown-event interpretation, not a required-contract failure.
 
 ## Evidence Boundary
 
-- No real Provider smoke was run. Deterministic protocol evidence does not claim
-  service-specific compatibility.
-- Windows process and extension packaging behavior remain unqualified.
-- Automatic threshold compaction was not tested; the qualified contract is the
-  real manual RPC compaction and post-restart continuation.
-- Extension load/hash readiness, production permission-level mapping, and
-  process-loss recovery belong to Phase 2 implementation and verification.
-- The fake Provider is not transcript truth. Pi's Session JSONL, Tool results,
-  and compaction entries remain authoritative.
-- Each Pi or extension change must rerun this command and an open-copy Session
-  migration test before production pin changes.
+- No real Provider smoke or Windows extension packaging run was performed.
+- Automatic threshold compaction remains unqualified; manual RPC compaction and
+  post-restart continuation are qualified.
+- Phase 2 must package and verify the manifest/policy hash as Runtime readiness,
+  reject unmanaged extensions, and persist the process-bound approval tuple.
+- Production permission-level mapping and process-loss recovery remain Phase 2
+  implementation gates.
+- Pi remains Session and transcript truth. ScopeGuard must not fabricate a
+  replacement transcript or compaction history.

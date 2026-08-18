@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "extensions": {
+    "approval-policy": {
+      "path": "extensions/approval-extension.ts",
+      "sha256": "1d728579e83002909f23606efa9a10451649372d744e0558b03bb3bca0b415ac",
+      "toolCallRole": "policy",
+      "dependencies": [
+        {
+          "path": "extensions/approval-policy.ts",
+          "sha256": "1f8cf2898061d6005846c7f7d9825a5b9b4e39920899f734205bddbff07c0f8d"
+        }
+      ]
+    },
+    "mutator-fixture": {
+      "path": "extensions/fixtures/mutator-extension.ts",
+      "sha256": "50866f240a310cb723ed5411f6010050ca57192d730213cf73b326863e802272",
+      "toolCallRole": "mutator"
+    },
+    "unknown-tool-fixture": {
+      "path": "extensions/fixtures/unknown-tool-extension.ts",
+      "sha256": "04fd204b2c9f35abd27ebbad0545eba57f0a51eba31da80cad84de8197695677",
+      "toolCallRole": "registration"
+    }
+  },
+  "profiles": {
+    "production": ["approval-policy"],
+    "mutator-test": ["mutator-fixture", "approval-policy"],
+    "unknown-tool-test": ["unknown-tool-fixture", "approval-policy"]
+  }
+}

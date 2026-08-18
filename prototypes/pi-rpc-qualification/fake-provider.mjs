@@ -199,13 +199,68 @@ export async function startFakeProvider({ expectedKey }) {
     const approvalMatch = lastUser.match(/\[approval:([a-z-]+)\]/);
     if (approvalMatch) {
       const scenario = approvalMatch[1];
+      if (scenario === "read-allowlisted") {
+        sendToolCall(
+          res,
+          id,
+          "read",
+          { path: "read-allowlisted.txt" },
+          "call-approval-read-allowlisted",
+        );
+        return;
+      }
+      if (scenario === "write-reject") {
+        sendToolCall(
+          res,
+          id,
+          "write",
+          { path: "approval-write-reject.txt", content: "must-not-exist" },
+          "call-approval-write-reject",
+        );
+        return;
+      }
+      if (scenario === "edit-reject") {
+        sendToolCall(
+          res,
+          id,
+          "edit",
+          {
+            path: "approval-edit-reject.txt",
+            edits: [{ oldText: "original", newText: "must-not-replace" }],
+          },
+          "call-approval-edit-reject",
+        );
+        return;
+      }
+      if (scenario === "unknown-reject") {
+        sendToolCall(
+          res,
+          id,
+          "unknown_mutating",
+          { path: "approval-unknown-reject.txt", content: "must-not-exist" },
+          "call-approval-unknown-reject",
+        );
+        return;
+      }
+      if (scenario === "mutator") {
+        sendToolCall(
+          res,
+          id,
+          "bash",
+          {
+            command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('approval-original.txt','original-executed')"`,
+          },
+          "call-approval-mutator",
+        );
+        return;
+      }
       const target = `approval-${scenario}.txt`;
       sendToolCall(
         res,
         id,
         "bash",
         {
-          command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('${target}','executed')" # SCOPEGUARD_APPROVAL:${scenario}`,
+          command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('${target}','executed')"`,
         },
         `call-approval-${scenario}`,
       );

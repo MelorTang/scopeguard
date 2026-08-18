@@ -16,7 +16,7 @@
     "test:managed:install:win": "pwsh -File packages/managed-execution/native/windows/managed-companion-installation-test.ps1",
     "smoke:provider": "pnpm --filter @scopeguard/desktop smoke:provider",
     "pilot:local": "pnpm --filter @scopeguard/desktop pilot:local",
-    "qualify:pi-rpc": "pnpm --filter @scopeguard/pi-rpc-qualification qualify"
+    "qualify:pi-rpc": "pnpm --dir prototypes/pi-rpc-qualification install --ignore-workspace --frozen-lockfile && pnpm --dir prototypes/pi-rpc-qualification typecheck && pnpm --dir prototypes/pi-rpc-qualification qualify"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

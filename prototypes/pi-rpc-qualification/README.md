@@ -1,53 +1,65 @@
 # Pi RPC Qualification Harness
 
-This disposable prototype qualifies the exact Pi RPC package pinned in the
-repository lockfile. It does not modify or replace ScopeGuard's product Runtime.
+This disposable prototype qualifies official
+`@earendil-works/pi-coding-agent@0.84.2`, tag `v0.84.2`, commit
+`914cf1472e715297caa30db4b9535d534a9eb718`, under the MIT license. It does not
+modify or replace ScopeGuard's product Runtime.
 
-The fixed target is `@earendil-works/pi-coding-agent@0.84.2`, corresponding to
-official tag `v0.84.2` and commit
-`914cf1472e715297caa30db4b9535d534a9eb718` under the MIT license. Install the
-repository dependencies with the pinned lockfile before running the harness:
-
-```bash
-pnpm install --frozen-lockfile
-```
-
-Run the full matrix from the repository root:
+Run the complete, independently locked qualification from the repository root:
 
 ```bash
 pnpm qualify:pi-rpc
 ```
 
-The command exits non-zero on any failed assertion. It starts a deterministic
-local OpenAI-compatible fake Provider, creates isolated Pi config, Workspace,
-and Session directories under the operating-system temporary directory, starts
-real Pi RPC child processes, scans temporary files for the fake credential, and
-removes all temporary state before success or failure exit.
+That command performs a frozen install against this directory's own
+`pnpm-lock.yaml`, typechecks every extension, then runs every assertion. The prototype is not a member of
+the root pnpm workspace, and Pi does not appear in the root lockfile. This keeps
+Pi's transitive peer graph out of Desktop's Vite resolution.
 
-The harness loads `approval-extension.ts` through Pi's official `--extension`
-argument. It verifies the actual pre-execution `tool_call` -> RPC confirm ->
-matching-ID host response -> execute/block path. Reject, cancel, timeout,
-extension error, and host disconnect are tested as fail-closed cases; an
-observed `tool_execution_start` is never treated as approval.
+The harness starts a deterministic local OpenAI-compatible Provider, isolated
+Pi profiles, Workspaces, Sessions, and real RPC child processes. It exits
+non-zero on any failed assertion and removes temporary state on success or
+failure. No real Provider credential is required or persisted.
 
-`RpcProcess` keeps only bounded, redacted stderr and converts invalid JSONL into
-a propagated protocol error. A forced-failure fixture asserts child and Provider
-termination plus removal of its temporary profile, Workspace, and Sessions.
+## Approval Contract
 
-The harness deliberately removes inherited environment variables whose names
-look like credentials and sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`. It never
-requires or exercises a real Provider key. A real-provider smoke is optional
-future evidence and must not weaken or replace this deterministic gate.
+The committed extension manifest pins each allowed extension by SHA-256 and
+orders the ScopeGuard policy last. Pi extension discovery is disabled; startup
+loads only the manifest paths and rejects unknown files, hash drift, more than
+one policy, or any extension after the policy. Test-only Tool
+registration and mutation fixtures must appear before that final policy.
 
-Pi is an exact dependency of this private prototype workspace rather than the
-root or a product package. pnpm still uses one shared lockfile, so Pi's
-transitive `yaml` peer affects Vite's peer-resolution snapshot. This is an
-intentional Phase 1 lockfile effect, not a product import. Phase 2 must move the
-pin to the Runtime-owning package and review the regenerated shared lockfile.
+The policy is default fail-closed:
 
-`fixtures/expected-contract.json` contains stable expected event categories and
-one explicitly synthetic future event used only to prove fail-safe unknown-event
-handling. It is not represented as an event emitted by Pi.
+- `read` is the only explicit read-only auto-allow entry;
+- `bash`, `write`, and `edit` always require host confirmation;
+- every unknown or unclassified Tool is blocked without execution.
 
-See `RESULT.md` for the observed matrix and candidate verdict, and
-`../../docs/research/pi-rpc-qualification.md` for pinned primary-source analysis.
+Model text and Tool arguments never select the policy. Each confirmation
+contains the Tool call ID, Tool name, canonical input, and its SHA-256. The host
+binds those fields to the owning Pi process and opaque RPC request ID. The RPC
+adapter accepts only one exact `confirmed`, `cancelled`, or `value` response
+shape and writes the request's fixed type and ID after validation.
+
+The qualification proves unmarked bash, write, edit, and a registered unknown
+mutating Tool cannot bypass this policy. It also proves a declared earlier
+mutator is visible to the final policy, while a mutator placed after approval is
+rejected before process spawn.
+
+## Evidence Layout
+
+- `run.mjs` is the short scenario orchestrator.
+- `qualification/` owns shared context, evidence vocabulary, and assertions.
+- `scenarios/` contains independent executable qualification scenarios.
+- `extensions/` contains the policy and explicit test fixtures.
+- `fixtures/extension-manifest.json` is the controlled composition manifest.
+- `RESULT.md` records observed output and the candidate verdict.
+
+`RpcProcess` bounds stderr by actual UTF-8 bytes, redacts diagnostics, and
+propagates malformed JSONL as a protocol error. The forced-failure fixture uses
+multibyte stderr and proves child, Provider, profile, Workspace, Session, and
+temporary-root cleanup.
+
+See `../../docs/research/pi-rpc-qualification.md` for pinned primary-source
+analysis and `../../docs/adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md`
+for the candidate decision.

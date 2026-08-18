@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 const DEFAULT_MAX_STDERR_BYTES = 16_384;
 const MAX_PROTOCOL_LINE_BYTES = 1_024;
 const MAX_WIRE_BUFFER_BYTES = 1_048_576;
+const TRUNCATED_PREFIX = "[TRUNCATED]\n";
 
 const KNOWN_EVENT_TYPES = new Set([
   "agent_start",
@@ -68,6 +69,73 @@ export function classifyRpcRecord(record) {
   return "unknown";
 }
 
+function utf8Slice(value, maxBytes, direction) {
+  const points = Array.from(String(value));
+  const selected = [];
+  let usedBytes = 0;
+  const indexes =
+    direction === "tail"
+      ? Array.from(
+          { length: points.length },
+          (_, index) => points.length - index - 1,
+        )
+      : Array.from({ length: points.length }, (_, index) => index);
+  for (const index of indexes) {
+    const point = points[index];
+    const pointBytes = Buffer.byteLength(point, "utf8");
+    if (usedBytes + pointBytes > maxBytes) break;
+    selected.push(point);
+    usedBytes += pointBytes;
+  }
+  if (direction === "tail") selected.reverse();
+  return selected.join("");
+}
+
+export function buildExtensionResponse(request, response) {
+  if (
+    request?.type !== "extension_ui_request" ||
+    typeof request.id !== "string" ||
+    request.id.length === 0
+  ) {
+    throw new TypeError("expected identified extension_ui_request");
+  }
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new TypeError("extension response must be an object");
+  }
+  const keys = Object.keys(response).sort();
+  let payload;
+  if (keys.length === 1 && keys[0] === "confirmed") {
+    if (
+      request.method !== "confirm" ||
+      typeof response.confirmed !== "boolean"
+    ) {
+      throw new TypeError("confirmed is valid only for confirm requests");
+    }
+    payload = { confirmed: response.confirmed };
+  } else if (keys.length === 1 && keys[0] === "cancelled") {
+    if (
+      response.cancelled !== true ||
+      !new Set(["select", "confirm", "input", "editor"]).has(request.method)
+    ) {
+      throw new TypeError("cancelled:true is invalid for this request");
+    }
+    payload = { cancelled: true };
+  } else if (keys.length === 1 && keys[0] === "value") {
+    if (
+      typeof response.value !== "string" ||
+      !new Set(["select", "input", "editor"]).has(request.method)
+    ) {
+      throw new TypeError("value is invalid for this request");
+    }
+    payload = { value: response.value };
+  } else {
+    throw new TypeError(
+      "extension response must match exactly one legal union member",
+    );
+  }
+  return { ...payload, type: "extension_ui_response", id: request.id };
+}
+
 export class RpcProcess {
   constructor({
     cliPath,
@@ -89,14 +157,19 @@ export class RpcProcess {
     this.commandArgs = commandArgs ?? [cliPath, "--mode", "rpc", ...args];
     this.redactValues = redactValues;
     this.maxStderrBytes = maxStderrBytes;
+    if (maxStderrBytes <= Buffer.byteLength(TRUNCATED_PREFIX, "utf8")) {
+      throw new RangeError("maxStderrBytes is too small");
+    }
     this.records = [];
     this.stderr = "";
+    this.stderrBody = "";
     this.stderrCarry = "";
     this.stderrTruncated = false;
     this.stdoutRemainder = "";
     this.pending = new Map();
     this.waiters = new Set();
     this.sequence = 0;
+    this.wireWrites = [];
     this.child = null;
     this.exit = null;
     this.protocolError = null;
@@ -165,7 +238,7 @@ export class RpcProcess {
     const response = new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    this.#writeWire(payload);
     return withTimeout(
       response,
       timeoutMs,
@@ -179,19 +252,20 @@ export class RpcProcess {
   write(record) {
     if (!this.child?.stdin.writable)
       throw new Error(`${this.label}: stdin unavailable`);
-    this.child.stdin.write(`${JSON.stringify(record)}\n`);
+    this.#writeWire(record);
     return record;
   }
 
   respondToExtension(request, response) {
-    if (request.type !== "extension_ui_request") {
-      throw new Error(`${this.label}: expected extension_ui_request`);
-    }
-    return this.write({
-      type: "extension_ui_response",
-      id: request.id,
-      ...response,
-    });
+    return this.write(buildExtensionResponse(request, response));
+  }
+
+  wireMark() {
+    return this.wireWrites.length;
+  }
+
+  wireRecordsAfter(mark) {
+    return this.wireWrites.slice(mark);
   }
 
   async waitFor(
@@ -256,16 +330,18 @@ export class RpcProcess {
   #consumeStdout(chunk) {
     this.stdoutRemainder += chunk.toString("utf8");
     if (
-      this.stdoutRemainder.length > MAX_WIRE_BUFFER_BYTES &&
+      Buffer.byteLength(this.stdoutRemainder, "utf8") > MAX_WIRE_BUFFER_BYTES &&
       !this.stdoutRemainder.includes("\n")
     ) {
       const safePrefix = sanitizeDiagnostic(
         this.stdoutRemainder,
         this.redactValues,
-      ).slice(0, MAX_PROTOCOL_LINE_BYTES);
+      );
       this.stdoutRemainder = "";
       this.#failProtocol(
-        new Error(`${this.label}: JSONL line exceeds limit: ${safePrefix}`),
+        new Error(
+          `${this.label}: JSONL line exceeds limit: ${utf8Slice(safePrefix, MAX_PROTOCOL_LINE_BYTES, "head")}`,
+        ),
       );
       return;
     }
@@ -280,9 +356,10 @@ export class RpcProcess {
       try {
         record = JSON.parse(line);
       } catch (error) {
-        const safeLine = sanitizeDiagnostic(line, this.redactValues).slice(
-          0,
+        const safeLine = utf8Slice(
+          sanitizeDiagnostic(line, this.redactValues),
           MAX_PROTOCOL_LINE_BYTES,
+          "head",
         );
         const safeError = sanitizeDiagnostic(error.message, this.redactValues);
         this.#failProtocol(
@@ -328,12 +405,25 @@ export class RpcProcess {
 
   #appendSanitizedStderr(value) {
     if (!value) return;
-    let safe = `${this.stderr}${sanitizeDiagnostic(value, this.redactValues)}`;
-    if (safe.length > this.maxStderrBytes) {
-      safe = safe.slice(-this.maxStderrBytes);
-      this.stderrTruncated = true;
+    const combined = `${this.stderrBody}${sanitizeDiagnostic(value, this.redactValues)}`;
+    if (
+      !this.stderrTruncated &&
+      Buffer.byteLength(combined, "utf8") <= this.maxStderrBytes
+    ) {
+      this.stderrBody = combined;
+      this.stderr = combined;
+      return;
     }
-    this.stderr = `${this.stderrTruncated ? "[TRUNCATED]\n" : ""}${safe.replace(/^\[TRUNCATED\]\n/, "")}`;
+    this.stderrTruncated = true;
+    const bodyBudget =
+      this.maxStderrBytes - Buffer.byteLength(TRUNCATED_PREFIX, "utf8");
+    this.stderrBody = utf8Slice(combined, bodyBudget, "tail");
+    this.stderr = `${TRUNCATED_PREFIX}${this.stderrBody}`;
+  }
+
+  #writeWire(record) {
+    this.wireWrites.push(structuredClone(record));
+    this.child.stdin.write(`${JSON.stringify(record)}\n`);
   }
 
   #failProtocol(error) {
