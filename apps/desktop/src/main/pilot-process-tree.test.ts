@@ -209,6 +209,38 @@ test("heartbeat initialization failure cleans owned processes and temporary stat
   assert.equal(existsSync(failure.root), false);
 });
 
+test("stop-file write failure still terminates the heartbeat process tree", async () => {
+  const startedAt = Date.now();
+  let failure: HeartbeatFixtureInitializationError | undefined;
+
+  await assert.rejects(
+    createHeartbeatFixture("persistent-parent", {
+      pidTimeoutMs: 50,
+      stopPathInMissingDirectory: true,
+      suppressPidOutput: true,
+    }),
+    (error) => {
+      assert(error instanceof HeartbeatFixtureInitializationError);
+      failure = error;
+      return /Stop-file write failed/.test(error.message);
+    },
+  );
+
+  assert(failure);
+  assert.ok(
+    failure.grandchildPid,
+    "Fixture must retain its owned grandchild identity.",
+  );
+  assert.equal(errorCode(failure.stopFileError), "ENOENT");
+  assert.ok(
+    Date.now() - startedAt < 1_500,
+    "Stop-file failure retained an active timeout or process handle.",
+  );
+  assert.equal(isProcessAlive(failure.parentPid), false);
+  assert.equal(isProcessAlive(failure.grandchildPid), false);
+  assert.equal(existsSync(failure.root), false);
+});
+
 type HeartbeatFixture = {
   grandchildPid: number;
   parent: ChildProcess;
@@ -219,18 +251,39 @@ type HeartbeatFixture = {
 type HeartbeatFixtureOptions = {
   pidTimeoutMs?: number;
   readinessTimeoutMs?: number;
+  stopPathInMissingDirectory?: boolean;
   suppressPidOutput?: boolean;
 };
 
 class HeartbeatFixtureInitializationError extends Error {
   constructor(
-    message: string,
     readonly root: string,
     readonly parentPid: number | undefined,
     readonly grandchildPid: number | undefined,
-    options?: ErrorOptions,
+    readonly initializationError: unknown,
+    readonly stopFileError?: unknown,
+    readonly terminationError?: unknown,
+    readonly directoryCleanupError?: unknown,
   ) {
-    super(message, options);
+    const messages = [
+      `Initialization failed: ${errorMessage(initializationError)}`,
+    ];
+    if (stopFileError) {
+      messages.push(`Stop-file write failed: ${errorMessage(stopFileError)}`);
+    }
+    if (terminationError) {
+      messages.push(
+        `Process-tree termination failed: ${errorMessage(terminationError)}`,
+      );
+    }
+    if (directoryCleanupError) {
+      messages.push(
+        `Temporary directory cleanup failed: ${
+          errorMessage(directoryCleanupError)
+        }`,
+      );
+    }
+    super(messages.join(" "), { cause: initializationError });
     this.name = "HeartbeatFixtureInitializationError";
   }
 }
@@ -242,7 +295,9 @@ async function createHeartbeatFixture(
   const root = await mkdtemp(join(tmpdir(), "scopeguard-pilot-heartbeat-test-"));
   const heartbeatPath = join(root, "heartbeat.txt");
   const pidPath = join(root, "grandchild.pid");
-  const stopPath = join(root, "stop");
+  const stopPath = options.stopPathInMissingDirectory
+    ? join(root, "missing-stop-parent", "stop")
+    : join(root, "stop");
   const grandchildSource = `
     const { existsSync, mkdirSync, writeFileSync } = require("node:fs");
     const { dirname } = require("node:path");
@@ -284,10 +339,17 @@ async function createHeartbeatFixture(
     return { grandchildPid, parent, root, stopPath };
   } catch (error) {
     grandchildPid ??= await readFixturePid(pidPath, 250);
-    try {
-      if (grandchildPid && isProcessAlive(grandchildPid)) {
+    let stopFileError: unknown;
+    if (grandchildPid && isProcessAlive(grandchildPid)) {
+      try {
         await writeFile(stopPath, "stop\n");
+      } catch (writeError) {
+        stopFileError = writeError;
       }
+    }
+
+    let terminationError: unknown;
+    try {
       await terminateProcessTree(parent, {
         gracefulTimeoutMs: 25,
         forceTimeoutMs: 500,
@@ -298,27 +360,34 @@ async function createHeartbeatFixture(
           "Heartbeat fixture process tree remained alive after cleanup.",
         );
       }
-      await rm(root, { recursive: true, force: true });
-    } catch (cleanupError) {
-      const reason = error instanceof Error ? error.message : String(error);
-      const cleanupReason = cleanupError instanceof Error
-        ? cleanupError.message
-        : String(cleanupError);
+    } catch (processTreeError) {
+      terminationError = processTreeError;
+    }
+    if (terminationError) {
       throw new HeartbeatFixtureInitializationError(
-        `${reason} Cleanup failed: ${cleanupReason}`,
         root,
         parent.pid,
         grandchildPid,
-        { cause: error },
+        error,
+        stopFileError,
+        terminationError,
       );
     }
-    const reason = error instanceof Error ? error.message : String(error);
+
+    let directoryCleanupError: unknown;
+    try {
+      await rm(root, { recursive: true, force: true });
+    } catch (cleanupError) {
+      directoryCleanupError = cleanupError;
+    }
     throw new HeartbeatFixtureInitializationError(
-      reason,
       root,
       parent.pid,
       grandchildPid,
-      { cause: error },
+      error,
+      stopFileError,
+      undefined,
+      directoryCleanupError,
     );
   }
 }
@@ -432,6 +501,17 @@ function isProcessAlive(pid: number | undefined): boolean {
   } catch (error) {
     return !(error instanceof Error && "code" in error && error.code === "ESRCH");
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && "code" in error &&
+      typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 async function collectProcess(child: ChildProcess): Promise<{
