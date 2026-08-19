@@ -60,35 +60,18 @@ test("rejects missing, malformed, or different Pilot storage keys", () => {
 test("fails before Pilot startup without the platform credential-store isolation switch", () => {
   const missing = {
     getSwitchValue: () => "",
-    hasSwitch: () => false,
   };
-  assert.throws(
-    () => assertDesktopPilotCredentialStoreIsolation("darwin", missing),
-    /use-mock-keychain/,
-  );
   assert.throws(
     () => assertDesktopPilotCredentialStoreIsolation("linux", missing),
     /password-store=basic/,
   );
 
   assert.doesNotThrow(() =>
-    assertDesktopPilotCredentialStoreIsolation("darwin", {
-      getSwitchValue: (name) =>
-        name === "disable-features" ? "DialMediaRouteProvider" : "",
-      hasSwitch: (name) => name === "use-mock-keychain",
-    }),
-  );
-  assert.throws(
-    () => assertDesktopPilotCredentialStoreIsolation("darwin", {
-      getSwitchValue: () => "",
-      hasSwitch: (name) => name === "use-mock-keychain",
-    }),
-    /DialMediaRouteProvider/,
+    assertDesktopPilotCredentialStoreIsolation("darwin", missing),
   );
   assert.doesNotThrow(() =>
     assertDesktopPilotCredentialStoreIsolation("linux", {
       getSwitchValue: (name) => name === "password-store" ? "basic" : "",
-      hasSwitch: () => false,
     }),
   );
 });
@@ -101,18 +84,15 @@ test("enters the Pilot seam only for an explicit supported phase", () => {
   assert.throws(() => parseDesktopPilotPhase("pilot"), /must be 1 or 2/);
 });
 
-test("blocks unsigned macOS Pilot automation before Electron can launch", () => {
+test("blocks all Phase 2 macOS Pilot automation before Electron can launch", () => {
   assert.throws(
-    () => assertDesktopPilotLaunchAllowed("darwin", undefined),
-    /disabled for unsigned macOS/,
+    () => assertDesktopPilotLaunchAllowed("darwin"),
+    /Phase 2 Desktop Pilot is disabled on macOS/,
   );
   assert.doesNotThrow(() =>
-    assertDesktopPilotLaunchAllowed("darwin", "1"),
+    assertDesktopPilotLaunchAllowed("win32"),
   );
   assert.doesNotThrow(() =>
-    assertDesktopPilotLaunchAllowed("win32", undefined),
-  );
-  assert.doesNotThrow(() =>
-    assertDesktopPilotLaunchAllowed("linux", undefined),
+    assertDesktopPilotLaunchAllowed("linux"),
   );
 });

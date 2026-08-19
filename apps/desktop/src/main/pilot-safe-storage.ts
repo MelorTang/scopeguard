@@ -26,7 +26,6 @@ export type PilotSafeStorage = Pick<
 
 type PilotCommandLine = {
   getSwitchValue(name: string): string;
-  hasSwitch(name: string): boolean;
 };
 
 export type DesktopPilotPhase = "1" | "2";
@@ -41,11 +40,10 @@ export function parseDesktopPilotPhase(
 
 export function assertDesktopPilotLaunchAllowed(
   platform: NodeJS.Platform,
-  signedMacosDistribution: string | undefined,
 ): void {
-  if (platform === "darwin" && signedMacosDistribution !== "1") {
+  if (platform === "darwin") {
     throw new Error(
-      "Automated Desktop Pilot is disabled for unsigned macOS development builds because Electron can present a blocking Keychain dialog. Use Windows or Linux, or the Phase 5 signed macOS distribution gate.",
+      "Phase 2 Desktop Pilot is disabled on macOS because Electron can present a blocking Keychain dialog. Use Windows or Linux; Phase 5 signed macOS verification has a separate future entry point.",
     );
   }
 }
@@ -54,22 +52,6 @@ export function assertDesktopPilotCredentialStoreIsolation(
   platform: NodeJS.Platform,
   commandLine: PilotCommandLine,
 ): void {
-  if (platform === "darwin" && !commandLine.hasSwitch("use-mock-keychain")) {
-    throw new Error(
-      "Desktop Pilot on macOS requires --use-mock-keychain before Electron starts.",
-    );
-  }
-  if (
-    platform === "darwin" &&
-    !commandLine
-      .getSwitchValue("disable-features")
-      .split(",")
-      .includes("DialMediaRouteProvider")
-  ) {
-    throw new Error(
-      "Desktop Pilot on macOS requires DialMediaRouteProvider to be disabled before Electron starts.",
-    );
-  }
   if (
     platform === "linux" &&
     commandLine.getSwitchValue("password-store") !== "basic"

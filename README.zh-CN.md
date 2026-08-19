@@ -62,9 +62,14 @@ pnpm dev:web
 pnpm dev
 ```
 
-`pilot:pi-runtime` 使用一次性 Desktop host、确定性 Provider 和真实固定版本 Pi RPC，
-完成整进程退出、opaque Session 恢复及第二轮继续执行；staged 版本会针对正式打包的
-Runtime 树重复同一验证。阶段门禁见 [VERIFICATION.md](./docs/VERIFICATION.md)。
+在 Windows 和 Linux 上，`pilot:pi-runtime` 用于验证一次性 Desktop host、确定性
+Provider、真实固定版本 Pi RPC、整进程退出、opaque Session 恢复及第二轮继续执行；
+staged 版本会针对正式打包的 Runtime 树重复同一验证。当前候选尚未执行 Windows/Linux
+的两条 Pilot，因此 Phase 2 尚未验收。
+
+在 macOS 上，两条 Phase 2 Pilot 命令都会在 Electron 启动前主动失败，且不存在环境
+变量覆盖方式。签名 macOS 分发验证将使用未来独立的 Phase 5 入口。阶段门禁见
+[VERIFICATION.md](./docs/VERIFICATION.md)。
 
 ## 文档
 

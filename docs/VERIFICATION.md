@@ -54,13 +54,12 @@ Exit gate:
   same database and opaque Session, continues, and proves the Provider received
   prior context;
 - development and packaged Runtime trees both pass that restart/resume pilot;
-- the automated Pilot uses a test-only encrypted Vault adapter and an explicit
-  noninteractive Electron credential-store switch; normal Desktop startup still
-  uses Electron `safeStorage`, while signed macOS Keychain behavior remains a
-  Phase 5 distribution gate. A macOS run that presents any system credential
-  dialog is a failed Pilot even if the user denies it and the process exits 0;
-  unsigned macOS Pilot commands fail before Electron spawn and cannot be used as
-  Phase 2 restart evidence;
+- the automated Windows/Linux Pilot uses a test-only encrypted Vault adapter and
+  an explicit noninteractive Electron credential-store configuration; normal
+  Desktop startup still uses Electron `safeStorage`. Both Phase 2 Pilot commands
+  fail unconditionally on macOS before Electron spawn, with no override. Signed
+  macOS Keychain behavior uses a separate future Phase 5 distribution entry and
+  is not Phase 2 restart evidence;
 - qualification, frozen install, repository tests, typecheck, build, package
   staging, link checks, secret/temp scans, and `git diff --check` pass.
 
@@ -108,7 +107,7 @@ Exit gate:
 
 ## Current Commands
 
-The Phase 2 candidate is verified with:
+The Phase 2 gate uses the following command set:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -122,9 +121,13 @@ pnpm --filter @scopeguard/desktop package:prepare
 git diff --check
 ```
 
-The pilots use a deterministic local Provider and delete their temporary
-database, Workspace, credential profile, and Pi Session before exiting. A real
-external Provider smoke is optional and must not print or fixture its credential.
+The two Pilot commands intentionally reject macOS before Electron spawn. The
+current candidate has not yet run either the development or staged Pilot on
+Windows/Linux, so Phase 2 remains unaccepted. On a supported Pilot platform, the
+pilots use a deterministic local Provider and delete their temporary database,
+Workspace, credential profile, and Pi Session only after the complete spawned
+process tree has exited. A real external Provider smoke is optional and must not
+print or fixture its credential.
 
 Every milestone report must identify the exact commit, platform, Pi version,
 fixtures, command results, remaining gaps, and whether evidence comes from the

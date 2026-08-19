@@ -31,6 +31,7 @@ import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
 import {
   assertDesktopPilotCredentialStoreIsolation,
+  assertDesktopPilotLaunchAllowed,
   createDesktopPilotSafeStorage,
   parseDesktopPilotPhase,
 } from "./main/pilot-safe-storage.js";
@@ -51,6 +52,7 @@ const desktopPilotPhase = parseDesktopPilotPhase(
   process.env.SCOPEGUARD_DESKTOP_PILOT_PHASE,
 );
 if (desktopPilotPhase) {
+  assertDesktopPilotLaunchAllowed(process.platform);
   assertDesktopPilotCredentialStoreIsolation(process.platform, app.commandLine);
   app.setPath(
     "userData",

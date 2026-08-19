@@ -88,20 +88,20 @@ The candidate must keep all of these machine-verifiable:
 The automated Desktop Pilot uses an explicit test-only authenticated-encryption
 adapter for the production `EncryptedSecretVault`. Its two fresh Desktop
 processes share only an ephemeral Pilot key, so the second process must decrypt
-the credential from disk without invoking a real OS credential store. On macOS,
-the Pilot launcher also supplies Chromium's test-only `--use-mock-keychain`
-switch and disables `DialMediaRouteProvider` before Electron starts; on Linux
-it supplies `--password-store=basic`.
-The production startup path supplies neither switch and dynamically loads
-Electron `safeStorage` only outside Pilot mode. Signed-distribution interaction
-with macOS Keychain is a Phase 5 gate, not automated Phase 2 evidence. An
-unsigned macOS development Electron still presented a Keychain authorization
-dialog despite the mock-keychain switch on 2026-08-19, so macOS Pilot evidence
-remains blocked until the launcher can prove a noninteractive process boundary;
-the Phase 2 candidate must not treat a denied dialog followed by exit 0 as a
-pass. The launcher therefore refuses unsigned macOS automation before spawning
-Electron. Windows or Linux may supply the Phase 2 restart evidence; macOS may
-resume only through the explicit Phase 5 signed-distribution gate.
+the credential from disk without invoking a real OS credential store. Linux also
+uses `--password-store=basic`. The production startup path supplies no Pilot
+configuration and dynamically loads Electron `safeStorage` only outside Pilot
+mode.
+
+An unsigned macOS development Electron presented a Keychain authorization dialog
+despite Chromium's mock-keychain switch on 2026-08-19. Both Phase 2 Pilot commands
+therefore reject macOS unconditionally before spawning Electron; there is no
+environment-variable assertion that can bypass this gate. Desktop `main.ts`
+repeats the platform rejection before creating the test Vault, AgentHostClient,
+or Pi Runtime. Signed-distribution interaction with macOS Keychain will use a
+separate future Phase 5 entry point. Windows or Linux must supply both the
+development and staged Phase 2 restart proofs; neither has yet been executed for
+this candidate, so this ADR remains Proposed.
 
 ## Consequences
 

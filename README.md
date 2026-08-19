@@ -64,10 +64,16 @@ pnpm dev:web
 pnpm dev
 ```
 
-`pilot:pi-runtime` runs a disposable Desktop host, deterministic Provider, real
-pinned Pi RPC, full host restart, opaque Session resume, and a continued second
-turn. The staged variant repeats that proof against the packaged Runtime tree.
-Acceptance gates are defined in [VERIFICATION.md](./docs/VERIFICATION.md).
+On Windows and Linux, `pilot:pi-runtime` is intended to prove a disposable
+Desktop host, deterministic Provider, real pinned Pi RPC, full host restart,
+opaque Session resume, and a continued second turn. The staged variant repeats
+that proof against the packaged Runtime tree. Neither Windows/Linux Pilot has
+yet been executed for the current candidate, so Phase 2 is not accepted.
+
+On macOS, both Phase 2 Pilot commands intentionally fail before Electron is
+spawned. There is no environment-variable override. Signed macOS distribution
+verification will use a separate Phase 5 entry point. Acceptance gates are
+defined in [VERIFICATION.md](./docs/VERIFICATION.md).
 
 ## Documentation
 

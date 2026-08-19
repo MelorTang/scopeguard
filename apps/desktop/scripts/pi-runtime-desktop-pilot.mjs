@@ -9,13 +9,14 @@ import { fileURLToPath } from "node:url";
 
 import electronPath from "electron";
 
+import {
+  terminateProcessTree,
+  waitForProcessTree,
+} from "../dist/main/pilot-process-tree.js";
 import { assertDesktopPilotLaunchAllowed } from "../dist/main/pilot-safe-storage.js";
 import { startPiRuntimeFakeProvider } from "./pi-runtime-fake-provider.mjs";
 
-assertDesktopPilotLaunchAllowed(
-  process.platform,
-  process.env.SCOPEGUARD_SIGNED_MACOS_PILOT,
-);
+assertDesktopPilotLaunchAllowed(process.platform);
 
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const stageRoot = process.env.SCOPEGUARD_PILOT_STAGE_ROOT
@@ -29,6 +30,7 @@ const statePath = join(root, "pilot-state.json");
 const secret = "desktop-pilot-secret";
 const pilotStorageKey = randomBytes(32).toString("base64url");
 const provider = await startPiRuntimeFakeProvider(secret);
+const activeDesktopProcesses = new Set();
 
 try {
   await mkdir(workspaceRoot);
@@ -74,6 +76,10 @@ try {
     electronCredentialStoreMode: pilotCredentialStoreMode(),
   }));
 } finally {
+  for (const child of activeDesktopProcesses) {
+    await terminateProcessTree(child);
+    activeDesktopProcesses.delete(child);
+  }
   await provider.close().catch(() => {});
   await rm(root, { recursive: true, force: true });
   assert.equal(existsSync(root), false);
@@ -93,27 +99,30 @@ async function launchDesktop(phase, extraEnvironment = {}) {
   };
   delete environment.ELECTRON_RUN_AS_NODE;
   const child = spawn(electronPath, [...pilotElectronArguments(), applicationRoot], {
+    detached: process.platform !== "win32",
     env: environment,
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
+  activeDesktopProcesses.add(child);
   const stdout = [];
   const stderr = [];
   child.stdout.on("data", (chunk) => stdout.push(chunk));
   child.stderr.on("data", (chunk) => stderr.push(chunk));
-  const result = await new Promise((resolveLaunch, rejectLaunch) => {
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      rejectLaunch(new Error(`Desktop Pilot phase ${phase} timed out.`));
-    }, 90_000);
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      rejectLaunch(error);
-    });
-    child.once("exit", (code, signal) => {
-      clearTimeout(timer);
-      resolveLaunch({ code, signal });
-    });
-  });
+  let result;
+  try {
+    result = await waitForProcessTree(
+      child,
+      90_000,
+      `Desktop Pilot phase ${phase}`,
+    );
+    activeDesktopProcesses.delete(child);
+  } catch (error) {
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+      activeDesktopProcesses.delete(child);
+    }
+    throw error;
+  }
   const output = Buffer.concat(stdout).toString("utf8");
   const diagnostics = Buffer.concat(stderr).toString("utf8");
   if (result.code !== 0) {
@@ -131,18 +140,11 @@ async function launchDesktop(phase, extraEnvironment = {}) {
 }
 
 function pilotElectronArguments() {
-  if (process.platform === "darwin") {
-    return [
-      "--use-mock-keychain",
-      "--disable-features=DialMediaRouteProvider",
-    ];
-  }
   if (process.platform === "linux") return ["--password-store=basic"];
   return [];
 }
 
 function pilotCredentialStoreMode() {
-  if (process.platform === "darwin") return "mock-keychain";
   if (process.platform === "linux") return "basic-test-store";
   return "platform-noninteractive";
 }
