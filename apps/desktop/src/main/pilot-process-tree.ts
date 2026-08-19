@@ -71,27 +71,46 @@ export async function terminateProcessTree(
   if (platform === "win32") {
     const controller = options.windowsProcessController ?? defaultWindowsController;
     const rootAlreadyExited = hasProcessExited(child);
+    let taskkillError: unknown;
     if (!rootAlreadyExited) {
-      await runWindowsTaskkill(controller, pid);
-    }
-    await waitForCondition(
-      () => !controller.isProcessAlive(pid),
-      forceTimeoutMs,
-      `Windows process tree ${pid} did not exit`,
-    );
-    const knownPids = rootAlreadyExited
-      ? await options.knownDescendantPids?.() ?? []
-      : [];
-    for (const knownPid of knownPids) {
-      if (knownPid !== pid && controller.isProcessAlive(knownPid)) {
-        await runWindowsTaskkill(controller, knownPid);
+      try {
+        await runWindowsTaskkill(controller, pid);
+      } catch (error) {
+        taskkillError = error;
       }
     }
-    await waitForCondition(
-      () => knownPids.every((knownPid) => !controller.isProcessAlive(knownPid)),
+    const rootExited = await waitForCondition(
+      () => !controller.isProcessAlive(pid),
       forceTimeoutMs,
-      `Windows process tree ${pid} retained a known descendant`,
     );
+    let knownPids: readonly number[] = [];
+    let knownPidsError: unknown;
+    try {
+      knownPids = await requireKnownDescendantPids(options, pid);
+    } catch (error) {
+      knownPidsError = error;
+    }
+    const knownExited = knownPidsError === undefined
+      ? await waitForCondition(
+          () => knownPids.every((knownPid) => !controller.isProcessAlive(knownPid)),
+          forceTimeoutMs,
+        )
+      : false;
+    if (taskkillError) throw taskkillError;
+    if (knownPidsError) throw knownPidsError;
+    if (!rootExited) {
+      throw new Error(`Windows process tree ${pid} did not exit.`);
+    }
+    if (!knownExited) {
+      const survivors = knownPids.filter((knownPid) =>
+        controller.isProcessAlive(knownPid)
+      );
+      if (survivors.length > 0) {
+        throw new Error(
+          `Windows process tree ${pid} known descendant ${survivors.join(", ")} is still running; refusing bare-PID termination because process identity cannot be confirmed.`,
+        );
+      }
+    }
   } else {
     signalPosixProcessGroup(pid, "SIGTERM");
     const exitedGracefully = await waitForCondition(
@@ -115,6 +134,26 @@ export function windowsTaskkillArguments(pid: number): string[] {
   return ["/PID", String(pid), "/T", "/F"];
 }
 
+async function requireKnownDescendantPids(
+  options: ProcessTreeOptions,
+  rootPid: number,
+): Promise<readonly number[]> {
+  if (!options.knownDescendantPids) {
+    throw new Error(
+      `Windows process tree ${rootPid} cannot confirm exit without known descendant PIDs.`,
+    );
+  }
+  const knownPids = [...new Set(await options.knownDescendantPids())];
+  if (knownPids.some((pid) =>
+    !Number.isSafeInteger(pid) || pid <= 0 || pid === rootPid
+  )) {
+    throw new Error(
+      `Windows process tree ${rootPid} received invalid known descendant PIDs.`,
+    );
+  }
+  return knownPids;
+}
+
 async function confirmNormalProcessTreeExit(
   child: ChildProcess,
   options: ProcessTreeOptions,
@@ -124,13 +163,8 @@ async function confirmNormalProcessTreeExit(
   const platform = options.platform ?? process.platform;
   const gracefulTimeoutMs = options.gracefulTimeoutMs ?? 2_000;
   if (platform === "win32") {
-    if (!options.knownDescendantPids) {
-      throw new Error(
-        `Windows process tree ${pid} cannot prove normal exit without known descendant PIDs.`,
-      );
-    }
     const controller = options.windowsProcessController ?? defaultWindowsController;
-    const knownPids = await options.knownDescendantPids();
+    const knownPids = await requireKnownDescendantPids(options, pid);
     const exited = await waitForCondition(
       () => knownPids.every((knownPid) => !controller.isProcessAlive(knownPid)),
       gracefulTimeoutMs,

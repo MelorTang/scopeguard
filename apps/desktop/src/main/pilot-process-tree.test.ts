@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -32,6 +32,9 @@ test("Windows termination preserves taskkill failure when the root exits during 
   await assert.rejects(
     terminateProcessTree(child, {
       platform: "win32",
+      knownDescendantPids: async () => {
+        throw new Error("Pilot state unavailable");
+      },
       windowsProcessController: {
         isProcessAlive: () => alive,
         taskkill: async () => {
@@ -44,42 +47,48 @@ test("Windows termination preserves taskkill failure when the root exits during 
   );
 });
 
+test("Windows root taskkill cannot hide a surviving known Agent Host", async () => {
+  const childState = {
+    pid: 4312,
+    exitCode: null as number | null,
+    signalCode: null,
+  };
+  const child = childState as unknown as ChildProcess;
+  const agentHostPid = 9876;
+  const alive = new Set([childState.pid, agentHostPid]);
+  const taskkillCalls: number[] = [];
+
+  await assert.rejects(
+    terminateProcessTree(child, {
+      platform: "win32",
+      forceTimeoutMs: 0,
+      knownDescendantPids: async () => [agentHostPid],
+      windowsProcessController: {
+        isProcessAlive: (pid) => alive.has(pid),
+        taskkill: async (pid) => {
+          taskkillCalls.push(pid);
+          assert.equal(pid, childState.pid, "Known descendant must not be killed by bare PID.");
+          alive.delete(pid);
+          childState.exitCode = 0;
+        },
+      },
+    }),
+    /known descendant 9876 is still running/,
+  );
+  assert.deepEqual(taskkillCalls, [childState.pid]);
+  assert.equal(alive.has(agentHostPid), true);
+});
+
 test("timeout waits for a Node parent and grandchild to exit before cleanup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scopeguard-pilot-tree-test-"));
-  const heartbeatPath = join(root, "heartbeat.txt");
-  const grandchildSource = `
-    const { mkdirSync, writeFileSync } = require("node:fs");
-    const { dirname } = require("node:path");
-    const path = process.argv[1];
-    process.on("SIGTERM", () => {});
-    setInterval(() => {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, String(process.pid));
-    }, 10);
-  `;
-  const parentSource = `
-    const { spawn } = require("node:child_process");
-    const child = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}, ${JSON.stringify(heartbeatPath)}], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    process.on("SIGTERM", () => {});
-    process.stdout.write(JSON.stringify({ grandchildPid: child.pid }) + "\\n");
-    setInterval(() => {}, 1_000);
-  `;
-  const parent = spawn(process.execPath, ["-e", parentSource], {
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  const fixture = await createHeartbeatFixture("persistent-parent");
+  const { grandchildPid, parent, root } = fixture;
 
   try {
-    const grandchildPid = await readGrandchildPid(parent.stdout);
-    await waitForFile(heartbeatPath, 2_000);
     await assert.rejects(
       waitForProcessTree(parent, 25, "Node process-tree fixture", {
         gracefulTimeoutMs: 50,
         forceTimeoutMs: 2_000,
+        knownDescendantPids: async () => [grandchildPid],
       }),
       /timed out after 25ms/,
     );
@@ -90,59 +99,39 @@ test("timeout waits for a Node parent and grandchild to exit before cleanup", as
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(existsSync(root), false);
   } finally {
+    await stopHeartbeatGrandchild(fixture);
     await terminateProcessTree(parent, {
       gracefulTimeoutMs: 25,
       forceTimeoutMs: 500,
+      knownDescendantPids: async () => [],
     }).catch(() => {});
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("normal root exit detects and terminates a surviving grandchild before cleanup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "scopeguard-pilot-normal-exit-test-"));
-  const heartbeatPath = join(root, "heartbeat.txt");
-  const grandchildSource = `
-    const { mkdirSync, writeFileSync } = require("node:fs");
-    const { dirname } = require("node:path");
-    const path = process.argv[1];
-    process.on("SIGTERM", () => {});
-    setInterval(() => {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, String(process.pid));
-    }, 10);
-  `;
-  const parentSource = `
-    const { spawn } = require("node:child_process");
-    const child = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}, ${JSON.stringify(heartbeatPath)}], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    process.stdout.write(JSON.stringify({ grandchildPid: child.pid }) + "\\n");
-    child.unref();
-  `;
-  const parent = spawn(process.execPath, ["-e", parentSource], {
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+test("normal root exit detects a surviving grandchild before cleanup", async () => {
+  const fixture = await createHeartbeatFixture("exiting-parent");
+  const { grandchildPid, parent, root } = fixture;
 
   try {
-    const grandchildPid = await readGrandchildPid(parent.stdout);
-    await waitForFile(heartbeatPath, 2_000);
     await assert.rejects(
       waitForProcessTree(parent, 2_000, "normal-exit fixture", {
         gracefulTimeoutMs: 50,
         forceTimeoutMs: 2_000,
         knownDescendantPids: async () => [grandchildPid],
       }),
-      /left running descendants after the root exited/,
+      process.platform === "win32"
+        ? /known descendant .* is still running/
+        : /left running descendants after the root exited/,
     );
-    assert.equal(isProcessAlive(grandchildPid), false);
+    assert.equal(isProcessAlive(grandchildPid), process.platform === "win32");
 
+    await stopHeartbeatGrandchild(fixture);
     await rm(root, { recursive: true, force: true });
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(existsSync(root), false);
   } finally {
+    await stopHeartbeatGrandchild(fixture);
     await terminateProcessTree(parent, {
       gracefulTimeoutMs: 25,
       forceTimeoutMs: 500,
@@ -187,6 +176,68 @@ test("spawn error clears a long timeout and releases the Node fixture immediatel
     `Missing-command fixture retained an active timeout for ${elapsedMs}ms.`,
   );
 });
+
+type HeartbeatFixture = {
+  grandchildPid: number;
+  parent: ChildProcess;
+  root: string;
+  stopPath: string;
+};
+
+async function createHeartbeatFixture(
+  parentMode: "exiting-parent" | "persistent-parent",
+): Promise<HeartbeatFixture> {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-pilot-heartbeat-test-"));
+  const heartbeatPath = join(root, "heartbeat.txt");
+  const stopPath = join(root, "stop");
+  const grandchildSource = `
+    const { existsSync, mkdirSync, writeFileSync } = require("node:fs");
+    const { dirname } = require("node:path");
+    const heartbeatPath = process.argv[1];
+    const stopPath = process.argv[2];
+    process.on("SIGTERM", () => {});
+    setInterval(() => {
+      if (existsSync(stopPath)) process.exit(0);
+      mkdirSync(dirname(heartbeatPath), { recursive: true });
+      writeFileSync(heartbeatPath, String(process.pid));
+    }, 10);
+  `;
+  const parentBehavior = parentMode === "persistent-parent"
+    ? `process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000);`
+    : "child.unref();";
+  const parentSource = `
+    const { spawn } = require("node:child_process");
+    const child = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}, ${JSON.stringify(heartbeatPath)}, ${JSON.stringify(stopPath)}], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    process.stdout.write(JSON.stringify({ grandchildPid: child.pid }) + "\\n");
+    ${parentBehavior}
+  `;
+  const parent = spawn(process.execPath, ["-e", parentSource], {
+    detached: process.platform !== "win32",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const grandchildPid = await readGrandchildPid(parent.stdout);
+  await waitForFile(heartbeatPath, 2_000);
+  return { grandchildPid, parent, root, stopPath };
+}
+
+async function stopHeartbeatGrandchild(
+  fixture: HeartbeatFixture,
+): Promise<void> {
+  if (!isProcessAlive(fixture.grandchildPid)) return;
+  await writeFile(fixture.stopPath, "stop\n");
+  const deadline = Date.now() + 2_000;
+  while (Date.now() <= deadline) {
+    if (!isProcessAlive(fixture.grandchildPid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(
+    `Heartbeat grandchild ${fixture.grandchildPid} did not stop through its owned fixture channel.`,
+  );
+}
 
 async function readGrandchildPid(
   stdout: NodeJS.ReadableStream | null,
