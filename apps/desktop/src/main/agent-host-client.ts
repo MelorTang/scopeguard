@@ -96,6 +96,10 @@ export class AgentHostClient {
       options.restartMaxDelayMs ?? DEFAULT_RESTART_MAX_DELAY_MS;
   }
 
+  get processId(): number | null {
+    return this.#child?.pid ?? null;
+  }
+
   async start(): Promise<void> {
     if (this.#readyPromise) {
       return this.#readyPromise;

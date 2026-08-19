@@ -77,6 +77,39 @@ export const DEFAULT_AGENT_TOOL_POLICY: AgentToolPolicy = {
   runCommands: "ask",
 };
 
+export function parseToolPermission(value: unknown, field = "Tool permission"): ToolPermission {
+  if (value === "allow" || value === "ask" || value === "deny") return value;
+  throw new Error(`${field} must be allow, ask, or deny.`);
+}
+
+export function parseConversationExecutionProfile(
+  value: unknown,
+  field = "Conversation execution profile",
+): ConversationExecutionProfile {
+  if (value === "request-approval" || value === "auto-approve" || value === "full-access") {
+    return value;
+  }
+  throw new Error(`${field} is invalid.`);
+}
+
+export function parseAgentToolPolicy(value: unknown): AgentToolPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Agent Tool policy must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join(",") !==
+    "readFiles,runCommands,writeFiles"
+  ) {
+    throw new Error("Agent Tool policy must contain exactly the supported permissions.");
+  }
+  return {
+    readFiles: parseToolPermission(record.readFiles, "readFiles"),
+    writeFiles: parseToolPermission(record.writeFiles, "writeFiles"),
+    runCommands: parseToolPermission(record.runCommands, "runCommands"),
+  };
+}
+
 export type Agent = {
   id: Id;
   workspaceId: Id;
@@ -178,52 +211,6 @@ export type RunConfigSnapshot = {
   instructions: string;
   executionProfile: ConversationExecutionProfile;
   toolPolicy: AgentToolPolicy;
-};
-
-export type ModelToolDefinition = {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-};
-
-export type ModelToolCall = {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-};
-
-export type ModelMessage =
-  | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string; toolCalls?: ModelToolCall[] }
-  | {
-      role: "tool";
-      toolCallId: string;
-      name: string;
-      content: string;
-      isError?: boolean;
-    };
-
-export type RunRequestManifest = {
-  runId: Id;
-  stepSequence: number;
-  providerProtocol: ProviderProtocol;
-  model: string;
-  messages: ModelMessage[];
-  tools: ModelToolDefinition[];
-  maxOutputTokens: number | null;
-  requestHash: string;
-  createdAt: IsoDateTime;
-};
-
-export type RunUsageRecord = {
-  runId: Id;
-  sequence: number;
-  stepSequence: number;
-  source: "provider";
-  status: "reported" | "unavailable";
-  inputTokens: number | null;
-  outputTokens: number | null;
-  receivedAt: IsoDateTime;
 };
 
 export type AgentRun = {
@@ -385,33 +372,6 @@ export function assertRunTransition(from: RunStatus, to: RunStatus): void {
   }
 }
 
-const TOOL_CALL_TRANSITIONS: Record<
-  ToolCallStatus,
-  ReadonlySet<ToolCallStatus>
-> = {
-  proposed: new Set([
-    "awaiting-approval",
-    "running",
-    "failed",
-    "denied",
-    "cancelled",
-  ]),
-  "awaiting-approval": new Set(["running", "failed", "denied", "cancelled"]),
-  running: new Set(["succeeded", "failed", "cancelled", "effect_unknown"]),
-  succeeded: new Set(),
-  failed: new Set(),
-  denied: new Set(),
-  cancelled: new Set(),
-  effect_unknown: new Set(),
-};
-
-export function canTransitionToolCall(
-  from: ToolCallStatus,
-  to: ToolCallStatus,
-): boolean {
-  return TOOL_CALL_TRANSITIONS[from].has(to);
-}
-
 export function normalizeProviderBaseUrl(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -476,10 +436,10 @@ export function validateProviderProfileInput(
 export function mergeToolPolicy(
   overrides: Partial<AgentToolPolicy> | undefined,
 ): AgentToolPolicy {
-  return {
+  return parseAgentToolPolicy({
     ...DEFAULT_AGENT_TOOL_POLICY,
     ...overrides,
-  };
+  });
 }
 
 function assertMaximumLength(

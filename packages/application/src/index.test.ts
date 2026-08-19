@@ -144,3 +144,79 @@ test("turns a Provider vault read failure into an explicit failed Run", async ()
     store.close();
   }
 });
+
+test("expires an unanswered approval before the Runtime timeout and completes denied", async () => {
+  const store = new ScopeGuardStore(":memory:");
+  let approvalId: string | null = null;
+  const runtime = {
+    validateLocator() {}, projectMessages() { return []; }, async probe() {}, async shutdown() {},
+    async run(options: {
+      conversationId: string;
+      onApproval: (request: {
+        processId: string;
+        requestId: string;
+        toolCallId: string;
+        toolName: string;
+        canonicalInput: Record<string, unknown>;
+        canonicalInputSha256: string;
+      }) => Promise<boolean>;
+    }) {
+      const approved = await options.onApproval({
+        processId: "process-timeout",
+        requestId: "request-timeout",
+        toolCallId: "tool-timeout",
+        toolName: "write",
+        canonicalInput: { path: "must-not-exist.txt", content: "blocked" },
+        canonicalInputSha256: "b".repeat(64),
+      });
+      assert.equal(approved, false);
+      return {
+        locator: {
+          sessionFile: `/sessions/${options.conversationId}/session.jsonl`,
+          sessionId: "timeout-session",
+          piVersion: "0.84.2" as const,
+          sessionVersion: 3 as const,
+        },
+        effect: "none" as const,
+        messages: [],
+      };
+    },
+  } as unknown as PiRuntimeSupervisor;
+  const application = new ScopeGuardApplication({
+    store,
+    runtime,
+    approvalTimeoutMs: 20,
+    secrets: {
+      async put(reference: string) { return reference; },
+      async get() { return null; },
+      async delete() {},
+    },
+    publish(event) {
+      if (event.type === "approval-required") approvalId = event.approval.id;
+    },
+  });
+  try {
+    const workspace = application.createWorkspace({ name: "Workspace" });
+    const provider = await application.saveProviderProfile({
+      name: "Provider",
+      protocol: "openai-compatible",
+      baseUrl: "http://127.0.0.1/v1",
+      defaultModel: "model",
+    });
+    const agent = application.createAgent({
+      workspaceId: workspace.id,
+      name: "Agent",
+      instructions: "Help",
+      providerProfileId: provider.id,
+    });
+    const conversation = application.createConversation({ workspaceId: workspace.id, agentId: agent.id });
+    const run = await application.startRun({ conversationId: conversation.id, prompt: "Write" });
+    assert.equal((await application.waitForRun(run.id)).status, "completed");
+    assert.ok(approvalId);
+    assert.equal(store.getApproval(approvalId)?.status, "expired");
+    assert.equal(store.listPendingApprovals().length, 0);
+  } finally {
+    await application.shutdown();
+    store.close();
+  }
+});

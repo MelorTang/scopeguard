@@ -19,8 +19,8 @@
     "package:win": "pnpm run package:prepare && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --projectDir .package/app --config ../../electron-builder.yml --win nsis --x64 --publish never && node scripts/verify-built-package.mjs && node scripts/verify-installer.mjs",
     "smoke:provider": "node scripts/mock-provider.mjs",
     "pilot:local": "pnpm run pilot:pi-runtime",
-    "pilot:pi-runtime": "pnpm run build:main && electron scripts/pi-runtime-desktop-pilot.mjs",
-    "pilot:pi-runtime:staged": "pnpm run package:prepare && cross-env SCOPEGUARD_PILOT_STAGE_ROOT=.package/app electron scripts/pi-runtime-desktop-pilot.mjs",
+    "pilot:pi-runtime": "pnpm run build:main && node scripts/pi-runtime-desktop-pilot.mjs",
+    "pilot:pi-runtime:staged": "pnpm run package:prepare && cross-env SCOPEGUARD_PILOT_STAGE_ROOT=.package/app node scripts/pi-runtime-desktop-pilot.mjs",
     "start": "electron ."
   },
   "dependencies": {
@@ -42,7 +42,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
-    "electron": "^42.0.1",
+    "electron": "42.0.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.25.12",
     "vite": "^6.0.7",

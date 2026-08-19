@@ -6,7 +6,6 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
-  safeStorage,
   session,
   utilityProcess,
   type IpcMainInvokeEvent,
@@ -28,7 +27,13 @@ import {
 import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
+import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
+import {
+  assertDesktopPilotCredentialStoreIsolation,
+  createDesktopPilotSafeStorage,
+  parseDesktopPilotPhase,
+} from "./main/pilot-safe-storage.js";
 import { preparePrivateDataDirectory } from "./main/private-data-directory.js";
 import {
   canonicalizeProjectDirectory,
@@ -42,6 +47,16 @@ import { validateWorkspaceFileSelection } from "./main/workspace-file-selection.
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = resolve(moduleDir, "../dist-renderer");
+const desktopPilotPhase = parseDesktopPilotPhase(
+  process.env.SCOPEGUARD_DESKTOP_PILOT_PHASE,
+);
+if (desktopPilotPhase) {
+  assertDesktopPilotCredentialStoreIsolation(process.platform, app.commandLine);
+  app.setPath(
+    "userData",
+    resolve(requiredPilotEnvironment("SCOPEGUARD_DESKTOP_PILOT_USER_DATA")),
+  );
+}
 let developmentRendererUrl: string | null = null;
 
 let mainWindow: BrowserWindow | null = null;
@@ -51,6 +66,10 @@ let shutdownComplete = false;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
 
 if (!app.requestSingleInstanceLock()) {
+  if (desktopPilotPhase) {
+    console.error("ScopeGuard Desktop Pilot could not acquire the single-instance lock.");
+    process.exitCode = 1;
+  }
   app.quit();
 } else {
   app.on("second-instance", () => {
@@ -63,7 +82,11 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  void app.whenReady().then(startApplication);
+  void app.whenReady().then(startApplication).catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+    app.quit();
+  });
 }
 
 app.on("window-all-closed", () => {
@@ -73,7 +96,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (!desktopPilotPhase && BrowserWindow.getAllWindows().length === 0) {
     void createMainWindow();
   }
 });
@@ -118,7 +141,9 @@ async function startApplication(): Promise<void> {
   if (process.platform === "win32") {
     app.setAppUserModelId("com.melortang.scopeguard");
   }
-  configureSessionSecurity();
+  if (!desktopPilotPhase) {
+    configureSessionSecurity();
+  }
   developmentRendererUrl = resolveDevelopmentRendererUrl({
     configuredUrl: process.env.SCOPEGUARD_RENDERER_URL,
     isPackaged: app.isPackaged,
@@ -127,12 +152,19 @@ async function startApplication(): Promise<void> {
   const userDataPath = app.getPath("userData");
   const packagedRuntimeRoot = app.isPackaged
     ? join(process.resourcesPath, "app.asar.unpacked", "runtime")
-    : null;
+    : process.env.SCOPEGUARD_DESKTOP_PILOT_STAGED === "1"
+      ? resolve(moduleDir, "../runtime")
+      : null;
   await preparePrivateDataDirectory(userDataPath);
+  const credentialStorage = desktopPilotPhase
+    ? createDesktopPilotSafeStorage(
+        requiredPilotEnvironment("SCOPEGUARD_DESKTOP_PILOT_STORAGE_KEY"),
+      )
+    : (await import("electron")).safeStorage;
   const vault = new EncryptedSecretVault(
     join(userDataPath, "credentials", "providers.json"),
     {
-      safeStorage,
+      safeStorage: credentialStorage,
     },
   );
   host = new AgentHostClient({
@@ -158,7 +190,18 @@ async function startApplication(): Promise<void> {
   });
   registerIpcHandlers(host);
   await host.start();
+  if (desktopPilotPhase) {
+    await runDesktopPilotPhase(host);
+    app.quit();
+    return;
+  }
   await createMainWindow();
+}
+
+function requiredPilotEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required for Desktop Pilot mode.`);
+  return value;
 }
 
 async function createMainWindow(): Promise<void> {

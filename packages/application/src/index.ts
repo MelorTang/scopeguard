@@ -27,6 +27,7 @@ import {
   type StartRunInput,
   type ToolApproval,
   type ToolCallRecord,
+  type ToolPermission,
   type UpdateConversationSettingsInput,
   type Workspace,
   type WorkspaceContextRevision,
@@ -54,6 +55,7 @@ export interface WorkspaceStore {
   interruptNonTerminalRuns(): number;
   createApproval(runId: Id, request: Omit<ToolApproval, "id" | "runId" | "status" | "createdAt" | "resolvedAt">): ToolApproval;
   resolveApproval(id: Id, decision: ApprovalDecision): ToolApproval;
+  expireApproval(id: Id): ToolApproval;
   expirePendingApprovalsForRun(runId: Id): number;
   getWorkspaceContext(workspaceId: Id): WorkspaceContextRevision | null;
   updateWorkspaceContext(workspaceId: Id, content: string, sourceConversationId?: Id | null, sourceRunId?: Id | null): WorkspaceContextRevision;
@@ -94,6 +96,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
   readonly #secrets: SecretVault;
   readonly #runtime: PiRuntimeSupervisor;
   readonly #publish: RunEventPublisher;
+  readonly #approvalTimeoutMs: number;
   readonly #active = new Map<Id, ActiveRun>();
   readonly #approvals = new ApprovalWaiters();
 
@@ -102,11 +105,16 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     secrets: SecretVault;
     runtime: PiRuntimeSupervisor;
     publish?: RunEventPublisher;
+    approvalTimeoutMs?: number;
   }) {
     this.#store = options.store;
     this.#secrets = options.secrets;
     this.#runtime = options.runtime;
     this.#publish = options.publish ?? (() => {});
+    this.#approvalTimeoutMs = options.approvalTimeoutMs ?? 180_000;
+    if (!Number.isSafeInteger(this.#approvalTimeoutMs) || this.#approvalTimeoutMs <= 0) {
+      throw new Error("Approval timeout must be a positive integer.");
+    }
   }
 
   initialize(): { interruptedRuns: number } {
@@ -400,11 +408,12 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       status: "awaiting-approval", output: null, error: null,
       createdAt: approval.createdAt, completedAt: null,
     };
-    const permission = conversation.executionProfile === "full-access"
-      ? "allow"
-      : permissionForTool(agent, request.toolName);
-    if (conversation.executionProfile !== "request-approval" || permission === "deny") {
-      const approved = permission !== "deny";
+    const permission = permissionForTool(agent, request.toolName);
+    const executionProfile = conversation.executionProfile;
+    if (executionProfile !== "request-approval" || permission === "deny") {
+      const approved = permission !== "deny" && (
+        executionProfile === "auto-approve" || executionProfile === "full-access"
+      );
       this.#store.resolveApproval(
         approval.id,
         approved ? "approved-once" : "denied",
@@ -424,7 +433,13 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       type: "approval-required", runId: run.id, conversationId: conversation.id,
       approval, toolCall, at: new Date().toISOString(),
     });
-    const approved = await this.#approvals.wait(approval, signal);
+    const outcome = await this.#approvals.wait(
+      approval,
+      signal,
+      this.#approvalTimeoutMs,
+    );
+    if (outcome === "expired") this.#store.expireApproval(approval.id);
+    const approved = outcome === "approved";
     const current = this.#store.getRun(run.id);
     if (current?.status === "waiting-approval") {
       this.emitStatus(this.#store.updateRunStatus(
@@ -464,18 +479,38 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 }
 
 class ApprovalWaiters {
-  readonly #values = new Map<Id, { runId: Id; resolve: (value: boolean) => void; reject: (error: unknown) => void; cleanup: () => void }>();
+  readonly #values = new Map<Id, {
+    runId: Id;
+    resolve: (value: "approved" | "denied" | "expired") => void;
+    reject: (error: unknown) => void;
+    cleanup: () => void;
+  }>();
 
-  wait(approval: ToolApproval, signal: AbortSignal): Promise<boolean> {
+  wait(
+    approval: ToolApproval,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<"approved" | "denied" | "expired"> {
     return new Promise((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+      };
       const abort = () => {
         this.#values.delete(approval.id);
+        cleanup();
         reject(signal.reason ?? new DOMException("Run cancelled.", "AbortError"));
       };
       signal.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(() => {
+        if (!this.#values.delete(approval.id)) return;
+        cleanup();
+        resolve("expired");
+      }, timeoutMs);
       this.#values.set(approval.id, {
         runId: approval.runId, resolve, reject,
-        cleanup: () => signal.removeEventListener("abort", abort),
+        cleanup,
       });
       if (signal.aborted) abort();
     });
@@ -483,7 +518,7 @@ class ApprovalWaiters {
 
   resolve(id: Id, value: boolean): void {
     const waiter = this.#values.get(id); if (!waiter) return;
-    this.#values.delete(id); waiter.cleanup(); waiter.resolve(value);
+    this.#values.delete(id); waiter.cleanup(); waiter.resolve(value ? "approved" : "denied");
   }
 
   cancelRun(runId: Id): void {
@@ -495,10 +530,17 @@ class ApprovalWaiters {
 }
 
 function terminal(status: RunStatus): boolean { return ["completed", "failed", "cancelled", "interrupted"].includes(status); }
-function permissionForTool(agent: Agent, toolName: string): "allow" | "ask" | "deny" {
-  if (toolName === "read") return agent.toolPolicy.readFiles;
-  if (toolName === "write" || toolName === "edit") return agent.toolPolicy.writeFiles;
-  if (toolName === "bash") return agent.toolPolicy.runCommands;
+function permissionForTool(agent: Agent, toolName: string): ToolPermission {
+  const permission = toolName === "read"
+    ? agent.toolPolicy.readFiles
+    : toolName === "write" || toolName === "edit"
+      ? agent.toolPolicy.writeFiles
+      : toolName === "bash"
+        ? agent.toolPolicy.runCommands
+        : "deny";
+  if (permission === "allow" || permission === "ask" || permission === "deny") {
+    return permission;
+  }
   return "deny";
 }
 function isSideEffectingTool(toolName: string): boolean {

@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 const MAX_STDERR_BYTES = 16_384;
+const MAX_STDERR_INPUT_BYTES = 1_048_576;
 const MAX_WIRE_BUFFER_BYTES = 1_048_576;
 const MAX_PROTOCOL_DIAGNOSTIC_BYTES = 1_024;
 const TRUNCATED = "[TRUNCATED]\n";
@@ -18,7 +20,11 @@ export class PiRpcProcess {
   readonly processId: string;
   #child: ChildProcessWithoutNullStreams | null = null;
   #stderr = "";
+  #stderrRaw = "";
+  #stderrInputOverflow = false;
   #stdout = "";
+  #stderrDecoder = new StringDecoder("utf8");
+  #stdoutDecoder = new StringDecoder("utf8");
   #sequence = 0;
   #pending = new Map<string, Pending>();
   #waiters = new Set<Waiter>();
@@ -51,14 +57,18 @@ export class PiRpcProcess {
     });
     this.#child = child;
     child.stdout.on("data", (chunk: Buffer) => this.#consumeStdout(chunk));
+    child.stdout.once("end", () => this.#finishStdout());
     child.stderr.on("data", (chunk: Buffer) => this.#appendStderr(chunk));
+    child.stderr.once("end", () => this.#finishStderr());
     this.#exitPromise = new Promise((resolve) => {
-      child.once("exit", (code, signal) => {
-        const error = new Error(
-          `Pi RPC exited code=${String(code)} signal=${String(signal)}: ${this.#stderr}`,
-        );
-        this.#fatal = error;
-        this.#rejectAll(error);
+      child.once("close", (code, signal) => {
+        if (!this.#fatal) {
+          const error = new Error(
+            `Pi RPC exited code=${String(code)} signal=${String(signal)}: ${this.#stderr}`,
+          );
+          this.#fatal = error;
+          this.#rejectAll(error);
+        }
         resolve({ code, signal });
       });
     });
@@ -145,7 +155,11 @@ export class PiRpcProcess {
   }
 
   #consumeStdout(chunk: Buffer): void {
-    this.#stdout += chunk.toString("utf8");
+    this.#consumeStdoutText(this.#stdoutDecoder.write(chunk));
+  }
+
+  #consumeStdoutText(text: string): void {
+    this.#stdout += text;
     if (Buffer.byteLength(this.#stdout, "utf8") > MAX_WIRE_BUFFER_BYTES && !this.#stdout.includes("\n")) {
       this.#failProtocol(new PiProtocolError(`Pi RPC JSONL line exceeded ${MAX_WIRE_BUFFER_BYTES} bytes.`));
       return;
@@ -180,14 +194,41 @@ export class PiRpcProcess {
     }
   }
 
+  #finishStdout(): void {
+    this.#consumeStdoutText(this.#stdoutDecoder.end());
+    if (this.#fatal || this.#stdout.length === 0) return;
+    const diagnostic = utf8Tail(
+      sanitize(this.#stdout, this.options.redactions),
+      MAX_PROTOCOL_DIAGNOSTIC_BYTES,
+    );
+    this.#failProtocol(new PiProtocolError(`Pi RPC stdout ended with incomplete JSONL: ${diagnostic}`));
+  }
+
   #appendStderr(chunk: Buffer): void {
-    const combined = `${this.#stderr}${sanitize(chunk.toString("utf8"), this.options.redactions)}`;
-    if (Buffer.byteLength(combined, "utf8") <= MAX_STDERR_BYTES) {
-      this.#stderr = combined;
+    this.#appendStderrText(this.#stderrDecoder.write(chunk));
+  }
+
+  #appendStderrText(text: string): void {
+    if (!text || this.#stderrInputOverflow) return;
+    const combinedRaw = `${this.#stderrRaw}${text}`;
+    if (Buffer.byteLength(combinedRaw, "utf8") > MAX_STDERR_INPUT_BYTES) {
+      this.#stderrRaw = "";
+      this.#stderrInputOverflow = true;
+      this.#stderr = TRUNCATED;
+      return;
+    }
+    this.#stderrRaw = combinedRaw;
+    const redacted = sanitize(combinedRaw, this.options.redactions);
+    if (Buffer.byteLength(redacted, "utf8") <= MAX_STDERR_BYTES) {
+      this.#stderr = redacted;
       return;
     }
     const budget = MAX_STDERR_BYTES - Buffer.byteLength(TRUNCATED, "utf8");
-    this.#stderr = `${TRUNCATED}${utf8Tail(combined, budget)}`;
+    this.#stderr = `${TRUNCATED}${utf8Tail(redacted, budget)}`;
+  }
+
+  #finishStderr(): void {
+    this.#appendStderrText(this.#stderrDecoder.end());
   }
 
   #failProtocol(error: Error): void {

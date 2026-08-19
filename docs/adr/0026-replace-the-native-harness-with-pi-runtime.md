@@ -85,6 +85,24 @@ The candidate must keep all of these machine-verifiable:
 6. the independent Phase 1 qualification plus root install, tests, typecheck,
    build, package verification, links, secret/temp scans, and diff checks.
 
+The automated Desktop Pilot uses an explicit test-only authenticated-encryption
+adapter for the production `EncryptedSecretVault`. Its two fresh Desktop
+processes share only an ephemeral Pilot key, so the second process must decrypt
+the credential from disk without invoking a real OS credential store. On macOS,
+the Pilot launcher also supplies Chromium's test-only `--use-mock-keychain`
+switch and disables `DialMediaRouteProvider` before Electron starts; on Linux
+it supplies `--password-store=basic`.
+The production startup path supplies neither switch and dynamically loads
+Electron `safeStorage` only outside Pilot mode. Signed-distribution interaction
+with macOS Keychain is a Phase 5 gate, not automated Phase 2 evidence. An
+unsigned macOS development Electron still presented a Keychain authorization
+dialog despite the mock-keychain switch on 2026-08-19, so macOS Pilot evidence
+remains blocked until the launcher can prove a noninteractive process boundary;
+the Phase 2 candidate must not treat a denied dialog followed by exit 0 as a
+pass. The launcher therefore refuses unsigned macOS automation before spawning
+Electron. Windows or Linux may supply the Phase 2 restart evidence; macOS may
+resume only through the explicit Phase 5 signed-distribution gate.
+
 ## Consequences
 
 - Pi upgrades require qualification and product-lock review before Runtime use.

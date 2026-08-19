@@ -3,22 +3,18 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { TRUSTED_EXTENSION_MANIFEST } from "../dist/extension-trust-root.js";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const files = ["approval-extension.js", "approval-policy.js"];
-const entries = {};
-for (const file of files) {
-  entries[file] = createHash("sha256")
+for (const [file, expectedHash] of Object.entries(TRUSTED_EXTENSION_MANIFEST.files)) {
+  const actualHash = createHash("sha256")
     .update(await readFile(join(root, "dist", file)))
     .digest("hex");
+  if (actualHash !== expectedHash) {
+    throw new Error(`Trusted extension asset changed without a trust-root update: ${file}`);
+  }
 }
 await writeFile(
   join(root, "dist", "extension-manifest.json"),
-  `${JSON.stringify({
-    schemaVersion: 1,
-    piVersion: "0.84.2",
-    composition: [
-      { id: "scopeguard-tool-policy", role: "policy", entrypoint: "approval-extension.js" },
-    ],
-    files: entries,
-  }, null, 2)}\n`,
+  `${JSON.stringify(TRUSTED_EXTENSION_MANIFEST, null, 2)}\n`,
 );

@@ -57,6 +57,16 @@ for (const path of paths) {
 const runtimeManifest = JSON.parse(
   await readFile(join(stageRoot, "runtime", "extension-manifest.json"), "utf8"),
 );
+const runtimeOwnedFiles = [...paths]
+  .filter((path) => path.startsWith("runtime/") && !path.startsWith("runtime/node_modules/"))
+  .sort();
+if (JSON.stringify(runtimeOwnedFiles) !== JSON.stringify([
+  "runtime/approval-extension.js",
+  "runtime/approval-policy.js",
+  "runtime/extension-manifest.json",
+])) {
+  throw new Error("Packaged Pi Runtime contains an unexpected policy asset.");
+}
 const piPackage = JSON.parse(
   await readFile(
     join(stageRoot, "runtime", "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
@@ -68,7 +78,11 @@ if (
   piPackage.name !== "@earendil-works/pi-coding-agent" ||
   piPackage.version !== "0.84.2" ||
   runtimeManifest.composition?.length !== 1 ||
-  runtimeManifest.composition[0]?.role !== "policy"
+  runtimeManifest.composition[0]?.id !== "scopeguard-tool-policy" ||
+  runtimeManifest.composition[0]?.role !== "policy" ||
+  runtimeManifest.composition[0]?.entrypoint !== "approval-extension.js" ||
+  JSON.stringify(Object.keys(runtimeManifest.files ?? {}).sort()) !==
+    JSON.stringify(["approval-extension.js", "approval-policy.js"])
 ) {
   throw new Error("Packaged Pi Runtime manifest is incompatible.");
 }
@@ -90,12 +104,28 @@ const productPiPackage = JSON.parse(
 const deploymentPackage = JSON.parse(
   await readFile(join(desktopRoot, "runtime-deployment", "package.json"), "utf8"),
 );
+const desktopPackage = JSON.parse(
+  await readFile(join(desktopRoot, "package.json"), "utf8"),
+);
+const installedElectronPackage = JSON.parse(
+  await readFile(join(desktopRoot, "node_modules", "electron", "package.json"), "utf8"),
+);
+const builderConfig = await readFile(join(desktopRoot, "electron-builder.yml"), "utf8");
+const builderElectronVersion = builderConfig.match(/^electronVersion:\s*([^\s]+)$/m)?.[1];
 if (
   productPiPackage.dependencies?.["@earendil-works/pi-coding-agent"] !== piPackage.version ||
   deploymentPackage.dependencies?.["@earendil-works/pi-coding-agent"] !== piPackage.version
 ) {
   throw new Error("Product and deployment Pi Runtime versions differ.");
 }
+if (
+  desktopPackage.devDependencies?.electron !== "42.0.1" ||
+  installedElectronPackage.version !== "42.0.1" ||
+  builderElectronVersion !== "42.0.1"
+) {
+  throw new Error("Desktop, staged Pilot, and electron-builder must use Electron 42.0.1 exactly.");
+}
+let agentHostBytes = 0;
 for (const bundledFile of ["dist/main.js", "dist/agent-host.js"]) {
   const source = await readFile(join(stageRoot, bundledFile), "utf8");
   if (/\b(?:from|import)\s*\(?\s*["']@scopeguard\//.test(source)) {
@@ -104,12 +134,32 @@ for (const bundledFile of ["dist/main.js", "dist/agent-host.js"]) {
   if (source.includes(repositoryRoot)) {
     throw new Error(`${bundledFile} contains the local repository path.`);
   }
+  if (bundledFile === "dist/agent-host.js") {
+    agentHostBytes = Buffer.byteLength(source, "utf8");
+    if (
+      source.includes("node_modules/.pnpm/@earendil-works") ||
+      source.includes("function parseSessionEntries(") ||
+      !source.includes('"session-manager.js"') ||
+      !source.includes("loadRuntimeModule")
+    ) {
+      throw new Error("Agent host must load the official Session parser only from the staged Pi Runtime tree.");
+    }
+  } else if (
+    /import\s*\{[^}]*\bsafeStorage\b[^}]*\}\s*from\s*["']electron["']/.test(source)
+  ) {
+    throw new Error(
+      "Desktop main must load Electron safeStorage only in the non-Pilot production branch.",
+    );
+  }
 }
 
 console.log(JSON.stringify({
   stageRoot,
   fileCount: paths.size,
+  agentHostBytes,
   bundledWorkspaceImports: false,
+  electronVersion: installedElectronPackage.version,
+  singlePiRuntimeTree: true,
   sourceMaps: false,
 }, null, 2));
 

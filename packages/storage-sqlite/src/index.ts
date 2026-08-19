@@ -8,6 +8,8 @@ import {
   SCOPEGUARD_SCHEMA_VERSION,
   assertRunTransition,
   mergeToolPolicy,
+  parseAgentToolPolicy,
+  parseConversationExecutionProfile,
   type Agent,
   type AgentRun,
   type ApprovalDecision,
@@ -45,6 +47,9 @@ const EXPECTED_SCHEMA_COLUMNS = {
   workspace_context_revisions: ["id", "workspace_id", "version", "parent_id", "title", "content", "source_conversation_id", "source_run_id", "published_by", "created_at"],
   workspaces: ["id", "name", "local_root_path", "current_context_revision_id", "created_at", "updated_at", "last_opened_at"],
 } as const;
+const ACTIVE_RUN_INDEX_NAME = "one_active_run_per_conversation";
+const ACTIVE_RUN_INDEX_SQL = `CREATE UNIQUE INDEX ${ACTIVE_RUN_INDEX_NAME} ON runs(conversation_id)
+  WHERE status NOT IN ('completed','failed','cancelled','interrupted')`;
 
 export class ScopeGuardStore {
   readonly #database: DatabaseSync;
@@ -161,7 +166,9 @@ export class ScopeGuardStore {
       id: randomUUID(), workspaceId: input.workspaceId, name: input.name.trim(),
       instructions: input.instructions.trim(), providerProfileId: input.providerProfileId,
       modelOverride: input.modelOverride?.trim() || null,
-      defaultExecutionProfile: input.executionProfile ?? "request-approval",
+      defaultExecutionProfile: parseConversationExecutionProfile(
+        input.executionProfile ?? "request-approval",
+      ),
       toolPolicy: mergeToolPolicy(input.toolPolicy), createdAt: now, updatedAt: now,
     };
     this.#run(
@@ -211,7 +218,9 @@ export class ScopeGuardStore {
     const updated = {
       ...current,
       modelOverride: input.modelOverride === undefined ? current.modelOverride : input.modelOverride,
-      executionProfile: input.executionProfile ?? current.executionProfile,
+      executionProfile: parseConversationExecutionProfile(
+        input.executionProfile ?? current.executionProfile,
+      ),
       updatedAt: nowIso(),
     };
     this.#run(
@@ -326,6 +335,14 @@ export class ScopeGuardStore {
     const resolvedAt = nowIso();
     this.#run("UPDATE tool_approvals SET status=?, resolved_at=? WHERE id=?", status, resolvedAt, id);
     return { ...current, status, resolvedAt };
+  }
+
+  expireApproval(id: Id): ToolApproval {
+    const current = this.getApproval(id);
+    if (!current || current.status !== "pending") throw new Error("Approval is no longer pending.");
+    const resolvedAt = nowIso();
+    this.#run("UPDATE tool_approvals SET status='expired', resolved_at=? WHERE id=?", resolvedAt, id);
+    return { ...current, status: "expired", resolvedAt };
   }
 
   expirePendingApprovalsForRun(runId: Id): number {
@@ -466,6 +483,37 @@ export class ScopeGuardStore {
         throw incompatibleSchema();
       }
     }
+    const activeRunIndex = this.#all("PRAGMA index_list(runs)")
+      .find((row) => row.name === ACTIVE_RUN_INDEX_NAME);
+    if (
+      !activeRunIndex ||
+      asNumber(activeRunIndex.unique) !== 1 ||
+      asNumber(activeRunIndex.partial) !== 1 ||
+      asString(activeRunIndex.origin) !== "c"
+    ) {
+      throw incompatibleSchema();
+    }
+    const activeRunIndexColumns = this.#all(`PRAGMA index_info(${ACTIVE_RUN_INDEX_NAME})`)
+      .map((row) => asString(row.name));
+    const activeRunIndexDefinition = this.#get(
+      "SELECT tbl_name, sql FROM sqlite_master WHERE type='index' AND name=?",
+      ACTIVE_RUN_INDEX_NAME,
+    );
+    if (
+      JSON.stringify(activeRunIndexColumns) !== JSON.stringify(["conversation_id"]) ||
+      !activeRunIndexDefinition ||
+      asString(activeRunIndexDefinition.tbl_name) !== "runs" ||
+      typeof activeRunIndexDefinition.sql !== "string" ||
+      normalizeSchemaSql(activeRunIndexDefinition.sql) !== normalizeSchemaSql(ACTIVE_RUN_INDEX_SQL)
+    ) {
+      throw incompatibleSchema();
+    }
+    try {
+      this.#all("SELECT * FROM agents").forEach(mapAgent);
+      this.#all("SELECT * FROM conversations").forEach(mapConversation);
+    } catch {
+      throw incompatibleSchema();
+    }
     const integrity = this.#get("PRAGMA quick_check");
     if (!integrity || asString(integrity.quick_check) !== "ok") {
       throw new Error("ScopeGuard database integrity check failed; the database was not opened.");
@@ -508,8 +556,8 @@ function mapAgent(row: Row): Agent {
     id: asString(row.id), workspaceId: asString(row.workspace_id), name: asString(row.name),
     instructions: asString(row.instructions), providerProfileId: asString(row.provider_profile_id),
     modelOverride: asNullableString(row.model_override),
-    defaultExecutionProfile: asString(row.default_execution_profile) as ConversationExecutionProfile,
-    toolPolicy: parseObject(row.tool_policy_json) as Agent["toolPolicy"],
+    defaultExecutionProfile: parseConversationExecutionProfile(row.default_execution_profile),
+    toolPolicy: parseAgentToolPolicy(parseObject(row.tool_policy_json)),
     createdAt: asString(row.created_at), updatedAt: asString(row.updated_at),
   };
 }
@@ -522,7 +570,7 @@ function mapConversation(row: Row): Conversation {
     id: asString(row.id), workspaceId: asString(row.workspace_id), agentId: asString(row.agent_id),
     title: asString(row.title), status: asString(row.status) as Conversation["status"],
     modelOverride: asNullableString(row.model_override),
-    executionProfile: asString(row.execution_profile) as ConversationExecutionProfile,
+    executionProfile: parseConversationExecutionProfile(row.execution_profile),
     piSession: populated === 0 ? null : {
       sessionFile: asString(row.pi_session_file), sessionId: asString(row.pi_session_id),
       piVersion: asString(row.pi_version) as PiSessionLocator["piVersion"],
@@ -586,6 +634,9 @@ function asNullableString(value: unknown): string | null { return value === null
 function asNumber(value: unknown): number { if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Expected database number."); return value; }
 function nowIso(): string { return new Date().toISOString(); }
 function placeholders(count: number): string { return Array.from({ length: count }, () => "?").join(","); }
+function normalizeSchemaSql(sql: string): string {
+  return sql.toLowerCase().replace(/\s+/g, " ").replace(/\s*([(),])\s*/g, "$1").trim();
+}
 function incompatibleSchema(): Error {
   return new Error(
     `Incompatible ScopeGuard database. Expected ${SCOPEGUARD_SCHEMA_ID} schema ${SCOPEGUARD_SCHEMA_VERSION}; old databases are not migrated. Start with a fresh personal Pi profile.`,

@@ -362,11 +362,6 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined {
   return value;
 }
 
-function requireInteger(value: unknown, field: string): number {
-  if (!Number.isSafeInteger(value)) throw new Error(`${field} must be an integer.`);
-  return value as number;
-}
-
 function parseStringRecord(
   value: unknown,
   field: string,

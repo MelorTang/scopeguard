@@ -53,6 +53,86 @@ test("rejects old, malformed, and incompatible database families", async () => {
   }
 });
 
+test("rejects a missing or semantically incorrect active Run index on disk", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-index-rejection-"));
+  try {
+    const missingPath = join(root, "missing-index.db");
+    new ScopeGuardStore(missingPath).close();
+    const missing = new DatabaseSync(missingPath);
+    missing.exec("DROP INDEX one_active_run_per_conversation");
+    missing.close();
+    assert.throws(() => new ScopeGuardStore(missingPath), /Incompatible ScopeGuard database/);
+
+    const incorrectPath = join(root, "incorrect-index.db");
+    new ScopeGuardStore(incorrectPath).close();
+    const incorrect = new DatabaseSync(incorrectPath);
+    incorrect.exec(`
+      DROP INDEX one_active_run_per_conversation;
+      CREATE UNIQUE INDEX one_active_run_per_conversation ON runs(conversation_id)
+        WHERE status = 'running';
+    `);
+    incorrect.close();
+    assert.throws(() => new ScopeGuardStore(incorrectPath), /Incompatible ScopeGuard database/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reopens a valid disk schema without treating SQLite automatic indexes as product indexes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-index-validation-"));
+  const path = join(root, "valid.db");
+  try {
+    new ScopeGuardStore(path).close();
+    const database = new DatabaseSync(path);
+    const indexes = database.prepare("PRAGMA index_list(runs)").all() as Array<{ name: string }>;
+    database.close();
+    assert.ok(indexes.some(({ name }) => name.startsWith("sqlite_autoindex_")));
+    assert.doesNotThrow(() => new ScopeGuardStore(path).close());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects persisted permission values that could otherwise change deny semantics", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-permission-rejection-"));
+  const mutations = [
+    "UPDATE agents SET tool_policy_json = '{}'",
+    `UPDATE agents SET tool_policy_json = '{"readFiles":"allow","writeFiles":"ask","runCommands":"bogus"}'`,
+    "UPDATE agents SET default_execution_profile = 'bogus'",
+    "UPDATE conversations SET execution_profile = 'bogus'",
+  ];
+  try {
+    for (const [index, mutation] of mutations.entries()) {
+      const path = join(root, `invalid-permission-${index}.db`);
+      const store = new ScopeGuardStore(path);
+      const workspace = store.createWorkspace({ name: "Workspace" });
+      const provider = store.saveProviderProfile({
+        name: "Provider",
+        protocol: "openai-compatible",
+        baseUrl: "http://localhost/v1",
+        defaultModel: "model",
+      }, null);
+      const agent = store.createAgent({
+        workspaceId: workspace.id,
+        name: "Denied Agent",
+        instructions: "",
+        providerProfileId: provider.id,
+        toolPolicy: { runCommands: "deny" },
+      });
+      store.createConversation({ workspaceId: workspace.id, agentId: agent.id });
+      assert.equal(agent.toolPolicy.runCommands, "deny");
+      store.close();
+
+      const database = new DatabaseSync(path);
+      database.exec(mutation);
+      database.close();
+      assert.throws(() => new ScopeGuardStore(path), /Incompatible ScopeGuard database/);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("enforces one active Run per Conversation and complete Pi locators", () => {
   const store = new ScopeGuardStore(":memory:");
   try {

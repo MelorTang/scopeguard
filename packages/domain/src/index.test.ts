@@ -5,7 +5,6 @@ import {
   SCOPEGUARD_SCHEMA_ID,
   SCOPEGUARD_SCHEMA_VERSION,
   canTransitionRun,
-  canTransitionToolCall,
   mergeToolPolicy,
   normalizeProviderBaseUrl,
   validateProviderProfileInput,
@@ -66,15 +65,6 @@ test("keeps run transitions explicit", () => {
   assert.equal(canTransitionRun("cancelling", "completed"), true);
   assert.equal(canTransitionRun("completed", "running"), false);
   assert.equal(canTransitionRun("cancelled", "completed"), false);
-});
-
-test("keeps tool call facts monotonic after a terminal outcome", () => {
-  assert.equal(canTransitionToolCall("proposed", "awaiting-approval"), true);
-  assert.equal(canTransitionToolCall("awaiting-approval", "running"), true);
-  assert.equal(canTransitionToolCall("running", "effect_unknown"), true);
-  assert.equal(canTransitionToolCall("effect_unknown", "cancelled"), false);
-  assert.equal(canTransitionToolCall("succeeded", "failed"), false);
-  assert.equal(canTransitionToolCall("cancelled", "running"), false);
 });
 
 test("merges tool policy without making writes implicit", () => {

@@ -1,16 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import {
-  parseSessionEntries,
-  type SessionEntry,
-  type SessionMessageEntry,
+import type {
+  FileEntry,
+  SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
   SCOPEGUARD_PI_SESSION_VERSION,
@@ -23,6 +23,10 @@ import {
 } from "@scopeguard/domain";
 
 import { canonicalizeToolInput, hashCanonicalInput } from "./approval-policy.js";
+import {
+  TRUSTED_EXTENSION_ENTRYPOINT,
+  TRUSTED_EXTENSION_MANIFEST,
+} from "./extension-trust-root.js";
 import { PiProtocolError, PiRpcProcess } from "./rpc-process.js";
 
 export { buildExtensionConfirmation, PiProtocolError, PiRpcProcess } from "./rpc-process.js";
@@ -64,34 +68,52 @@ export type PiRunOptions = {
   onApproval: (request: PiApprovalRequest) => Promise<boolean>;
 };
 
-type ExtensionManifest = {
-  schemaVersion: number;
-  piVersion: string;
-  composition: Array<{ id: string; role: string; entrypoint: string }>;
-  files: Record<string, string>;
-};
-
 const execFileAsync = promisify(execFile);
+const loadRuntimeModule = createRequire(import.meta.url);
+const EXTENSION_CONFIRM_TIMEOUT_MS = 300_000;
+const DEFAULT_HOST_APPROVAL_TIMEOUT_MS = 240_000;
 
 export class PiRuntimeSupervisor {
   readonly #sessionRoot: string;
   readonly #cliPath: string;
   readonly #distRoot: string;
-  readonly #piPackageDir: string | undefined;
+  readonly #piPackageDir: string;
+  readonly #parseSessionEntries: (content: string) => FileEntry[];
+  readonly #approvalTimeoutMs: number;
   readonly #active = new Map<string, PiRpcProcess>();
 
-  constructor(options: { sessionRoot: string; cliPath?: string; assetRoot?: string }) {
+  constructor(options: {
+    sessionRoot: string;
+    cliPath?: string;
+    assetRoot?: string;
+    approvalTimeoutMs?: number;
+  }) {
     this.#sessionRoot = resolve(options.sessionRoot);
     mkdirSync(this.#sessionRoot, { recursive: true, mode: 0o700 });
     this.#distRoot = options.assetRoot ? resolve(options.assetRoot) : dirname(fileURLToPath(import.meta.url));
+    this.#approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_HOST_APPROVAL_TIMEOUT_MS;
+    if (
+      !Number.isSafeInteger(this.#approvalTimeoutMs) ||
+      this.#approvalTimeoutMs <= 0 ||
+      this.#approvalTimeoutMs >= EXTENSION_CONFIRM_TIMEOUT_MS
+    ) {
+      throw new Error("Pi Runtime approval timeout must be a positive integer below the extension timeout.");
+    }
     if (options.cliPath) {
       this.#cliPath = resolve(options.cliPath);
       this.#piPackageDir = dirname(dirname(this.#cliPath));
     } else {
       const piEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
       this.#cliPath = join(dirname(piEntry), "cli.js");
-      this.#piPackageDir = undefined;
+      this.#piPackageDir = dirname(dirname(piEntry));
     }
+    const sessionModule = loadRuntimeModule(
+      join(this.#piPackageDir, "dist", "core", "session-manager.js"),
+    ) as { parseSessionEntries?: (content: string) => FileEntry[] };
+    if (typeof sessionModule.parseSessionEntries !== "function") {
+      throw new Error("Pinned Pi Runtime Session parser is unavailable.");
+    }
+    this.#parseSessionEntries = sessionModule.parseSessionEntries;
   }
 
   async probe(provider: PiProviderConfig): Promise<void> {
@@ -155,7 +177,7 @@ export class PiRuntimeSupervisor {
         PI_OFFLINE: "1",
         PI_SKIP_VERSION_CHECK: "1",
         PI_TELEMETRY: "0",
-        ...(this.#piPackageDir ? { PI_PACKAGE_DIR: this.#piPackageDir } : {}),
+        PI_PACKAGE_DIR: this.#piPackageDir,
         SCOPEGUARD_WORKSPACE_ROOT: workspaceRoot ?? "",
         SCOPEGUARD_READ_PERMISSION: options.readPermission,
         ...(options.provider.apiKey ? { [keyVariable]: options.provider.apiKey } : {}),
@@ -192,7 +214,10 @@ export class PiRuntimeSupervisor {
           }
         } else if (record.type === "extension_ui_request") {
           const approval = parseApprovalRequest(processId, record);
-          const confirmed = await options.onApproval(approval);
+          const confirmed = await approvalWithTimeout(
+            options.onApproval(approval),
+            this.#approvalTimeoutMs,
+          );
           if (confirmed && isSideEffectingTool(approval.toolName)) {
             activeSideEffects.add(approval.toolCallId);
           }
@@ -251,7 +276,7 @@ export class PiRuntimeSupervisor {
     if (fromRoot.startsWith("..") || isAbsolute(fromRoot) || fromRoot === "" || !existsSync(file)) {
       throw new Error("Pi Session locator is missing or outside its Conversation directory.");
     }
-    const entries = parseSessionEntries(readFileSync(file, "utf8"));
+    const entries = this.#parseSessionEntries(readFileSync(file, "utf8"));
     const header = entries[0];
     if (header?.type !== "session" || header.id !== locator.sessionId) {
       throw new Error("Pi Session locator does not match the Session header.");
@@ -259,13 +284,16 @@ export class PiRuntimeSupervisor {
     if ((header.version ?? 1) !== locator.sessionVersion) {
       throw new Error("Pi Session header version is incompatible.");
     }
-    if (expectedWorkspaceRoot && realpathSync(header.cwd) !== realpathSync(expectedWorkspaceRoot)) {
+    const expectedCwd = expectedWorkspaceRoot
+      ? realpathSync(expectedWorkspaceRoot)
+      : realpathSync(sessionDirectory);
+    if (realpathSync(header.cwd) !== expectedCwd) {
       throw new Error("Pi Session Workspace does not match the Conversation Workspace.");
     }
   }
 
   projectMessages(locator: PiSessionLocator): ConversationMessage[] {
-    const entries = parseSessionEntries(readFileSync(locator.sessionFile, "utf8"));
+    const entries = this.#parseSessionEntries(readFileSync(locator.sessionFile, "utf8"));
     return entries
       .filter((entry): entry is SessionMessageEntry => entry.type === "message")
       .flatMap((entry, index) => projectMessageEntry(entry, index));
@@ -278,36 +306,26 @@ export class PiRuntimeSupervisor {
 
   async #verifyReadiness(): Promise<string> {
     const manifestPath = join(this.#distRoot, "extension-manifest.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ExtensionManifest;
-    if (manifest.schemaVersion !== 1 || manifest.piVersion !== SCOPEGUARD_PI_VERSION) {
-      throw new Error("Pi Runtime extension manifest is incompatible.");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
+    if (JSON.stringify(manifest) !== JSON.stringify(TRUSTED_EXTENSION_MANIFEST)) {
+      throw new Error("Pi Runtime rejected an untrusted extension manifest.");
     }
-    if (
-      manifest.composition.length !== 1 ||
-      manifest.composition[0]?.role !== "policy" ||
-      manifest.composition[0]?.id !== "scopeguard-tool-policy"
-    ) {
-      throw new Error("Pi Runtime requires exactly one final Tool policy extension.");
-    }
-    for (const [file, expected] of Object.entries(manifest.files)) {
-      if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error(`Invalid extension hash: ${file}`);
+    for (const [file, expected] of Object.entries(TRUSTED_EXTENSION_MANIFEST.files)) {
       const actual = createHash("sha256").update(await readFile(join(this.#distRoot, file))).digest("hex");
       if (actual !== expected) throw new Error(`Pi Runtime extension hash mismatch: ${file}`);
     }
-    const entrypoint = manifest.composition[0].entrypoint;
-    if (!Object.hasOwn(manifest.files, entrypoint)) throw new Error("Tool policy entrypoint is not hashed.");
     const version = (await execFileAsync(process.execPath, [this.#cliPath, "--version"], {
       env: cleanEnvironment({
         PI_OFFLINE: "1",
         PI_SKIP_VERSION_CHECK: "1",
-        ...(this.#piPackageDir ? { PI_PACKAGE_DIR: this.#piPackageDir } : {}),
+        PI_PACKAGE_DIR: this.#piPackageDir,
       }),
       timeout: 10_000,
     })).stdout.trim();
     if (version !== SCOPEGUARD_PI_VERSION) {
       throw new Error(`Pi Runtime version handshake failed: expected ${SCOPEGUARD_PI_VERSION}, received ${version || "empty"}.`);
     }
-    return join(this.#distRoot, entrypoint);
+    return join(this.#distRoot, TRUSTED_EXTENSION_ENTRYPOINT);
   }
 
   async #writeProfile(
@@ -420,6 +438,25 @@ function successData(record: Record<string, unknown>, command: string): Record<s
     throw new PiProtocolError(`Pi RPC command failed: ${command}: ${String(record.error ?? "unknown")}`);
   }
   return (record.data ?? {}) as Record<string, unknown>;
+}
+
+function approvalWithTimeout(
+  approval: Promise<boolean>,
+  timeoutMs: number,
+): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    approval.then(
+      (confirmed) => {
+        clearTimeout(timer);
+        resolve(confirmed === true);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function cleanEnvironment(extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

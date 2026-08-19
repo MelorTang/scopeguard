@@ -54,6 +54,13 @@ Exit gate:
   same database and opaque Session, continues, and proves the Provider received
   prior context;
 - development and packaged Runtime trees both pass that restart/resume pilot;
+- the automated Pilot uses a test-only encrypted Vault adapter and an explicit
+  noninteractive Electron credential-store switch; normal Desktop startup still
+  uses Electron `safeStorage`, while signed macOS Keychain behavior remains a
+  Phase 5 distribution gate. A macOS run that presents any system credential
+  dialog is a failed Pilot even if the user denies it and the process exits 0;
+  unsigned macOS Pilot commands fail before Electron spawn and cannot be used as
+  Phase 2 restart evidence;
 - qualification, frozen install, repository tests, typecheck, build, package
   staging, link checks, secret/temp scans, and `git diff --check` pass.
 
