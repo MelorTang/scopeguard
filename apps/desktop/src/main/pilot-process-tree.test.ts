@@ -177,6 +177,38 @@ test("spawn error clears a long timeout and releases the Node fixture immediatel
   );
 });
 
+test("heartbeat initialization failure cleans owned processes and temporary state", async () => {
+  const startedAt = Date.now();
+  let failure: HeartbeatFixtureInitializationError | undefined;
+
+  await assert.rejects(
+    createHeartbeatFixture("persistent-parent", {
+      pidTimeoutMs: 50,
+      suppressPidOutput: true,
+    }),
+    (error) => {
+      assert(error instanceof HeartbeatFixtureInitializationError);
+      failure = error;
+      return /Timed out waiting for the heartbeat grandchild PID/.test(
+        error.message,
+      );
+    },
+  );
+
+  assert(failure);
+  assert.ok(
+    failure.grandchildPid,
+    "Fixture must retain its owned grandchild identity.",
+  );
+  assert.ok(
+    Date.now() - startedAt < 1_500,
+    "Heartbeat initialization failure retained an active timeout or handle.",
+  );
+  assert.equal(isProcessAlive(failure.parentPid), false);
+  assert.equal(isProcessAlive(failure.grandchildPid), false);
+  assert.equal(existsSync(failure.root), false);
+});
+
 type HeartbeatFixture = {
   grandchildPid: number;
   parent: ChildProcess;
@@ -184,11 +216,32 @@ type HeartbeatFixture = {
   stopPath: string;
 };
 
+type HeartbeatFixtureOptions = {
+  pidTimeoutMs?: number;
+  readinessTimeoutMs?: number;
+  suppressPidOutput?: boolean;
+};
+
+class HeartbeatFixtureInitializationError extends Error {
+  constructor(
+    message: string,
+    readonly root: string,
+    readonly parentPid: number | undefined,
+    readonly grandchildPid: number | undefined,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "HeartbeatFixtureInitializationError";
+  }
+}
+
 async function createHeartbeatFixture(
   parentMode: "exiting-parent" | "persistent-parent",
+  options: HeartbeatFixtureOptions = {},
 ): Promise<HeartbeatFixture> {
   const root = await mkdtemp(join(tmpdir(), "scopeguard-pilot-heartbeat-test-"));
   const heartbeatPath = join(root, "heartbeat.txt");
+  const pidPath = join(root, "grandchild.pid");
   const stopPath = join(root, "stop");
   const grandchildSource = `
     const { existsSync, mkdirSync, writeFileSync } = require("node:fs");
@@ -206,12 +259,14 @@ async function createHeartbeatFixture(
     ? `process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000);`
     : "child.unref();";
   const parentSource = `
+    const { writeFileSync } = require("node:fs");
     const { spawn } = require("node:child_process");
     const child = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}, ${JSON.stringify(heartbeatPath)}, ${JSON.stringify(stopPath)}], {
       stdio: "ignore",
       windowsHide: true,
     });
-    process.stdout.write(JSON.stringify({ grandchildPid: child.pid }) + "\\n");
+    writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+    ${options.suppressPidOutput ? "" : 'process.stdout.write(JSON.stringify({ grandchildPid: child.pid }) + "\\n");'}
     ${parentBehavior}
   `;
   const parent = spawn(process.execPath, ["-e", parentSource], {
@@ -219,9 +274,53 @@ async function createHeartbeatFixture(
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  const grandchildPid = await readGrandchildPid(parent.stdout);
-  await waitForFile(heartbeatPath, 2_000);
-  return { grandchildPid, parent, root, stopPath };
+  let grandchildPid: number | undefined;
+  try {
+    grandchildPid = await readGrandchildPid(
+      parent.stdout,
+      options.pidTimeoutMs ?? 2_000,
+    );
+    await waitForFile(heartbeatPath, options.readinessTimeoutMs ?? 2_000);
+    return { grandchildPid, parent, root, stopPath };
+  } catch (error) {
+    grandchildPid ??= await readFixturePid(pidPath, 250);
+    try {
+      if (grandchildPid && isProcessAlive(grandchildPid)) {
+        await writeFile(stopPath, "stop\n");
+      }
+      await terminateProcessTree(parent, {
+        gracefulTimeoutMs: 25,
+        forceTimeoutMs: 500,
+        knownDescendantPids: async () => grandchildPid ? [grandchildPid] : [],
+      });
+      if (isProcessAlive(parent.pid) || isProcessAlive(grandchildPid)) {
+        throw new Error(
+          "Heartbeat fixture process tree remained alive after cleanup.",
+        );
+      }
+      await rm(root, { recursive: true, force: true });
+    } catch (cleanupError) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const cleanupReason = cleanupError instanceof Error
+        ? cleanupError.message
+        : String(cleanupError);
+      throw new HeartbeatFixtureInitializationError(
+        `${reason} Cleanup failed: ${cleanupReason}`,
+        root,
+        parent.pid,
+        grandchildPid,
+        { cause: error },
+      );
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new HeartbeatFixtureInitializationError(
+      reason,
+      root,
+      parent.pid,
+      grandchildPid,
+      { cause: error },
+    );
+  }
 }
 
 async function stopHeartbeatGrandchild(
@@ -241,20 +340,75 @@ async function stopHeartbeatGrandchild(
 
 async function readGrandchildPid(
   stdout: NodeJS.ReadableStream | null,
+  timeoutMs: number,
 ): Promise<number> {
   assert(stdout);
-  let buffered = "";
-  for await (const chunk of stdout) {
-    buffered += Buffer.from(chunk).toString("utf8");
-    const newline = buffered.indexOf("\n");
-    if (newline >= 0) {
-      const parsed = JSON.parse(buffered.slice(0, newline)) as {
-        grandchildPid: number;
-      };
-      return parsed.grandchildPid;
+  return await new Promise<number>((resolve, reject) => {
+    let buffered = "";
+    let timer: NodeJS.Timeout | undefined;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      stdout.off("data", onData);
+      stdout.off("end", onEnd);
+      stdout.off("error", onError);
+    };
+    const fail = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onData = (chunk: string | Buffer) => {
+      buffered += Buffer.from(chunk).toString("utf8");
+      const newline = buffered.indexOf("\n");
+      if (newline < 0) return;
+      try {
+        const parsed = JSON.parse(buffered.slice(0, newline)) as {
+          grandchildPid?: unknown;
+        };
+        if (
+          !Number.isSafeInteger(parsed.grandchildPid) ||
+          Number(parsed.grandchildPid) <= 0
+        ) {
+          throw new Error("Parent fixture reported an invalid grandchild PID.");
+        }
+        cleanup();
+        resolve(Number(parsed.grandchildPid));
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    const onEnd = () => {
+      fail(new Error("Parent fixture exited before reporting its grandchild PID."));
+    };
+    const onError = (error: Error) => fail(error);
+
+    stdout.on("data", onData);
+    stdout.once("end", onEnd);
+    stdout.once("error", onError);
+    timer = setTimeout(() => {
+      fail(
+        new Error(
+          `Timed out waiting for the heartbeat grandchild PID after ${timeoutMs}ms.`,
+        ),
+      );
+    }, timeoutMs);
+  });
+}
+
+async function readFixturePid(
+  path: string,
+  timeoutMs: number,
+): Promise<number | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      const pid = Number((await readFile(path, "utf8")).trim());
+      if (Number.isSafeInteger(pid) && pid > 0) return pid;
+    } catch {
+      // The parent may still be publishing the fixture-owned process identity.
     }
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error("Parent fixture exited before reporting its grandchild PID.");
+  return undefined;
 }
 
 async function waitForFile(path: string, timeoutMs: number): Promise<void> {
