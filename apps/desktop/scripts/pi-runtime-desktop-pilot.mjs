@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import electronPath from "electron";
 
 import {
+  ProcessTreeExitedWithFailure,
   terminateProcessTree,
   waitForProcessTree,
 } from "../dist/main/pilot-process-tree.js";
@@ -30,7 +31,7 @@ const statePath = join(root, "pilot-state.json");
 const secret = "desktop-pilot-secret";
 const pilotStorageKey = randomBytes(32).toString("base64url");
 const provider = await startPiRuntimeFakeProvider(secret);
-const activeDesktopProcesses = new Set();
+const activeDesktopProcesses = new Map();
 
 try {
   await mkdir(workspaceRoot);
@@ -76,11 +77,25 @@ try {
     electronCredentialStoreMode: pilotCredentialStoreMode(),
   }));
 } finally {
-  for (const child of activeDesktopProcesses) {
-    await terminateProcessTree(child);
-    activeDesktopProcesses.delete(child);
+  let processCleanupError = null;
+  for (const [child, processTreeOptions] of activeDesktopProcesses) {
+    try {
+      await terminateProcessTree(child, processTreeOptions);
+      activeDesktopProcesses.delete(child);
+    } catch (error) {
+      processCleanupError = error;
+      break;
+    }
   }
   await provider.close().catch(() => {});
+  if (processCleanupError) {
+    const message = processCleanupError instanceof Error
+      ? processCleanupError.message
+      : String(processCleanupError);
+    throw new Error(
+      `Desktop Pilot could not confirm complete process-tree exit; temporary diagnostics retained at ${root}: ${message}`,
+    );
+  }
   await rm(root, { recursive: true, force: true });
   assert.equal(existsSync(root), false);
 }
@@ -104,7 +119,10 @@ async function launchDesktop(phase, extraEnvironment = {}) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  activeDesktopProcesses.add(child);
+  const processTreeOptions = {
+    knownDescendantPids: () => readKnownPilotDescendantPids(phase, child.pid),
+  };
+  activeDesktopProcesses.set(child, processTreeOptions);
   const stdout = [];
   const stderr = [];
   child.stdout.on("data", (chunk) => stdout.push(chunk));
@@ -115,10 +133,11 @@ async function launchDesktop(phase, extraEnvironment = {}) {
       child,
       90_000,
       `Desktop Pilot phase ${phase}`,
+      processTreeOptions,
     );
     activeDesktopProcesses.delete(child);
   } catch (error) {
-    if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+    if (!child.pid || error instanceof ProcessTreeExitedWithFailure) {
       activeDesktopProcesses.delete(child);
     }
     throw error;
@@ -137,6 +156,22 @@ async function launchDesktop(phase, extraEnvironment = {}) {
     );
   }
   return output;
+}
+
+async function readKnownPilotDescendantPids(phase, expectedMainPid) {
+  assert.ok(expectedMainPid, "Desktop Pilot Electron Main has no process ID.");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  assert.equal(state.phase, phase, "Desktop Pilot state phase was not persisted.");
+  assert.equal(
+    state.mainPid,
+    expectedMainPid,
+    "Desktop Pilot state does not belong to the exited Electron Main.",
+  );
+  assert.ok(
+    Number.isSafeInteger(state.agentHostPid) && state.agentHostPid > 0,
+    "Desktop Pilot state has no valid Agent Host process ID.",
+  );
+  return [state.agentHostPid];
 }
 
 function pilotElectronArguments() {

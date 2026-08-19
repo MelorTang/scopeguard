@@ -11,7 +11,18 @@ export type ProcessTreeOptions = {
   platform?: NodeJS.Platform;
   gracefulTimeoutMs?: number;
   forceTimeoutMs?: number;
+  knownDescendantPids?: () => Promise<readonly number[]>;
+  windowsProcessController?: WindowsProcessController;
 };
+
+export type WindowsProcessController = {
+  isProcessAlive(pid: number): boolean;
+  taskkill(pid: number): Promise<void>;
+};
+
+export class ProcessTreeExitedWithFailure extends Error {
+  readonly cleanupConfirmed = true;
+}
 
 export async function waitForProcessTree(
   child: ChildProcess,
@@ -22,18 +33,27 @@ export async function waitForProcessTree(
   const exit = observeProcessExit(child);
   const timedOut = Symbol("timed-out");
   let timer: NodeJS.Timeout | undefined;
-  const result = await Promise.race([
-    exit,
-    new Promise<typeof timedOut>((resolve) => {
-      timer = setTimeout(() => resolve(timedOut), timeoutMs);
-    }),
-  ]);
-  if (timer) clearTimeout(timer);
-  if (result !== timedOut) return result;
+  let result: ProcessExit | typeof timedOut;
+  try {
+    result = await Promise.race([
+      exit,
+      new Promise<typeof timedOut>((resolve) => {
+        timer = setTimeout(() => resolve(timedOut), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  if (result !== timedOut) {
+    await confirmNormalProcessTreeExit(child, options);
+    return result;
+  }
 
   await terminateProcessTree(child, options);
   await exit;
-  throw new Error(`${description} timed out after ${timeoutMs}ms.`);
+  throw new ProcessTreeExitedWithFailure(
+    `${description} timed out after ${timeoutMs}ms.`,
+  );
 }
 
 export async function terminateProcessTree(
@@ -49,11 +69,28 @@ export async function terminateProcessTree(
   const gracefulTimeoutMs = options.gracefulTimeoutMs ?? 2_000;
   const forceTimeoutMs = options.forceTimeoutMs ?? 5_000;
   if (platform === "win32") {
-    await terminateWindowsProcessTree(pid);
+    const controller = options.windowsProcessController ?? defaultWindowsController;
+    const rootAlreadyExited = hasProcessExited(child);
+    if (!rootAlreadyExited) {
+      await runWindowsTaskkill(controller, pid);
+    }
     await waitForCondition(
-      () => !isProcessAlive(pid),
+      () => !controller.isProcessAlive(pid),
       forceTimeoutMs,
       `Windows process tree ${pid} did not exit`,
+    );
+    const knownPids = rootAlreadyExited
+      ? await options.knownDescendantPids?.() ?? []
+      : [];
+    for (const knownPid of knownPids) {
+      if (knownPid !== pid && controller.isProcessAlive(knownPid)) {
+        await runWindowsTaskkill(controller, knownPid);
+      }
+    }
+    await waitForCondition(
+      () => knownPids.every((knownPid) => !controller.isProcessAlive(knownPid)),
+      forceTimeoutMs,
+      `Windows process tree ${pid} retained a known descendant`,
     );
   } else {
     signalPosixProcessGroup(pid, "SIGTERM");
@@ -76,6 +113,41 @@ export async function terminateProcessTree(
 
 export function windowsTaskkillArguments(pid: number): string[] {
   return ["/PID", String(pid), "/T", "/F"];
+}
+
+async function confirmNormalProcessTreeExit(
+  child: ChildProcess,
+  options: ProcessTreeOptions,
+): Promise<void> {
+  const pid = child.pid;
+  if (!pid) return;
+  const platform = options.platform ?? process.platform;
+  const gracefulTimeoutMs = options.gracefulTimeoutMs ?? 2_000;
+  if (platform === "win32") {
+    if (!options.knownDescendantPids) {
+      throw new Error(
+        `Windows process tree ${pid} cannot prove normal exit without known descendant PIDs.`,
+      );
+    }
+    const controller = options.windowsProcessController ?? defaultWindowsController;
+    const knownPids = await options.knownDescendantPids();
+    const exited = await waitForCondition(
+      () => knownPids.every((knownPid) => !controller.isProcessAlive(knownPid)),
+      gracefulTimeoutMs,
+    );
+    if (exited) return;
+  } else {
+    const exited = await waitForCondition(
+      () => !isPosixProcessGroupAlive(pid),
+      gracefulTimeoutMs,
+    );
+    if (exited) return;
+  }
+
+  await terminateProcessTree(child, options);
+  throw new ProcessTreeExitedWithFailure(
+    `Process tree ${pid} left running descendants after the root exited.`,
+  );
 }
 
 function observeProcessExit(child: ChildProcess): Promise<ProcessExit> {
@@ -118,21 +190,42 @@ async function waitForObservedExit(
   });
 }
 
-async function terminateWindowsProcessTree(pid: number): Promise<void> {
+const defaultWindowsController: WindowsProcessController = {
+  isProcessAlive,
+  taskkill: executeWindowsTaskkill,
+};
+
+async function runWindowsTaskkill(
+  controller: WindowsProcessController,
+  pid: number,
+): Promise<void> {
+  try {
+    await controller.taskkill(pid);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`taskkill failed for process tree ${pid}: ${message}`);
+  }
+}
+
+async function executeWindowsTaskkill(pid: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     execFile(
       "taskkill",
       windowsTaskkillArguments(pid),
       { windowsHide: true },
       (error) => {
-        if (error && isProcessAlive(pid)) {
-          reject(new Error(`taskkill failed for process tree ${pid}: ${error.message}`));
+        if (error) {
+          reject(error);
           return;
         }
         resolve();
       },
     );
   });
+}
+
+function hasProcessExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 function signalPosixProcessGroup(pid: number, signal: NodeJS.Signals): void {
