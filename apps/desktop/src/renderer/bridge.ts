@@ -8,6 +8,7 @@ import type {
   Workspace,
   WorkspaceContextRevision,
 } from "@scopeguard/domain";
+import { parseWorkspaceLayout } from "@scopeguard/domain";
 import type {
   DesktopWorkspaceSnapshot,
   ProviderProfileView,
@@ -80,6 +81,10 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     }],
     dispatches: [],
   };
+  const persistedMockLayout = readPersistedMockLayout(
+    new Set(snapshot.conversations.map(({ id }) => id)),
+  );
+  if (persistedMockLayout) snapshot = { ...snapshot, layouts: [persistedMockLayout] };
   const messages = new Map<string, ConversationMessage[]>([
     ["conversation-research", [
       makeMessage("conversation-research", "user", "整理三家供应商的差异。", 1),
@@ -228,6 +233,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       return clone(snapshot.layouts.find((layout) => layout.workspaceId === workspaceId) ?? null);
     },
     async saveWorkspaceLayout(layout) {
+      sessionStorage.setItem("scopeguard.mock.workspace-layout", JSON.stringify(layout));
       snapshot = {
         ...snapshot,
         layouts: [layout, ...snapshot.layouts.filter((item) => item.workspaceId !== layout.workspaceId)],
@@ -443,6 +449,17 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       createdAt: now,
       updatedAt: now,
     };
+  }
+}
+
+function readPersistedMockLayout(conversationIds: ReadonlySet<string>) {
+  const value = sessionStorage.getItem("scopeguard.mock.workspace-layout");
+  if (!value) return null;
+  try {
+    return parseWorkspaceLayout(JSON.parse(value), conversationIds);
+  } catch {
+    sessionStorage.removeItem("scopeguard.mock.workspace-layout");
+    return null;
   }
 }
 

@@ -108,6 +108,11 @@ test("opening a fifth Conversation replaces the active pane and keeps four panes
   await expect(panes).toHaveCount(4);
   await expect(page.getByRole("region", { name: /数据归档，第/ })).toBeVisible();
   await expect(page.getByRole("region", { name: /供应商对比，第/ })).toHaveCount(0);
+  await page.waitForTimeout(150);
+  await page.reload();
+  await expect(page.locator(".thread-pane")).toHaveCount(4);
+  await expect(page.getByRole("region", { name: /数据归档，第/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: /供应商对比，第/ })).toHaveCount(0);
 });
 
 test("handoff copy reports clipboard failure", async ({ page }) => {

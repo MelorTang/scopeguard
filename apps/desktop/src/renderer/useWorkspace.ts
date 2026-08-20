@@ -128,6 +128,8 @@ export function useWorkspace(): WorkspaceController {
   const [streamingByThread, setStreamingByThread] = useState<Record<string, string>>({});
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [approvalFocus, setApprovalFocus] = useState<ApprovalFocusRequest | null>(null);
+  const [layoutMutationRevision, setLayoutMutationRevision] = useState(0);
+  const persistedLayoutRevision = useRef(0);
   const approvalSequence = useRef(0);
   const snapshotRef = useRef(snapshot);
   const messagesRef = useRef(messagesByThread);
@@ -181,6 +183,8 @@ export function useWorkspace(): WorkspaceController {
 
   useEffect(() => {
     if (!snapshot || !ui.selectedWorkspaceId) return;
+    const revision = layoutMutationRevision;
+    if (revision <= persistedLayoutRevision.current) return;
     const layout: WorkspaceLayout = {
       workspaceId: ui.selectedWorkspaceId,
       openConversationIds: ui.openConversationIds,
@@ -189,6 +193,8 @@ export function useWorkspace(): WorkspaceController {
       requestedPaneCount: ui.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
     };
     const timer = window.setTimeout(() => {
+      if (revision <= persistedLayoutRevision.current) return;
+      persistedLayoutRevision.current = revision;
       void desktopApi.saveWorkspaceLayout(layout)
         .then((saved) => setSnapshot((current) => current ? {
           ...current,
@@ -202,12 +208,20 @@ export function useWorkspace(): WorkspaceController {
     return () => window.clearTimeout(timer);
   }, [
     snapshot !== null,
+    layoutMutationRevision,
     ui.activeConversationId,
     ui.openConversationIds,
     ui.paneConversationIds,
     ui.requestedSplitCount,
     ui.selectedWorkspaceId,
   ]);
+
+  const mutateLayout = useCallback((
+    update: (current: PersistedUiState) => PersistedUiState,
+  ) => {
+    setUi(update);
+    setLayoutMutationRevision((current) => current + 1);
+  }, []);
 
   const selectedWorkspace = useMemo(() =>
     snapshot?.workspaces.find((item) => item.id === ui.selectedWorkspaceId)
@@ -266,7 +280,7 @@ export function useWorkspace(): WorkspaceController {
   }, []);
 
   const activateConversation = useCallback((conversationId: string, workspaceId: string) => {
-    setUi((current) => {
+    mutateLayout((current) => {
       const next = activateConversationInLayout({
         workspaceId,
         openConversationIds: current.openConversationIds,
@@ -286,7 +300,7 @@ export function useWorkspace(): WorkspaceController {
         paneConversationIds: next.paneConversationIds,
       };
     });
-  }, []);
+  }, [mutateLayout]);
 
   const openThread = useCallback((conversationId: string) => {
     const conversation = snapshotRef.current?.conversations.find(
@@ -303,7 +317,7 @@ export function useWorkspace(): WorkspaceController {
   }, [openThread]);
 
   const selectPane = useCallback((paneIndex: number) => {
-    setUi((current) => {
+    mutateLayout((current) => {
       const panes = normalizePaneIds(
         current.paneConversationIds,
         current.openConversationIds,
@@ -314,10 +328,10 @@ export function useWorkspace(): WorkspaceController {
         ? { ...current, activeConversationId: conversationId }
         : current;
     });
-  }, []);
+  }, [mutateLayout]);
 
   const setRequestedSplitCount = useCallback((count: number) => {
-    setUi((current) => {
+    mutateLayout((current) => {
       const requestedSplitCount = Math.max(1, Math.min(4, count));
       return {
         ...current,
@@ -329,7 +343,7 @@ export function useWorkspace(): WorkspaceController {
         ),
       };
     });
-  }, []);
+  }, [mutateLayout]);
 
   const setSidebarCollapsed = useCallback((value: boolean) => {
     setUi((current) => ({ ...current, sidebarCollapsed: value }));
@@ -339,7 +353,7 @@ export function useWorkspace(): WorkspaceController {
   }, []);
 
   const closePane = useCallback((conversationId: string) => {
-    setUi((current) => {
+    mutateLayout((current) => {
       const openConversationIds = current.openConversationIds.filter(
         (id) => id !== conversationId,
       );
@@ -357,7 +371,7 @@ export function useWorkspace(): WorkspaceController {
           : current.activeConversationId,
       };
     });
-  }, []);
+  }, [mutateLayout]);
 
   const createWorkspace = useCallback(async (name: string) => {
     const workspace = await desktopApi.createWorkspace({ name });
