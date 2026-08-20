@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+
+import { preparePiNodeInvocation } from "@scopeguard/pi-runtime";
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -43,8 +46,7 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
   const model = "utility-probe-model";
   await writeProbeProfile(profileDirectory, providerName, model);
 
-  const args = [
-    piCliPath,
+  const cliArgs = [
     "--mode", "rpc",
     "--provider", providerName,
     "--model", model,
@@ -64,9 +66,22 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
   if (!["product", "host-node", "electron-run-as-node"].includes(probeMode)) {
     throw new Error("Unsupported Pi utility probe mode.");
   }
-  const executable = probeMode === "host-node"
-    ? requiredEnvironment("SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE")
-    : process.execPath;
+  const invocation = probeMode === "product"
+    ? preparePiNodeInvocation({
+        assetRoot: dirname(runtimeEntry),
+        cliArgs,
+        cliPath: piCliPath,
+        electronVersion: process.versions.electron,
+      })
+    : {
+        args: [piCliPath, ...cliArgs],
+        command: probeMode === "host-node"
+          ? requiredEnvironment("SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE")
+          : process.execPath,
+        environment: probeMode === "electron-run-as-node"
+          ? { ELECTRON_RUN_AS_NODE: "1" }
+          : {},
+      };
   const childEnvironment = cleanProbeEnvironment({
     PI_CODING_AGENT_DIR: profileDirectory,
     PI_OFFLINE: "1",
@@ -75,13 +90,11 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
     PI_PACKAGE_DIR: piPackageDirectory,
     SCOPEGUARD_WORKSPACE_ROOT: "",
     SCOPEGUARD_READ_PERMISSION: "deny",
-    ...(probeMode === "electron-run-as-node"
-      ? { ELECTRON_RUN_AS_NODE: "1" }
-      : {}),
+    ...invocation.environment,
   });
   const startedAt = new Date().toISOString();
   const startedMonotonic = performance.now();
-  const child = spawn(executable, args, {
+  const child = spawn(invocation.command, invocation.args, {
     cwd: sessionDirectory,
     env: childEnvironment,
     stdio: ["pipe", "pipe", "pipe"],
@@ -92,7 +105,12 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
   let stderrBytes = 0;
   let parsedRpcRecords = 0;
   let stdoutBuffer = "";
+  const stdoutDecoder = new StringDecoder("utf8");
   let responseReceived = false;
+  let signalResponse!: () => void;
+  const response = new Promise<void>((resolve) => {
+    signalResponse = resolve;
+  });
   let exitCode: number | null = null;
   let exitSignal: NodeJS.Signals | null = null;
   let exitedAt: string | null = null;
@@ -115,7 +133,7 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
   });
   child.stdout.on("data", (chunk: Buffer) => {
     stdoutBytes += chunk.byteLength;
-    stdoutBuffer += chunk.toString("utf8");
+    stdoutBuffer += stdoutDecoder.write(chunk);
     while (stdoutBuffer.includes("\n")) {
       const newline = stdoutBuffer.indexOf("\n");
       const line = stdoutBuffer.slice(0, newline).replace(/\r$/, "");
@@ -125,7 +143,10 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
         const record = JSON.parse(line) as Record<string, unknown>;
         parsedRpcRecords += 1;
         if (record.type === "response" && record.id === "utility-probe-get-state") {
-          responseReceived = true;
+          if (!responseReceived) {
+            responseReceived = true;
+            signalResponse();
+          }
         }
       } catch {
         // Counts and process lifecycle are the probe evidence; raw output is not emitted.
@@ -159,8 +180,9 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
   child.stdin.write(getState);
 
   const outcome = await Promise.race([
-    waitFor(() => responseReceived, 4_000).then(() => "response" as const),
+    response.then(() => "response" as const),
     close.then(() => "exit" as const),
+    delay(4_000).then(() => "timeout" as const),
     spawnError,
   ]);
   if (outcome === "response") {
@@ -174,6 +196,9 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
       child.kill("SIGKILL");
       await close;
     }
+  } else if (outcome === "timeout") {
+    child.kill("SIGKILL");
+    await close;
   }
 
   return {
@@ -184,14 +209,15 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
     electronVersion: process.versions.electron ?? null,
     piCliPath,
     cwd: sessionDirectory,
-    sanitizedArgv: sanitizeArgv(args, {
+    sanitizedArgv: sanitizeArgv(invocation.args, {
+      bootstrapPath: join(dirname(runtimeEntry), "electron-node-bootstrap.js"),
       extensionPath,
       piCliPath,
       profileDirectory,
       sessionDirectory,
     }),
     electronRunAsNodePresent: Object.hasOwn(
-      process.env,
+      childEnvironment,
       "ELECTRON_RUN_AS_NODE",
     ),
     childSpawnedAt: startedAt,
@@ -272,6 +298,7 @@ function sanitizeArgv(
   paths: Record<string, string>,
 ): string[] {
   const replacements = new Map([
+    [paths.bootstrapPath, "<ELECTRON_NODE_BOOTSTRAP>"],
     [paths.piCliPath, "<PI_CLI>"],
     [paths.sessionDirectory, "<SESSION_DIR>"],
     [paths.extensionPath, "<POLICY_EXTENSION>"],
@@ -281,15 +308,6 @@ function sanitizeArgv(
     replacements.get(argument) ??
       (argument === "ScopeGuard utility probe" ? "<SYSTEM_PROMPT>" : argument)
   );
-}
-
-async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
-    if (condition()) return;
-    await delay(10);
-  }
-  throw new Error(`Pi utility probe timed out after ${timeoutMs}ms.`);
 }
 
 function delay(ms: number): Promise<void> {

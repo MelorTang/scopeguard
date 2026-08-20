@@ -96,6 +96,7 @@ const piRuntimeDist = join(repositoryRoot, "packages", "pi-runtime", "dist");
 for (const file of [
   "approval-extension.js",
   "approval-policy.js",
+  "electron-node-bootstrap.js",
   "extension-manifest.json",
 ]) {
   await copyFile(join(piRuntimeDist, file), join(runtimeTarget, file));

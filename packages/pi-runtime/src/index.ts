@@ -32,6 +32,34 @@ import { PiProtocolError, PiRpcProcess } from "./rpc-process.js";
 export { buildExtensionConfirmation, PiProtocolError, PiRpcProcess } from "./rpc-process.js";
 export { canonicalizeToolInput, classifyToolPolicy, hashCanonicalInput } from "./approval-policy.js";
 
+export function preparePiNodeInvocation(options: {
+  assetRoot: string;
+  cliArgs: string[];
+  cliPath: string;
+  electronVersion?: string;
+  executable?: string;
+}): { args: string[]; command: string; environment: NodeJS.ProcessEnv } {
+  const command = options.executable ?? process.execPath;
+  if (!options.electronVersion) {
+    return {
+      args: [options.cliPath, ...options.cliArgs],
+      command,
+      environment: {},
+    };
+  }
+  // Electron otherwise treats the Pi CLI path as an app entrypoint and exits before RPC readiness.
+  return {
+    args: [
+      "--import",
+      join(options.assetRoot, "electron-node-bootstrap.js"),
+      options.cliPath,
+      ...options.cliArgs,
+    ],
+    command,
+    environment: { ELECTRON_RUN_AS_NODE: "1" },
+  };
+}
+
 export type PiProviderConfig = {
   protocol: ProviderProtocol;
   baseUrl: string;
@@ -150,8 +178,7 @@ export class PiRuntimeSupervisor {
     await this.#writeProfile(profileDirectory, providerName, keyVariable, options.provider);
 
     const processId = randomUUID();
-    const args = [
-      this.#cliPath,
+    const cliArgs = [
       "--mode", "rpc",
       "--provider", providerName,
       "--model", options.provider.model,
@@ -168,9 +195,15 @@ export class PiRuntimeSupervisor {
       ...(workspaceRoot ? ["--tools", "read,bash,write,edit"] : ["--no-tools"]),
       ...(options.locator ? ["--session", options.locator.sessionFile] : []),
     ];
+    const invocation = preparePiNodeInvocation({
+      assetRoot: this.#distRoot,
+      cliArgs,
+      cliPath: this.#cliPath,
+      electronVersion: process.versions.electron,
+    });
     const rpc = new PiRpcProcess({
-      command: process.execPath,
-      args,
+      command: invocation.command,
+      args: invocation.args,
       cwd: workspaceRoot ?? sessionDirectory,
       env: cleanEnvironment({
         PI_CODING_AGENT_DIR: profileDirectory,
@@ -180,6 +213,7 @@ export class PiRuntimeSupervisor {
         PI_PACKAGE_DIR: this.#piPackageDir,
         SCOPEGUARD_WORKSPACE_ROOT: workspaceRoot ?? "",
         SCOPEGUARD_READ_PERMISSION: options.readPermission,
+        ...invocation.environment,
         ...(options.provider.apiKey ? { [keyVariable]: options.provider.apiKey } : {}),
       }),
       processId,
@@ -314,11 +348,18 @@ export class PiRuntimeSupervisor {
       const actual = createHash("sha256").update(await readFile(join(this.#distRoot, file))).digest("hex");
       if (actual !== expected) throw new Error(`Pi Runtime extension hash mismatch: ${file}`);
     }
-    const version = (await execFileAsync(process.execPath, [this.#cliPath, "--version"], {
+    const invocation = preparePiNodeInvocation({
+      assetRoot: this.#distRoot,
+      cliArgs: ["--version"],
+      cliPath: this.#cliPath,
+      electronVersion: process.versions.electron,
+    });
+    const version = (await execFileAsync(invocation.command, invocation.args, {
       env: cleanEnvironment({
         PI_OFFLINE: "1",
         PI_SKIP_VERSION_CHECK: "1",
         PI_PACKAGE_DIR: this.#piPackageDir,
+        ...invocation.environment,
       }),
       timeout: 10_000,
     })).stdout.trim();

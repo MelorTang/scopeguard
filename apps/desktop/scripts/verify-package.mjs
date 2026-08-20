@@ -15,6 +15,7 @@ for (const required of [
   "dist-renderer/index.html",
   "runtime/approval-extension.js",
   "runtime/approval-policy.js",
+  "runtime/electron-node-bootstrap.js",
   "runtime/extension-manifest.json",
   "runtime/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
   "runtime/node_modules/@earendil-works/pi-coding-agent/package.json",
@@ -63,6 +64,7 @@ const runtimeOwnedFiles = [...paths]
 if (JSON.stringify(runtimeOwnedFiles) !== JSON.stringify([
   "runtime/approval-extension.js",
   "runtime/approval-policy.js",
+  "runtime/electron-node-bootstrap.js",
   "runtime/extension-manifest.json",
 ])) {
   throw new Error("Packaged Pi Runtime contains an unexpected policy asset.");

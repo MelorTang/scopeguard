@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,7 +15,61 @@ import {
   PiProtocolError,
   PiRpcProcess,
 } from "./rpc-process.js";
-import { PiRuntimeSupervisor, type PiApprovalRequest } from "./index.js";
+import {
+  PiRuntimeSupervisor,
+  preparePiNodeInvocation,
+  type PiApprovalRequest,
+} from "./index.js";
+
+test("Pi launch uses a direct Node invocation outside Electron", () => {
+  assert.deepEqual(preparePiNodeInvocation({
+    assetRoot: "/runtime",
+    cliArgs: ["--mode", "rpc"],
+    cliPath: "/runtime/pi/cli.js",
+    executable: "/node",
+  }), {
+    args: ["/runtime/pi/cli.js", "--mode", "rpc"],
+    command: "/node",
+    environment: {},
+  });
+});
+
+test("Pi launch enters Electron Node mode through the Runtime bootstrap", () => {
+  assert.deepEqual(preparePiNodeInvocation({
+    assetRoot: "/runtime",
+    cliArgs: ["--mode", "rpc"],
+    cliPath: "/runtime/pi/cli.js",
+    electronVersion: "42.0.1",
+    executable: "/electron",
+  }), {
+    args: [
+      "--import",
+      join("/runtime", "electron-node-bootstrap.js"),
+      "/runtime/pi/cli.js",
+      "--mode",
+      "rpc",
+    ],
+    command: "/electron",
+    environment: { ELECTRON_RUN_AS_NODE: "1" },
+  });
+});
+
+test("Electron Node bootstrap removes its launch marker before Pi loads", () => {
+  const bootstrapPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "electron-node-bootstrap.js",
+  );
+  const output = execFileSync(process.execPath, [
+    "--import",
+    bootstrapPath,
+    "--eval",
+    "process.stdout.write(String(Object.hasOwn(process.env, 'ELECTRON_RUN_AS_NODE')))",
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  });
+  assert.equal(output, "false");
+});
 
 test("Tool policy allows only resolved Workspace reads and requires approval for side effects", async () => {
   const root = await mkdtemp(join(tmpdir(), "scopeguard-read-policy-"));
