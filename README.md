@@ -17,6 +17,9 @@ accepts pinned Pi RPC with a controlled approval extension. The Phase 2
 implementation replaces the active Native Harness composition with
 `@earendil-works/pi-coding-agent@0.84.2` and a fresh personal schema, as accepted
 by [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md).
+The Phase 3 multi-Conversation layout and explicit Dispatch implementation is a
+candidate on GitHub issue #26; it is not accepted until the Windows development
+and staged Pilots and independent review pass.
 
 The retired enterprise route remains recoverable at:
 
@@ -60,6 +63,9 @@ pnpm build
 pnpm qualify:pi-rpc
 pnpm pilot:pi-runtime
 pnpm pilot:pi-runtime:staged
+pnpm --filter @scopeguard/desktop test:renderer
+pnpm pilot:phase3
+pnpm pilot:phase3:staged
 pnpm dev:web
 pnpm dev
 ```
@@ -70,9 +76,9 @@ a disposable Desktop host, deterministic Provider, real pinned Pi RPC, full
 host restart, opaque Session resume, and a continued second turn. Linux Pilots
 are optional engineering evidence and do not imply product support.
 
-On macOS, both Phase 2 Pilot commands intentionally fail before Electron is
-spawned. There is no environment-variable override. Signed macOS installation,
-`safeStorage`, and restart recovery use a separate Phase 5 entry point.
+On macOS, unsigned Phase 2 and Phase 3 Pilot commands intentionally fail before
+Electron is spawned. There is no environment-variable override. Signed macOS
+installation, `safeStorage`, and restart recovery use a separate Phase 5 entry point.
 Acceptance gates are defined in [VERIFICATION.md](./docs/VERIFICATION.md).
 
 ## Documentation

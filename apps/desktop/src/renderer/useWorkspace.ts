@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { projectWorkspaceLayout } from "@scopeguard/domain";
 import type {
   Agent,
   AgentRun,
   ApprovalDecision,
   Conversation,
   ConversationMessage,
+  Dispatch,
+  HandoffPrompt,
   CreateAgentInput,
   ProviderConnectionResult,
   RunEvent,
   UpdateConversationSettingsInput,
   Workspace,
+  WorkspaceLayout,
 } from "@scopeguard/domain";
 import type {
   DesktopWorkspaceSnapshot,
@@ -99,6 +103,17 @@ export type WorkspaceController = {
   getRunForThread: (conversationId: string) => AgentRun | null;
   getLatestRunForThread: (conversationId: string) => AgentRun | null;
   retryThread: (conversationId: string) => Promise<AgentRun>;
+  closePane: (conversationId: string) => void;
+  generateHandoffPrompt: (
+    sourceConversationId: string,
+    targetConversationId: string,
+    workRequest: string,
+  ) => Promise<HandoffPrompt>;
+  dispatchPrompt: (
+    sourceConversationId: string,
+    targetConversationId: string,
+    prompt: string,
+  ) => Promise<Dispatch>;
 };
 
 export function useWorkspace(): WorkspaceController {
@@ -140,6 +155,12 @@ export function useWorkspace(): WorkspaceController {
         setMessagesByThread,
         setStreamingByThread,
       );
+      if (
+        event.type === "run-status" &&
+        ["completed", "failed", "cancelled", "interrupted"].includes(event.status)
+      ) {
+        window.setTimeout(() => void refresh(), 60);
+      }
     });
   }, [refresh]);
 
@@ -150,8 +171,42 @@ export function useWorkspace(): WorkspaceController {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("scopeguard.ui.v3", JSON.stringify(ui));
-  }, [ui]);
+    localStorage.setItem("scopeguard.ui.v3", JSON.stringify({
+      selectedWorkspaceId: ui.selectedWorkspaceId,
+      sidebarCollapsed: ui.sidebarCollapsed,
+      professionalMode: ui.professionalMode,
+    }));
+  }, [ui.professionalMode, ui.selectedWorkspaceId, ui.sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!snapshot || !ui.selectedWorkspaceId) return;
+    const layout: WorkspaceLayout = {
+      workspaceId: ui.selectedWorkspaceId,
+      openConversationIds: ui.openConversationIds,
+      paneConversationIds: ui.paneConversationIds,
+      activeConversationId: ui.activeConversationId,
+      requestedPaneCount: ui.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
+    };
+    const timer = window.setTimeout(() => {
+      void desktopApi.saveWorkspaceLayout(layout)
+        .then((saved) => setSnapshot((current) => current ? {
+          ...current,
+          layouts: [
+            saved,
+            ...current.layouts.filter((item) => item.workspaceId !== saved.workspaceId),
+          ],
+        } : current))
+        .catch((cause: unknown) => setError(messageFromError(cause)));
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [
+    snapshot !== null,
+    ui.activeConversationId,
+    ui.openConversationIds,
+    ui.paneConversationIds,
+    ui.requestedSplitCount,
+    ui.selectedWorkspaceId,
+  ]);
 
   const selectedWorkspace = useMemo(() =>
     snapshot?.workspaces.find((item) => item.id === ui.selectedWorkspaceId)
@@ -173,11 +228,17 @@ export function useWorkspace(): WorkspaceController {
   const responsiveMaximum = maxPaneCount(windowWidth, ui.sidebarCollapsed);
   const maxSplitCount = Math.min(responsiveMaximum, Math.max(1, openThreads.length));
   const effectiveSplitCount = Math.min(ui.requestedSplitCount, maxSplitCount);
-  const paneIds = normalizePaneIds(
-    ui.paneConversationIds,
-    ui.openConversationIds,
-    effectiveSplitCount,
-  );
+  const paneIds = projectWorkspaceLayout({
+    workspaceId: ui.selectedWorkspaceId ?? "unselected-workspace",
+    openConversationIds: ui.openConversationIds,
+    paneConversationIds: normalizePaneIds(
+      ui.paneConversationIds,
+      ui.openConversationIds,
+      ui.requestedSplitCount,
+    ),
+    activeConversationId: ui.activeConversationId,
+    requestedPaneCount: ui.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
+  }, effectiveSplitCount).paneConversationIds;
   const visibleThreads = paneIds.flatMap((id) => {
     const conversation = snapshot?.conversations.find((item) => item.id === id);
     return conversation ? [conversation] : [];
@@ -278,6 +339,27 @@ export function useWorkspace(): WorkspaceController {
   }, []);
   const setProfessionalMode = useCallback((value: boolean) => {
     setUi((current) => ({ ...current, professionalMode: value }));
+  }, []);
+
+  const closePane = useCallback((conversationId: string) => {
+    setUi((current) => {
+      const openConversationIds = current.openConversationIds.filter(
+        (id) => id !== conversationId,
+      );
+      const paneConversationIds = normalizePaneIds(
+        current.paneConversationIds.filter((id) => id !== conversationId),
+        openConversationIds,
+        current.requestedSplitCount,
+      );
+      return {
+        ...current,
+        openConversationIds,
+        paneConversationIds,
+        activeConversationId: current.activeConversationId === conversationId
+          ? paneConversationIds[0] ?? null
+          : current.activeConversationId,
+      };
+    });
   }, []);
 
   const createWorkspace = useCallback(async (name: string) => {
@@ -397,6 +479,63 @@ export function useWorkspace(): WorkspaceController {
     return sendMessage(conversationId, prompt);
   }, [sendMessage]);
 
+  const generateHandoffPrompt = useCallback((
+    sourceConversationId: string,
+    targetConversationId: string,
+    workRequest: string,
+  ) => {
+    const workspaceId = snapshotRef.current?.conversations.find(
+      ({ id }) => id === sourceConversationId,
+    )?.workspaceId;
+    if (!workspaceId) throw new Error("来源 Conversation 不存在。");
+    return desktopApi.generateHandoffPrompt({
+      workspaceId,
+      sourceConversationId,
+      targetConversationId,
+      workRequest,
+    });
+  }, []);
+
+  const dispatchPrompt = useCallback(async (
+    sourceConversationId: string,
+    targetConversationId: string,
+    prompt: string,
+  ) => {
+    const workspaceId = snapshotRef.current?.conversations.find(
+      ({ id }) => id === sourceConversationId,
+    )?.workspaceId;
+    if (!workspaceId) throw new Error("来源 Conversation 不存在。");
+    const created = await desktopApi.createDispatch({
+      workspaceId,
+      sourceConversationId,
+      targetConversationId,
+      prompt,
+      sourceRunId: [
+        ...(snapshotRef.current?.activeRuns ?? []),
+        ...(snapshotRef.current?.recentRuns ?? []),
+      ].find(({ conversationId }) => conversationId === sourceConversationId)?.id ?? null,
+    });
+    const result = await desktopApi.executeDispatch(created.id);
+    setSnapshot((current) => current ? {
+      ...current,
+      dispatches: [
+        result,
+        ...current.dispatches.filter(({ id }) => id !== result.id),
+      ],
+      activeRuns: result.targetRunId
+        ? [
+            ...current.activeRuns,
+            ...current.recentRuns.filter(({ id }) => id === result.targetRunId),
+          ].filter((run, index, values) =>
+            values.findIndex(({ id }) => id === run.id) === index &&
+            !["completed", "failed", "cancelled", "interrupted"].includes(run.status)
+          )
+        : current.activeRuns,
+    } : current);
+    if (result.targetRunId) await refresh();
+    return result;
+  }, [refresh]);
+
   return {
     snapshot,
     loading,
@@ -437,6 +576,9 @@ export function useWorkspace(): WorkspaceController {
     getRunForThread,
     getLatestRunForThread,
     retryThread,
+    closePane,
+    generateHandoffPrompt,
+    dispatchPrompt,
   };
 }
 
@@ -520,23 +662,37 @@ function normalizeUi(
   const conversations = snapshot.conversations.filter(
     (item) => item.workspaceId === workspaceId,
   );
+  const persistedLayout = snapshot.layouts.find(
+    (layout) => layout.workspaceId === workspaceId,
+  );
+  const restorePersistedLayout =
+    current.selectedWorkspaceId !== workspaceId ||
+    current.openConversationIds.length === 0;
   const validIds = new Set(conversations.map((item) => item.id));
-  const openConversationIds = current.openConversationIds.filter((id) => validIds.has(id));
+  const layoutOpenIds = (restorePersistedLayout ? persistedLayout?.openConversationIds : null)
+    ?? (current.selectedWorkspaceId === workspaceId ? current.openConversationIds : []);
+  const openConversationIds = layoutOpenIds.filter((id) => validIds.has(id));
   if (openConversationIds.length === 0 && conversations[0]) {
     openConversationIds.push(conversations[0].id);
   }
-  const activeConversationId = openConversationIds.includes(
-    current.activeConversationId ?? "",
-  ) ? current.activeConversationId : openConversationIds[0] ?? null;
+  const requestedSplitCount = (restorePersistedLayout ? persistedLayout?.requestedPaneCount : null)
+    ?? current.requestedSplitCount;
+  const candidateActiveId = (restorePersistedLayout ? persistedLayout?.activeConversationId : null)
+    ?? current.activeConversationId;
+  const activeConversationId = openConversationIds.includes(candidateActiveId ?? "")
+    ? candidateActiveId
+    : openConversationIds[0] ?? null;
   return {
     ...current,
     selectedWorkspaceId: workspaceId,
     activeConversationId,
     openConversationIds,
+    requestedSplitCount,
     paneConversationIds: normalizePaneIds(
-      current.paneConversationIds,
+      (restorePersistedLayout ? persistedLayout?.paneConversationIds : null)
+        ?? current.paneConversationIds,
       openConversationIds,
-      current.requestedSplitCount,
+      requestedSplitCount,
     ),
   };
 }
@@ -549,13 +705,28 @@ function selectWorkspace(
   const conversations = snapshot?.conversations.filter(
     (item) => item.workspaceId === workspaceId,
   ) ?? [];
-  const openConversationIds = conversations[0] ? [conversations[0].id] : [];
+  const layout = snapshot?.layouts.find((item) => item.workspaceId === workspaceId);
+  const validIds = new Set(conversations.map(({ id }) => id));
+  const openConversationIds = (layout?.openConversationIds ?? [])
+    .filter((id) => validIds.has(id));
+  if (openConversationIds.length === 0 && conversations[0]) {
+    openConversationIds.push(conversations[0].id);
+  }
+  const requestedSplitCount = layout?.requestedPaneCount ?? 1;
+  const paneConversationIds = normalizePaneIds(
+    layout?.paneConversationIds ?? openConversationIds,
+    openConversationIds,
+    requestedSplitCount,
+  );
   return {
     ...current,
     selectedWorkspaceId: workspaceId,
-    activeConversationId: openConversationIds[0] ?? null,
+    activeConversationId: paneConversationIds.includes(layout?.activeConversationId ?? "")
+      ? layout!.activeConversationId
+      : paneConversationIds[0] ?? null,
     openConversationIds,
-    paneConversationIds: openConversationIds,
+    paneConversationIds,
+    requestedSplitCount,
   };
 }
 
@@ -592,7 +763,7 @@ function mergeMessages(
 
 function maxPaneCount(width: number, sidebarCollapsed: boolean): number {
   const available = width - (sidebarCollapsed ? 72 : 264);
-  if (available >= 1680) return 4;
+  if (available >= 1520) return 4;
   if (available >= 1180) return 3;
   if (available >= 760) return 2;
   return 1;
@@ -605,14 +776,11 @@ function readUiState(): PersistedUiState {
     if (!parsed) return DEFAULT_UI_STATE;
     return {
       ...DEFAULT_UI_STATE,
-      ...parsed,
-      openConversationIds: Array.isArray(parsed.openConversationIds)
-        ? parsed.openConversationIds.filter((id): id is string => typeof id === "string")
-        : [],
-      paneConversationIds: Array.isArray(parsed.paneConversationIds)
-        ? parsed.paneConversationIds.filter((id): id is string => typeof id === "string")
-        : [],
-      requestedSplitCount: Math.max(1, Math.min(4, parsed.requestedSplitCount ?? 1)),
+      selectedWorkspaceId: typeof parsed.selectedWorkspaceId === "string"
+        ? parsed.selectedWorkspaceId
+        : null,
+      sidebarCollapsed: parsed.sidebarCollapsed === true,
+      professionalMode: parsed.professionalMode === true,
     };
   } catch {
     return DEFAULT_UI_STATE;

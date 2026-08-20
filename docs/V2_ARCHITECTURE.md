@@ -93,11 +93,12 @@ Pi's transcript.
 ScopeGuard schema family `scopeguard-personal-pi-v1`, version 1, contains
 Workspace, Provider reference, Agent, Conversation-to-Pi-locator, Run,
 approval-tuple, Workspace context, Artifact, Dispatch, and layout metadata.
-Artifact, Dispatch, and layout tables reserve product ownership for later
-phases; Phase 2 does not implement their UX. The database has no message, Tool
-result, transcript, or compaction tables. Pi's Session JSONL is the sole Runtime
-truth. Workspace source files remain ordinary local files, and Provider secrets
-remain in the operating-system vault rather than SQLite or RPC payloads.
+Artifact remains reserved for Phase 4. The Phase 3 candidate activates Dispatch
+and layout metadata without changing the schema family or version. The database
+has no message, Tool result, transcript, or compaction tables. Pi's Session JSONL
+is the sole Runtime truth. Workspace source files remain ordinary local files,
+and Provider secrets remain in the operating-system vault rather than SQLite or
+RPC payloads.
 
 There is no migration from the retired development schema. Startup validates
 the schema family/version, complete table and column shape, SQLite integrity,
@@ -131,6 +132,8 @@ unopenable state stops startup; it never creates an empty replacement Session.
 2. Phase 1: Pi RPC qualification prototype and go/no-go decision. Complete.
 3. Phase 2: fresh local schema and runtime replacement behind stable interfaces. Complete.
 4. Phase 3: multi-Conversation workbench, explicit Dispatch, and recovery.
+   Candidate implementation awaiting Windows Pilot evidence and independent
+   review.
 5. Phase 4: Artifact Review and the bounded Office Tool Pack.
 6. Phase 5: packaging, cross-platform verification, and real-project pilot.
 

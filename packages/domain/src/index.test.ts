@@ -10,6 +10,7 @@ import {
   mergeToolPolicy,
   normalizeProviderBaseUrl,
   parseDispatchPrompt,
+  projectWorkspaceLayout,
   parseWorkspaceLayout,
   validateProviderProfileInput,
 } from "./index.js";
@@ -150,4 +151,14 @@ test("bounds Dispatch prompts by UTF-8 bytes and keeps status monotonic", () => 
   assert.equal(canTransitionDispatch("running", "completed"), true);
   assert.equal(canTransitionDispatch("failed", "running"), false);
   assert.equal(canTransitionDispatch("completed", "failed"), false);
+});
+
+test("responsive layout projection keeps the active Conversation visible", () => {
+  assert.deepEqual(projectWorkspaceLayout({
+    workspaceId: "workspace",
+    openConversationIds: ["one", "two", "three", "four"],
+    paneConversationIds: ["one", "two", "three", "four"],
+    activeConversationId: "four",
+    requestedPaneCount: 4,
+  }, 2).paneConversationIds, ["one", "four"]);
 });

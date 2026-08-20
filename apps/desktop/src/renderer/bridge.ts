@@ -3,6 +3,7 @@ import type {
   AgentRun,
   Conversation,
   ConversationMessage,
+  Dispatch,
   RunEvent,
   Workspace,
   WorkspaceContextRevision,
@@ -47,15 +48,35 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       makeAgent("agent-research", "调研 Agent", "收集证据并形成摘要。"),
       makeAgent("agent-docs", "文档 Agent", "起草清晰的内部文档。"),
       makeAgent("agent-review", "核验 Agent", "核验结论并指出证据缺口。"),
+      makeAgent("agent-ops", "执行 Agent", "执行明确任务并反馈结果。"),
     ],
     conversations: [
       makeConversation("conversation-research", "agent-research", "供应商对比"),
       makeConversation("conversation-docs", "agent-docs", "季度简报"),
       makeConversation("conversation-review", "agent-review", "结论核验"),
+      makeConversation("conversation-ops", "agent-ops", "交付执行"),
     ],
     activeRuns: [],
     recentRuns: [],
     pendingApprovals: [],
+    layouts: [{
+      workspaceId: workspace.id,
+      openConversationIds: [
+        "conversation-research",
+        "conversation-docs",
+        "conversation-review",
+        "conversation-ops",
+      ],
+      paneConversationIds: [
+        "conversation-research",
+        "conversation-docs",
+        "conversation-review",
+        "conversation-ops",
+      ],
+      activeConversationId: "conversation-research",
+      requestedPaneCount: 4,
+    }],
+    dispatches: [],
   };
   const messages = new Map<string, ConversationMessage[]>([
     ["conversation-research", [
@@ -71,6 +92,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       makeMessage("conversation-docs", "user", "起草本季度内部简报。", 1),
     ]],
     ["conversation-review", []],
+    ["conversation-ops", []],
   ]);
   const contexts = new Map<string, WorkspaceContextRevision>();
   const listeners = new Set<(event: RunEvent) => void>();
@@ -199,6 +221,16 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       };
       return clone(updated);
     },
+    async getWorkspaceLayout(workspaceId) {
+      return clone(snapshot.layouts.find((layout) => layout.workspaceId === workspaceId) ?? null);
+    },
+    async saveWorkspaceLayout(layout) {
+      snapshot = {
+        ...snapshot,
+        layouts: [layout, ...snapshot.layouts.filter((item) => item.workspaceId !== layout.workspaceId)],
+      };
+      return clone(layout);
+    },
     async listConversationMessages(conversationId) {
       return clone(messages.get(conversationId) ?? []);
     },
@@ -255,7 +287,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       });
       window.setTimeout(() => completeMockRun(run, conversation, messages, emit, (next) => {
         snapshot = next(snapshot);
-      }), 350);
+      }), input.prompt.includes("慢速") ? 3_000 : 350);
       return clone(run);
     },
     async cancelRun(runId) {
@@ -277,6 +309,86 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       });
     },
     async resolveApproval() {},
+    async createDispatch(input) {
+      const timestamp = new Date().toISOString();
+      const dispatch: Dispatch = {
+        id: createId("dispatch"),
+        workspaceId: input.workspaceId,
+        sourceConversationId: input.sourceConversationId,
+        targetConversationId: input.targetConversationId,
+        prompt: input.prompt.trim(),
+        status: "pending",
+        sourceRunId: input.sourceRunId ?? null,
+        targetRunId: null,
+        error: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      snapshot = { ...snapshot, dispatches: [...snapshot.dispatches, dispatch] };
+      return clone(dispatch);
+    },
+    async listDispatches(workspaceId) {
+      return clone(snapshot.dispatches.filter((item) => item.workspaceId === workspaceId));
+    },
+    async executeDispatch(dispatchId) {
+      const dispatch = snapshot.dispatches.find((item) => item.id === dispatchId);
+      if (!dispatch) throw new Error("Dispatch not found.");
+      const targetBusy = snapshot.activeRuns.some(
+        (run) => run.conversationId === dispatch.targetConversationId,
+      );
+      if (targetBusy) {
+        const failed: Dispatch = {
+          ...dispatch,
+          status: "failed",
+          error: "Target Conversation already has an active Run.",
+          updatedAt: new Date().toISOString(),
+        };
+        snapshot = {
+          ...snapshot,
+          dispatches: snapshot.dispatches.map((item) => item.id === failed.id ? failed : item),
+        };
+        return clone(failed);
+      }
+      const run = await this.startRun({
+        conversationId: dispatch.targetConversationId,
+        prompt: dispatch.prompt,
+      });
+      const running: Dispatch = {
+        ...dispatch,
+        status: "running",
+        targetRunId: run.id,
+        updatedAt: new Date().toISOString(),
+      };
+      snapshot = {
+        ...snapshot,
+        dispatches: snapshot.dispatches.map((item) => item.id === running.id ? running : item),
+      };
+      return clone(running);
+    },
+    async generateHandoffPrompt(input) {
+      const source = snapshot.conversations.find((item) => item.id === input.sourceConversationId);
+      const target = snapshot.conversations.find((item) => item.id === input.targetConversationId);
+      const sourceAgent = snapshot.agents.find((item) => item.id === source?.agentId);
+      const targetAgent = snapshot.agents.find((item) => item.id === target?.agentId);
+      if (!source || !target || !sourceAgent || !targetAgent) throw new Error("Conversation not found.");
+      return {
+        sourceConversationId: source.id,
+        targetConversationId: target.id,
+        text: [
+          "# Handoff Prompt",
+          "",
+          `来源 Agent：${sourceAgent.name}`,
+          `来源 Conversation：${source.title}`,
+          `目标 Agent：${targetAgent.name}`,
+          `目标 Conversation：${target.title}`,
+          "",
+          "## 工作请求",
+          input.workRequest.trim(),
+          "",
+          "请仅依据本 Prompt 和目标 Conversation 已有上下文执行；未附带来源 Conversation 的完整历史。",
+        ].join("\n"),
+      };
+    },
     async getWorkspaceContext(workspaceId) {
       return clone(contexts.get(workspaceId) ?? null);
     },
@@ -394,6 +506,11 @@ function completeMockRun(
     ...snapshot,
     activeRuns: snapshot.activeRuns.filter((item) => item.id !== run.id),
     recentRuns: [completed, ...snapshot.recentRuns],
+    dispatches: snapshot.dispatches.map((dispatch) =>
+      dispatch.targetRunId === run.id && dispatch.status === "running"
+        ? { ...dispatch, status: "completed", error: null, updatedAt: at }
+        : dispatch
+    ),
   }));
   emit({
     type: "message-created",

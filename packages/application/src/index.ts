@@ -490,9 +490,6 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       } else if (canTransitionRun(current.status, "failed")) {
         this.emitStatus(this.#store.updateRunStatus(run.id, "failed", redact(errorMessage(error), apiKey), effect));
       }
-    } finally {
-      const settled = this.#store.getRun(run.id);
-      if (settled) this.#dispatches.settleRun(settled);
     }
   }
 
@@ -583,6 +580,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
   }
 
   emitStatus(run: AgentRun): void {
+    if (terminal(run.status)) this.#dispatches.settleRun(run);
     this.#publish({
       type: "run-status", runId: run.id, conversationId: run.conversationId,
       status: run.status, error: run.error ?? undefined, at: new Date().toISOString(),

@@ -65,6 +65,10 @@ Exit gate:
 
 ## Phase 3: Parallel Workbench And Dispatch
 
+Status: candidate implementation under review. Phase 3 is not accepted until
+GitHub issue #26 passes the Windows development and staged Pilots plus an
+independent Standards and Spec review.
+
 Exit gate:
 
 - one to four Conversations remain visible with independent composers and Run
@@ -76,6 +80,14 @@ Exit gate:
 - restart restores Workspace, pane layout, Conversations, and resumable sessions;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
+- Windows development and staged both pass the real `pilot:phase3` workflow on
+  the exact candidate SHA. The Pilot proves four distinct Pi Sessions, targeted
+  cancellation, Handoff, successful and busy-target Dispatch, full Desktop
+  restart, layout/session/Dispatch recovery, disk Vault credential recovery,
+  secret absence, and complete process-tree cleanup.
+- Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
+  macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
+  remains optional engineering evidence and is not a product-support gate.
 
 ## Phase 4: Artifact And Office Tool Pack
 
@@ -119,6 +131,14 @@ pnpm pilot:pi-runtime
 pnpm pilot:pi-runtime:staged
 pnpm --filter @scopeguard/desktop package:prepare
 git diff --check
+```
+
+The Phase 3 candidate adds:
+
+```bash
+pnpm --filter @scopeguard/desktop test:renderer
+pnpm pilot:phase3
+pnpm pilot:phase3:staged
 ```
 
 Windows Development and Windows staged are the Phase 2 real Desktop hard gates.

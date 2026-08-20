@@ -32,6 +32,12 @@ export async function startPiRuntimeFakeProvider(expectedKey) {
     });
     const id = `desktop-pilot-${++sequence}`;
     const text = `observed:${userTexts.join("|")}`;
+    const latestPrompt = userTexts.at(-1) ?? "";
+    if (latestPrompt.includes("[phase3-slow]")) {
+      if (!await waitForResponse(response, 5_000)) return;
+    } else if (latestPrompt.includes("[phase3-parallel]")) {
+      if (!await waitForResponse(response, 700)) return;
+    }
     send(response, id, { role: "assistant", content: "" });
     send(response, id, { content: text });
     send(response, id, {}, "stop");
@@ -52,6 +58,20 @@ export async function startPiRuntimeFakeProvider(expectedKey) {
     requests,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
+}
+
+function waitForResponse(response, milliseconds) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      response.removeListener("close", closed);
+      resolve(true);
+    }, milliseconds);
+    const closed = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    response.once("close", closed);
+  });
 }
 
 function send(response, id, delta, finishReason = null, usage) {

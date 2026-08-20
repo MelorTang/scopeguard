@@ -280,9 +280,12 @@ test("executes Dispatches, fails busy targets, and reconciles pending work on re
   const pending = new Map<string, ReturnType<typeof deferredRun>>();
   const runtime = {
     validateLocator() {}, projectMessages() { return []; }, async probe() {}, async shutdown() {},
-    run(options: { conversationId: string; onSessionReady?: (locator: ReturnType<typeof locatorFor>) => void }) {
+    run(options: { conversationId: string; signal: AbortSignal; onSessionReady?: (locator: ReturnType<typeof locatorFor>) => void }) {
       const deferred = deferredRun();
       pending.set(options.conversationId, deferred);
+      options.signal.addEventListener("abort", () => deferred.reject(
+        options.signal.reason ?? new DOMException("Cancelled", "AbortError"),
+      ), { once: true });
       options.onSessionReady?.(locatorFor(options.conversationId));
       return deferred.promise.then(() => ({
         locator: locatorFor(options.conversationId),
@@ -347,6 +350,18 @@ test("executes Dispatches, fails busy targets, and reconciles pending work on re
     assert.match(failed.error ?? "", /active Run/);
     pending.get(target.id)!.resolve();
     await application.waitForRun(busyRun.id);
+
+    const cancellable = application.createDispatch({
+      workspaceId: workspace.id,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      prompt: "Cancel only the target Run.",
+    });
+    const cancellableRunning = await application.executeDispatch(cancellable.id);
+    assert.ok(cancellableRunning.targetRunId);
+    await application.cancelRun(cancellableRunning.targetRunId!);
+    assert.equal(application.listDispatches(workspace.id)
+      .find(({ id }) => id === cancellable.id)?.status, "cancelled");
 
     const abandoned = application.createDispatch({
       workspaceId: workspace.id,

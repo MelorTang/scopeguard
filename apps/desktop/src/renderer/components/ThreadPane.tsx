@@ -2,6 +2,7 @@ import {
   ArrowUp,
   Bot,
   Check,
+  Copy,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -10,6 +11,8 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Send,
+  Share2,
   ShieldCheck,
   Square,
   Terminal,
@@ -26,6 +29,7 @@ import {
 
 import type {
   Conversation,
+  Dispatch,
   ApprovalDecision,
   ConversationExecutionProfile,
   MessageContentBlock,
@@ -103,6 +107,7 @@ export function ThreadPane(props: {
   const [openMenu, setOpenMenu] = useState<"access" | "model" | null>(null);
   const [modelDraft, setModelDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [handoffOpen, setHandoffOpen] = useState(false);
   const conversationRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
 
@@ -265,6 +270,24 @@ export function ThreadPane(props: {
           </span>
         </div>
         <RunState status={run?.status ?? null} />
+        <button
+          type="button"
+          className="icon-button icon-button--small"
+          onClick={() => setHandoffOpen((current) => !current)}
+          aria-label="Handoff 与 Agent Dispatch"
+          title="Handoff 与 Agent Dispatch"
+        >
+          <Share2 size={14} />
+        </button>
+        <button
+          type="button"
+          className="icon-button icon-button--small"
+          onClick={() => workspace.closePane(thread.id)}
+          aria-label={`关闭 ${thread.title} 窗格`}
+          title="关闭窗格"
+        >
+          <X size={14} />
+        </button>
       </header>
 
       <div className="conversation" ref={conversationRef}>
@@ -300,12 +323,32 @@ export function ThreadPane(props: {
             }
           />
         ))}
+        {(snapshot?.dispatches ?? [])
+          .filter((dispatch) =>
+            dispatch.sourceConversationId === thread.id ||
+            dispatch.targetConversationId === thread.id
+          )
+          .map((dispatch) => (
+            <DispatchCard
+              key={dispatch.id}
+              dispatch={dispatch}
+              currentConversationId={thread.id}
+              conversations={snapshot?.conversations ?? []}
+            />
+          ))}
         <div className="sr-only" aria-live="polite">
           {run ? `Agent 状态：${formatRunStatus(run.status)}` : "Agent 空闲"}
         </div>
       </div>
 
       <footer className="composer-area">
+        {handoffOpen && (
+          <HandoffPanel
+            source={thread}
+            workspace={workspace}
+            onClose={() => setHandoffOpen(false)}
+          />
+        )}
         {messages.length === 0 && !stream && !run && (
           <div className="composer-greeting">
             <strong>{agent?.name ?? "Agent"}</strong>
@@ -551,6 +594,237 @@ export function ThreadPane(props: {
   );
 }
 
+function HandoffPanel(props: {
+  source: Conversation;
+  workspace: WorkspaceController;
+  onClose: () => void;
+}): JSX.Element {
+  const targets = props.workspace.snapshot?.conversations.filter(
+    (conversation) =>
+      conversation.workspaceId === props.source.workspaceId &&
+      conversation.id !== props.source.id,
+  ) ?? [];
+  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
+  const [workRequest, setWorkRequest] = useState("");
+  const [generated, setGenerated] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    text: string;
+    tone: "success" | "error";
+  } | null>(null);
+  const byteLength = new TextEncoder().encode(workRequest.trim()).byteLength;
+  const valid = Boolean(targetId && workRequest.trim() && byteLength <= 16 * 1024);
+
+  const generate = async (): Promise<string> => {
+    const prompt = await props.workspace.generateHandoffPrompt(
+      props.source.id,
+      targetId,
+      workRequest,
+    );
+    setGenerated(prompt.text);
+    return prompt.text;
+  };
+
+  const generatePreview = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await generate();
+      setFeedback({ text: "Handoff Prompt 已生成", tone: "success" });
+    } catch (error) {
+      setFeedback({
+        text: `生成失败：${error instanceof Error ? error.message : String(error)}`,
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const text = generated ?? await generate();
+      await navigator.clipboard.writeText(text);
+      setFeedback({ text: "已复制 Handoff Prompt", tone: "success" });
+    } catch (error) {
+      setFeedback({
+        text: `复制失败：${error instanceof Error ? error.message : String(error)}`,
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dispatch = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const result = await props.workspace.dispatchPrompt(
+        props.source.id,
+        targetId,
+        workRequest,
+      );
+      setFeedback(result.status === "failed"
+        ? { text: `Dispatch 失败：${result.error ?? "目标不可用"}`, tone: "error" }
+        : { text: "Dispatch 已发送到目标 Conversation", tone: "success" });
+    } catch (error) {
+      setFeedback({
+        text: `Dispatch 失败：${error instanceof Error ? error.message : String(error)}`,
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="handoff-panel" aria-label="Handoff 与 Agent Dispatch">
+      <header>
+        <div>
+          <strong>交接工作</strong>
+          <span>复制 Prompt，或明确发送给另一个 Conversation</span>
+        </div>
+        <button
+          type="button"
+          className="icon-button icon-button--small"
+          onClick={props.onClose}
+          aria-label="关闭交接面板"
+        >
+          <X size={14} />
+        </button>
+      </header>
+      <label>
+        <span>目标 Conversation</span>
+        <select value={targetId} onChange={(event) => {
+          setTargetId(event.target.value);
+          setGenerated(null);
+          setFeedback(null);
+        }}>
+          {targets.map((target) => (
+            <option value={target.id} key={target.id}>{target.title}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>工作请求</span>
+        <textarea
+          rows={3}
+          value={workRequest}
+          onChange={(event) => {
+            setWorkRequest(event.target.value);
+            setGenerated(null);
+            setFeedback(null);
+          }}
+          placeholder="说明目标、输入和期望输出"
+          aria-label="Handoff 工作请求"
+        />
+      </label>
+      <div className={`handoff-limit ${byteLength > 16 * 1024 ? "is-error" : ""}`}>
+        {byteLength.toLocaleString()} / 16,384 bytes
+      </div>
+      {generated && (
+        <div className="handoff-preview">
+          <span>Handoff Prompt</span>
+          <button
+            type="button"
+            className="icon-button icon-button--small"
+            onClick={() => void copy()}
+            aria-label="复制 Handoff Prompt"
+            title="复制"
+          >
+            <Copy size={14} />
+          </button>
+          <pre>{generated}</pre>
+        </div>
+      )}
+      {feedback && (
+        <div className={`handoff-feedback handoff-feedback--${feedback.tone}`} role="status">
+          {feedback.text}
+        </div>
+      )}
+      <footer>
+        <button
+          type="button"
+          className="button button--secondary button--compact"
+          disabled={!valid || busy}
+          onClick={() => void generatePreview()}
+        >
+          生成 Prompt
+        </button>
+        <button
+          type="button"
+          className="button button--secondary button--compact"
+          disabled={!valid || busy}
+          onClick={() => void copy()}
+        >
+          <Copy size={14} />
+          复制
+        </button>
+        <button
+          type="button"
+          className="button button--primary button--compact"
+          disabled={!valid || busy}
+          onClick={() => void dispatch()}
+        >
+          <Send size={14} />
+          发送 Dispatch
+        </button>
+      </footer>
+    </section>
+  );
+}
+
+function DispatchCard(props: {
+  dispatch: Dispatch;
+  currentConversationId: string;
+  conversations: Conversation[];
+}): JSX.Element {
+  const source = props.conversations.find(
+    ({ id }) => id === props.dispatch.sourceConversationId,
+  );
+  const target = props.conversations.find(
+    ({ id }) => id === props.dispatch.targetConversationId,
+  );
+  const isSource = props.currentConversationId === props.dispatch.sourceConversationId;
+  return (
+    <article className={`dispatch-card dispatch-card--${props.dispatch.status}`}>
+      <header>
+        <Share2 size={14} />
+        <strong>Agent Dispatch</strong>
+        <span>{dispatchStatusLabel(props.dispatch.status)}</span>
+      </header>
+      <p>{props.dispatch.prompt}</p>
+      <footer>
+        <span>{isSource ? "发送至" : "来自"}</span>
+        <strong>{isSource ? target?.title : source?.title}</strong>
+      </footer>
+      {props.dispatch.error && (
+        <div className="dispatch-card__error" role="alert">
+          <CircleAlert size={13} />
+          {props.dispatch.error}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function dispatchStatusLabel(status: Dispatch["status"]): string {
+  return {
+    pending: "待发送",
+    running: "运行中",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+    interrupted: "已中断",
+  }[status];
+}
+
 const EXECUTION_PROFILE_OPTIONS: Array<{
   value: ConversationExecutionProfile;
   label: string;
@@ -559,17 +833,17 @@ const EXECUTION_PROFILE_OPTIONS: Array<{
   {
     value: "request-approval",
     label: "请求批准",
-    description: "敏感操作先询问，并始终使用受管沙箱。",
+    description: "敏感工具执行前由你确认。",
   },
   {
     value: "auto-approve",
     label: "自动审批",
-    description: "自动处理合规请求，但不放宽沙箱边界。",
+    description: "按当前 Conversation 权限自动处理已允许的工具。",
   },
   {
     value: "full-access",
     label: "完全访问",
-    description: "使用当前系统用户权限，不启用受管沙箱。",
+    description: "允许 Agent 使用当前系统用户授予的工作权限。",
   },
 ];
 

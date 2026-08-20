@@ -12,6 +12,7 @@ import type {
 } from "@scopeguard/domain";
 
 import type { AgentHostClient } from "./agent-host-client.js";
+import { runPhase3DesktopPilotPhase } from "./phase3-desktop-pilot.js";
 
 type PilotState = {
   schemaVersion: 1;
@@ -29,6 +30,10 @@ type PilotState = {
 export async function runDesktopPilotPhase(host: AgentHostClient): Promise<void> {
   const phase = parsePhase(process.env.SCOPEGUARD_DESKTOP_PILOT_PHASE);
   const statePath = requiredEnvironment("SCOPEGUARD_DESKTOP_PILOT_STATE");
+  if (process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3") {
+    await runPhase3DesktopPilotPhase(host, phase, statePath);
+    return;
+  }
   const hostPid = host.processId;
   assert.ok(hostPid, "Production AgentHostClient did not expose a running utility process.");
 

@@ -16,6 +16,8 @@ ScopeGuard 是一个个人优先的桌面多 Agent 工作台，用于让多个 A
 composition 替换为 `@earendil-works/pi-coding-agent@0.84.2` 和全新的个人版 schema，
 并由 [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md)
 正式接受。
+Phase 3 的多 Conversation 布局和显式 Dispatch 已形成候选实现；在 GitHub issue
+#26 完成 Windows development/staged Pilot 与独立复审前，不视为已验收。
 
 旧企业路线保留在以下可恢复 checkpoint：
 
@@ -58,6 +60,9 @@ pnpm build
 pnpm qualify:pi-rpc
 pnpm pilot:pi-runtime
 pnpm pilot:pi-runtime:staged
+pnpm --filter @scopeguard/desktop test:renderer
+pnpm pilot:phase3
+pnpm pilot:phase3:staged
 pnpm dev:web
 pnpm dev
 ```
@@ -67,9 +72,9 @@ Windows 是 Phase 2 验收平台。在 Runtime evidence commit `8554a642` 上，
 版本 Pi RPC、整进程退出、opaque Session 恢复及第二轮继续执行。Linux Pilot 仅作为
 可选工程证据，不代表产品支持。
 
-在 macOS 上，两条 Phase 2 Pilot 命令都会在 Electron 启动前主动失败，且不存在环境
-变量覆盖方式。签名 macOS 安装、`safeStorage` 和真实恢复验证将使用未来独立的 Phase 5
-入口。阶段门禁见 [VERIFICATION.md](./docs/VERIFICATION.md)。
+在 macOS 上，未签名的 Phase 2 和 Phase 3 Pilot 命令都会在 Electron 启动前主动
+失败，且不存在环境变量覆盖方式。签名 macOS 安装、`safeStorage` 和真实恢复验证将
+使用未来独立的 Phase 5 入口。阶段门禁见 [VERIFICATION.md](./docs/VERIFICATION.md)。
 
 ## 文档
 

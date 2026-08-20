@@ -328,7 +328,8 @@ export class ScopeGuardStore {
         (!filter.conversationId ||
           dispatch.sourceConversationId === filter.conversationId ||
           dispatch.targetConversationId === filter.conversationId)
-      );
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   updateDispatchStatus(

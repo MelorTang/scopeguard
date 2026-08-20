@@ -359,6 +359,32 @@ export function parseWorkspaceLayout(
   };
 }
 
+export function projectWorkspaceLayout(
+  value: WorkspaceLayout,
+  maximumVisiblePanes: number,
+): WorkspaceLayout {
+  const layout = parseWorkspaceLayout(value);
+  if (
+    !Number.isInteger(maximumVisiblePanes) ||
+    maximumVisiblePanes < 1 ||
+    maximumVisiblePanes > MAX_WORKBENCH_PANES
+  ) {
+    throw new Error("Maximum visible panes must be an integer from 1 to 4.");
+  }
+  const paneConversationIds = layout.paneConversationIds.slice(
+    0,
+    maximumVisiblePanes,
+  );
+  if (
+    layout.activeConversationId &&
+    layout.paneConversationIds.includes(layout.activeConversationId) &&
+    !paneConversationIds.includes(layout.activeConversationId)
+  ) {
+    paneConversationIds[paneConversationIds.length - 1] = layout.activeConversationId;
+  }
+  return { ...layout, paneConversationIds };
+}
+
 export const MAX_DISPATCH_PROMPT_BYTES = 16 * 1024;
 
 export type DispatchStatus =
