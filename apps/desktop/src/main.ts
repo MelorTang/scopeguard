@@ -136,7 +136,7 @@ process.once("SIGTERM", () => {
 
 async function stopAgentHostAndQuit(): Promise<void> {
   try {
-    await runLayoutFence("app quit", async () => {
+    await runLayoutShutdown("app quit", destroyRendererForShutdown, async () => {
       try {
         await host?.stop();
       } catch (error) {
@@ -157,6 +157,17 @@ async function stopAgentHostAndQuit(): Promise<void> {
   layoutFence = null;
   shutdownComplete = true;
   app.quit();
+}
+
+function destroyRendererForShutdown(): void {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  window.destroy();
+  if (!window.isDestroyed()) {
+    throw new Error("Renderer could not be destroyed before Agent Host shutdown.");
+  }
 }
 
 async function startApplication(): Promise<void> {
@@ -222,6 +233,8 @@ async function startApplication(): Promise<void> {
   });
   layoutFence = new LayoutPersistenceFence({
     timeoutMs: 5_000,
+    suspend: () => requireLayoutPersistence().suspendScheduling(),
+    resume: () => requireLayoutPersistence().resumeScheduling(),
     flushAll: () => requireLayoutPersistence().flushAll(),
     reportError: reportLayoutPersistenceError,
   });
@@ -305,10 +318,11 @@ async function createMainWindow(): Promise<BrowserWindow> {
       return;
     }
     closePending = true;
-    void runLayoutFence("BrowserWindow close", () => {
+    void runLayoutTransient("BrowserWindow close", async () => {
       closeAllowed = true;
-      window.close();
+      await closeBrowserWindow(window);
     }).catch(() => {
+      closeAllowed = false;
       closePending = false;
     });
   });
@@ -555,9 +569,12 @@ async function refreshRendererAfterHostReady(): Promise<void> {
     return;
   }
   const window = mainWindow;
-  await runLayoutFence("Agent Host ready Renderer reload", () => {
+  if (shutdownStarted) {
+    return;
+  }
+  await runLayoutTransient("Agent Host ready Renderer reload", async () => {
     if (!window.isDestroyed()) {
-      window.webContents.reload();
+      await reloadBrowserWindow(window);
     }
   });
 }
@@ -574,6 +591,68 @@ function runLayoutFence(
   action: () => void | Promise<void>,
 ): Promise<void> {
   return layoutFence ? layoutFence.run(reason, action) : Promise.resolve().then(action);
+}
+
+function runLayoutTransient(
+  reason: string,
+  action: () => void | Promise<void>,
+): Promise<void> {
+  return layoutFence
+    ? layoutFence.runTransient(reason, action)
+    : Promise.resolve().then(action);
+}
+
+function runLayoutShutdown(
+  reason: string,
+  destroyRenderer: () => void | Promise<void>,
+  stopAgentHost: () => void | Promise<void>,
+): Promise<void> {
+  return layoutFence
+    ? layoutFence.runShutdown(reason, destroyRenderer, stopAgentHost)
+    : Promise.resolve().then(destroyRenderer).then(stopAgentHost);
+}
+
+function closeBrowserWindow(window: BrowserWindow): Promise<void> {
+  if (window.isDestroyed()) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolveClose, rejectClose) => {
+    const onClosed = (): void => resolveClose();
+    window.once("closed", onClosed);
+    try {
+      window.close();
+    } catch (error) {
+      window.removeListener("closed", onClosed);
+      rejectClose(error);
+    }
+  });
+}
+
+function reloadBrowserWindow(window: BrowserWindow): Promise<void> {
+  if (window.isDestroyed()) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolveReload, rejectReload) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      rejectReload(new Error("Renderer reload timed out after 15 seconds."));
+    }, 15_000);
+    const onFinished = (): void => {
+      cleanup();
+      resolveReload();
+    };
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      window.webContents.removeListener("did-finish-load", onFinished);
+    };
+    window.webContents.once("did-finish-load", onFinished);
+    try {
+      window.webContents.reload();
+    } catch (error) {
+      cleanup();
+      rejectReload(error);
+    }
+  });
 }
 
 function reportLayoutPersistenceError(message: string): void {

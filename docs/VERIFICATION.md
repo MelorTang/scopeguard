@@ -84,9 +84,10 @@ Exit gate:
   resumable sessions without cross-Workspace debounce or ID leakage;
 - every Renderer layout mutation is staged immediately in the Main-owned
   coordinator. Agent Host ready reload, BrowserWindow close, and app quit must
-  complete a bounded flush through Agent Host and SQLite before destroying the
-  Renderer or stopping Agent Host; a failed or timed-out flush blocks the
-  lifecycle action and reports a diagnostic instead of accepting stale layout;
+  stop accepting new layout revisions, complete a bounded flush through Agent
+  Host and SQLite, destroy the Renderer, and only then stop Agent Host. A failed
+  or timed-out flush resumes layout acceptance, blocks the lifecycle action,
+  and reports a diagnostic instead of accepting stale layout;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on

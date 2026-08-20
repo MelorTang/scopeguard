@@ -105,6 +105,26 @@ test("flushAll includes a newer revision staged while SQLite save is in flight",
   assert.equal(persistence.pendingWorkspaceCount, 0);
 });
 
+test("quiescing rejects new revisions explicitly and can resume after a failed exit", () => {
+  const persistence = new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    async save(value) {
+      return value;
+    },
+  });
+
+  persistence.suspendScheduling();
+  assert.equal(persistence.isSchedulingSuspended, true);
+  assert.throws(
+    () => persistence.schedule(layout("workspace-a", "conversation-a", 440)),
+    /quiescing/i,
+  );
+  persistence.resumeScheduling();
+  persistence.schedule(layout("workspace-a", "conversation-a", 560));
+  assert.equal(persistence.isSchedulingSuspended, false);
+  assert.equal(persistence.pendingWorkspaceCount, 1);
+});
+
 function layout(workspaceId: string, conversationId: string, width: number): WorkspaceLayout {
   return {
     workspaceId,

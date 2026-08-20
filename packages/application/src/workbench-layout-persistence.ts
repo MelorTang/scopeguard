@@ -18,6 +18,7 @@ export type WorkbenchLayoutPersistenceOptions = {
 export class WorkbenchLayoutPersistence {
   readonly #options: WorkbenchLayoutPersistenceOptions;
   readonly #pending = new Map<string, PendingWorkspaceLayout>();
+  #schedulingSuspended = false;
 
   constructor(options: WorkbenchLayoutPersistenceOptions) {
     if (!Number.isFinite(options.delayMs) || options.delayMs < 0) {
@@ -30,7 +31,22 @@ export class WorkbenchLayoutPersistence {
     return this.#pending.size;
   }
 
+  get isSchedulingSuspended(): boolean {
+    return this.#schedulingSuspended;
+  }
+
+  suspendScheduling(): void {
+    this.#schedulingSuspended = true;
+  }
+
+  resumeScheduling(): void {
+    this.#schedulingSuspended = false;
+  }
+
   schedule(layout: WorkspaceLayout): void {
+    if (this.#schedulingSuspended) {
+      throw new Error("Workspace layout persistence is quiescing and cannot accept revisions.");
+    }
     const current = this.#pending.get(layout.workspaceId);
     const state: PendingWorkspaceLayout = current ?? {
       revision: 0,
