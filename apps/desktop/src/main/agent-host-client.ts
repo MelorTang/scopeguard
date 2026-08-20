@@ -45,7 +45,7 @@ export class AgentHostClient {
   readonly #vault: EncryptedSecretVault;
   readonly #fork: AgentHostFork;
   readonly #onRunEvent: (event: RunEvent) => void;
-  readonly #onReady: () => void;
+  readonly #onReady: () => void | Promise<void>;
   readonly #readyTimeoutMs: number;
   readonly #requestTimeoutMs: number;
   readonly #shutdownTimeoutMs: number;
@@ -71,7 +71,7 @@ export class AgentHostClient {
     vault: EncryptedSecretVault;
     fork: AgentHostFork;
     onRunEvent: (event: RunEvent) => void;
-    onReady?: () => void;
+    onReady?: () => void | Promise<void>;
     readyTimeoutMs?: number;
     requestTimeoutMs?: number;
     shutdownTimeoutMs?: number;
@@ -289,7 +289,7 @@ export class AgentHostClient {
       this.#rejectReady = null;
       this.#restartAttempt = 0;
       try {
-        this.#onReady();
+        await this.#onReady();
       } catch (error) {
         console.error(
           `[scopeguard] Agent host ready callback failed: ${asError(error).message}`,

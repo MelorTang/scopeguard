@@ -52,17 +52,23 @@ export class WorkbenchLayoutPersistence {
   }
 
   async flush(workspaceId: string): Promise<void> {
-    const state = this.#pending.get(workspaceId);
-    if (!state) return;
-    if (state.timer) {
-      clearTimeout(state.timer);
-      state.timer = null;
+    while (true) {
+      const state = this.#pending.get(workspaceId);
+      if (!state) return;
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = null;
+      }
+      await this.#persist(workspaceId, state);
     }
-    await this.#persist(workspaceId, state);
   }
 
   async flushAll(): Promise<void> {
-    await Promise.all([...this.#pending.keys()].map((workspaceId) => this.flush(workspaceId)));
+    while (this.#pending.size > 0) {
+      await Promise.all(
+        [...this.#pending.keys()].map((workspaceId) => this.flush(workspaceId)),
+      );
+    }
   }
 
   #persist(workspaceId: string, state: PendingWorkspaceLayout): Promise<void> {

@@ -82,6 +82,11 @@ Exit gate:
   never copies a full transcript, and is visible at both ends;
 - restart restores each Workspace's own pane IDs and widths, Conversations, and
   resumable sessions without cross-Workspace debounce or ID leakage;
+- every Renderer layout mutation is staged immediately in the Main-owned
+  coordinator. Agent Host ready reload, BrowserWindow close, and app quit must
+  complete a bounded flush through Agent Host and SQLite before destroying the
+  Renderer or stopping Agent Host; a failed or timed-out flush blocks the
+  lifecycle action and reports a diagnostic instead of accepting stale layout;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on
@@ -90,8 +95,9 @@ Exit gate:
   `createMockDesktopApi` is not part of this gate. The Pilot proves four
   distinct Pi Sessions, targeted cancellation, controlled Handoff clipboard
   write, successful and busy-target Dispatch, full Desktop restart,
-  SQLite layout/session/Dispatch recovery, disk Vault credential recovery,
-  secret absence, and complete process-tree cleanup.
+  a no-debounce pane-close mutation flushed by app quit, SQLite
+  layout/session/Dispatch recovery, disk Vault credential recovery, secret
+  absence, and complete process-tree cleanup.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
   remains optional engineering evidence and is not a product-support gate.

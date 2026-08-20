@@ -12,6 +12,8 @@ const channels = Object.freeze({
   createConversation: "scopeguard:conversation:create",
   updateConversationSettings: "scopeguard:conversation:update-settings",
   getWorkspaceLayout: "scopeguard:layout:get",
+  stageWorkspaceLayout: "scopeguard:layout:stage",
+  flushWorkspaceLayouts: "scopeguard:layout:flush",
   saveWorkspaceLayout: "scopeguard:layout:save",
   listConversationMessages: "scopeguard:conversation:list-messages",
   startRun: "scopeguard:run:start",
@@ -46,6 +48,10 @@ const api = Object.freeze({
     ipcRenderer.invoke(channels.updateConversationSettings, input),
   getWorkspaceLayout: (workspaceId) =>
     ipcRenderer.invoke(channels.getWorkspaceLayout, workspaceId),
+  stageWorkspaceLayout: (layout) =>
+    ipcRenderer.invoke(channels.stageWorkspaceLayout, layout),
+  flushWorkspaceLayouts: () =>
+    ipcRenderer.invoke(channels.flushWorkspaceLayouts),
   saveWorkspaceLayout: (layout) =>
     ipcRenderer.invoke(channels.saveWorkspaceLayout, layout),
   listConversationMessages: (conversationId) =>

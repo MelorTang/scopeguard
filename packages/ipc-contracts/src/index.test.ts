@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  IPC_CHANNELS,
   parseClipboardText,
   parseCreateAgentInput,
   parseCreateDispatchRequest,
@@ -13,6 +14,11 @@ import {
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
 } from "./index.js";
+
+test("exposes Main-owned layout staging and flush channels", () => {
+  assert.equal(IPC_CHANNELS.stageWorkspaceLayout, "scopeguard:layout:stage");
+  assert.equal(IPC_CHANNELS.flushWorkspaceLayouts, "scopeguard:layout:flush");
+});
 
 test("removes secret references from Provider profiles returned to Renderer", () => {
   const view = toProviderProfileView({

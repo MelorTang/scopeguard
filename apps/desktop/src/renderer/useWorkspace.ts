@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { WorkbenchLayoutPersistence } from "@scopeguard/application/workbench-layout-persistence";
 import {
   activateConversationInLayout,
   closeConversationInLayout,
@@ -147,26 +146,6 @@ export function useWorkspace(): WorkspaceController {
   uiRef.current = ui;
   messagesRef.current = messagesByThread;
 
-  const layoutPersistence = useMemo(() => new WorkbenchLayoutPersistence({
-    delayMs: 80,
-    save: (layout) => desktopApi.saveWorkspaceLayout(layout),
-    onSaved: (saved) => {
-      setSnapshot((current) => {
-        if (!current) return current;
-        const next = {
-          ...current,
-          layouts: [
-            saved,
-            ...current.layouts.filter((item) => item.workspaceId !== saved.workspaceId),
-          ],
-        };
-        snapshotRef.current = next;
-        return next;
-      });
-    },
-    onError: (cause) => setError(messageFromError(cause)),
-  }), []);
-
   const refresh = useCallback(async () => {
     try {
       const next = await desktopApi.getWorkspaceSnapshot();
@@ -220,11 +199,13 @@ export function useWorkspace(): WorkspaceController {
       const normalized = applyLayoutToUi(next, layout);
       uiRef.current = normalized;
       setUi(normalized);
-      layoutPersistence.schedule(layout);
+      void desktopApi.stageWorkspaceLayout(layout).catch((cause: unknown) => {
+        setError(messageFromError(cause));
+      });
     } catch (cause) {
       setError(messageFromError(cause));
     }
-  }, [layoutPersistence]);
+  }, []);
 
   const selectedWorkspace = useMemo(() =>
     snapshot?.workspaces.find((item) => item.id === ui.selectedWorkspaceId)
@@ -275,16 +256,16 @@ export function useWorkspace(): WorkspaceController {
 
   const transitionWorkspace = useCallback(async (workspaceId: string) => {
     const currentWorkspaceId = uiRef.current.selectedWorkspaceId;
-    if (currentWorkspaceId) await layoutPersistence.flush(currentWorkspaceId);
+    if (currentWorkspaceId) await desktopApi.flushWorkspaceLayouts();
     const nextSnapshot = await desktopApi.getWorkspaceSnapshot();
     const nextUi = selectWorkspace(uiRef.current, nextSnapshot, workspaceId);
     snapshotRef.current = nextSnapshot;
     uiRef.current = nextUi;
     setSnapshot(nextSnapshot);
     setUi(nextUi);
-    layoutPersistence.schedule(layoutFromUi(nextUi, nextSnapshot));
+    await desktopApi.stageWorkspaceLayout(layoutFromUi(nextUi, nextSnapshot));
     setError(null);
-  }, [layoutPersistence]);
+  }, []);
 
   const selectProject = useCallback((workspaceId: string) => {
     void transitionWorkspace(workspaceId).catch((cause: unknown) => {

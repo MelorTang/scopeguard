@@ -260,6 +260,19 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     async getWorkspaceLayout(workspaceId) {
       return clone(snapshot.layouts.find((layout) => layout.workspaceId === workspaceId) ?? null);
     },
+    async stageWorkspaceLayout(layout) {
+      sessionStorage.setItem(
+        `scopeguard.mock.workspace-layout:${layout.workspaceId}`,
+        JSON.stringify(layout),
+      );
+      snapshot = {
+        ...snapshot,
+        layouts: [layout, ...snapshot.layouts.filter((item) => item.workspaceId !== layout.workspaceId)],
+      };
+    },
+    async flushWorkspaceLayouts() {
+      // The browser preview persists staged layouts synchronously above to model Main ownership.
+    },
     async saveWorkspaceLayout(layout) {
       sessionStorage.setItem(
         `scopeguard.mock.workspace-layout:${layout.workspaceId}`,

@@ -11,6 +11,7 @@ const PHASE3_RENDERER_METHOD_NAMES = [
   "listConversationMessages",
   "listDispatches",
   "saveWorkspaceLayout",
+  "stageWorkspaceLayout",
   "startRun",
 ] as const;
 

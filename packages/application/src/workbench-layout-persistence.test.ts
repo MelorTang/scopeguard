@@ -73,6 +73,38 @@ test("a failed save stays visible but does not poison the next Workspace flush",
   assert.equal(persistence.pendingWorkspaceCount, 0);
 });
 
+test("flushAll includes a newer revision staged while SQLite save is in flight", async () => {
+  const saved: WorkspaceLayout[] = [];
+  let releaseFirstSave: (() => void) | undefined;
+  let firstSaveStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    firstSaveStarted = resolve;
+  });
+  const persistence = new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    async save(value) {
+      saved.push(structuredClone(value));
+      if (saved.length === 1) {
+        firstSaveStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirstSave = resolve;
+        });
+      }
+      return value;
+    },
+  });
+
+  persistence.schedule(layout("workspace-a", "conversation-a", 440));
+  const flushing = persistence.flushAll();
+  await started;
+  persistence.schedule(layout("workspace-a", "conversation-a", 560));
+  releaseFirstSave?.();
+  await flushing;
+
+  assert.deepEqual(saved.map(({ paneWidths }) => paneWidths[0]), [440, 560]);
+  assert.equal(persistence.pendingWorkspaceCount, 0);
+});
+
 function layout(workspaceId: string, conversationId: string, width: number): WorkspaceLayout {
   return {
     workspaceId,

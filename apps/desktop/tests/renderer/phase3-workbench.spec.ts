@@ -122,6 +122,22 @@ test("narrow resize never hides requested panes", async ({ page }) => {
   await expect(page.getByRole("region", { name: /交付执行，第/ })).toBeVisible();
 });
 
+test("keyboard resize survives an immediate Renderer reload", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await page.goto("/");
+  const firstPane = page.locator(".thread-pane").first();
+  const splitter = page.getByRole("separator", { name: /调整窗格宽度/ }).first();
+  const before = await paneWidth(firstPane);
+  await splitter.focus();
+  await splitter.press("ArrowRight");
+  const resized = await paneWidth(firstPane);
+  expect(resized).toBeGreaterThan(before);
+
+  await page.reload();
+  await expect(page.locator(".thread-pane")).toHaveCount(4);
+  expect(await paneWidth(page.locator(".thread-pane").first())).toBeCloseTo(resized, 0);
+});
+
 test("Workspace switch isolates panes and persists A and B independently", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await page.goto("/");
@@ -173,7 +189,6 @@ test("opening a fifth Conversation replaces the active pane and keeps four panes
   await expect(panes).toHaveCount(4);
   await expect(page.getByRole("region", { name: /数据归档，第/ })).toBeVisible();
   await expect(page.getByRole("region", { name: /供应商对比，第/ })).toHaveCount(0);
-  await page.waitForTimeout(150);
   await page.reload();
   await expect(page.locator(".thread-pane")).toHaveCount(4);
   await expect(page.getByRole("region", { name: /数据归档，第/ })).toBeVisible();

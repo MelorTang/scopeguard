@@ -13,11 +13,20 @@ test("Phase 3 Pilot calls only the production preload API in a real Renderer", a
   });
   assert.deepEqual(await client.invoke("getWorkspaceSnapshot"), { ok: true });
   assert.deepEqual(await client.invoke("copyHandoffPrompt", "exact text"), { ok: true });
-  assert.equal(scripts.length, 2);
+  assert.deepEqual(await client.invoke("stageWorkspaceLayout", {
+    workspaceId: "workspace",
+    openConversationIds: [],
+    paneConversationIds: [],
+    paneWidths: [],
+    activeConversationId: null,
+    requestedPaneCount: 1,
+  }), { ok: true });
+  assert.equal(scripts.length, 3);
   for (const source of scripts) {
     assert.match(source, /window\.scopeguardDesktop/);
     assert.doesNotMatch(source, /createMockDesktopApi/);
   }
   assert.match(scripts[1]!, /copyHandoffPrompt/);
   assert.match(scripts[1]!, /exact text/);
+  assert.match(scripts[2]!, /stageWorkspaceLayout/);
 });

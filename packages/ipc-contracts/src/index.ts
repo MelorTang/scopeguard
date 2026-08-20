@@ -39,6 +39,8 @@ export const IPC_CHANNELS = {
   createConversation: "scopeguard:conversation:create",
   updateConversationSettings: "scopeguard:conversation:update-settings",
   getWorkspaceLayout: "scopeguard:layout:get",
+  stageWorkspaceLayout: "scopeguard:layout:stage",
+  flushWorkspaceLayouts: "scopeguard:layout:flush",
   saveWorkspaceLayout: "scopeguard:layout:save",
   listConversationMessages: "scopeguard:conversation:list-messages",
   startRun: "scopeguard:run:start",
@@ -190,6 +192,8 @@ export type ScopeGuardDesktopApi = {
     input: UpdateConversationSettingsInput,
   ) => Promise<Conversation>;
   getWorkspaceLayout: (workspaceId: Id) => Promise<WorkspaceLayout | null>;
+  stageWorkspaceLayout: (layout: WorkspaceLayout) => Promise<void>;
+  flushWorkspaceLayouts: () => Promise<void>;
   saveWorkspaceLayout: (layout: WorkspaceLayout) => Promise<WorkspaceLayout>;
   listConversationMessages: (
     conversationId: Id,

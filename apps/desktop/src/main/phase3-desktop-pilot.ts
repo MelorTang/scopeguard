@@ -40,6 +40,7 @@ type Phase3PilotState = {
   conversationIds: string[];
   locators: Record<string, PiSessionLocator>;
   layout: WorkspaceLayout;
+  layoutMutationFlushedOnQuit: true;
   completedDispatchId: string;
   failedDispatchId: string;
   resumedMessageCount: number;
@@ -93,7 +94,7 @@ async function runFirstProcess(
       title: `Parallel Conversation ${index + 1}`,
     }));
   }
-  const layout = await renderer.client.invoke<WorkspaceLayout>("saveWorkspaceLayout", {
+  await renderer.client.invoke<WorkspaceLayout>("saveWorkspaceLayout", {
     workspaceId: workspace.id,
     openConversationIds: conversations.map(({ id }) => id),
     paneConversationIds: conversations.map(({ id }) => id),
@@ -173,6 +174,15 @@ async function runFirstProcess(
   const finalSnapshot = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
   assert.equal(requireDispatch(finalSnapshot, created.id).status, "completed");
   assert.equal(requireDispatch(finalSnapshot, blocked.id).status, "failed");
+  const noWaitLayout: WorkspaceLayout = {
+    workspaceId: workspace.id,
+    openConversationIds: conversations.slice(1).map(({ id }) => id),
+    paneConversationIds: conversations.slice(1).map(({ id }) => id),
+    paneWidths: [468, 512, 556],
+    activeConversationId: conversations[2]!.id,
+    requestedPaneCount: 3,
+  };
+  await renderer.client.invoke("stageWorkspaceLayout", noWaitLayout);
   await persistState(statePath, {
     schemaVersion: 1,
     kind: "phase3",
@@ -188,7 +198,8 @@ async function runFirstProcess(
     agentIds: agents.map(({ id }) => id),
     conversationIds: conversations.map(({ id }) => id),
     locators,
-    layout,
+    layout: noWaitLayout,
+    layoutMutationFlushedOnQuit: true,
     completedDispatchId: created.id,
     failedDispatchId: blocked.id,
     resumedMessageCount: 0,
@@ -286,7 +297,12 @@ async function persistState(path: string, state: Phase3PilotState): Promise<void
 
 function parseState(value: string): Phase3PilotState {
   const state = JSON.parse(value) as Phase3PilotState;
-  if (state.schemaVersion !== 1 || state.kind !== "phase3" || state.phase !== 1) {
+  if (
+    state.schemaVersion !== 1 ||
+    state.kind !== "phase3" ||
+    state.phase !== 1 ||
+    state.layoutMutationFlushedOnQuit !== true
+  ) {
     throw new Error("Phase 3 Desktop Pilot state is incompatible.");
   }
   return state;

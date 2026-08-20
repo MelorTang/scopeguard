@@ -13,6 +13,8 @@ import {
   type OpenDialogOptions,
 } from "electron";
 
+import { WorkbenchLayoutPersistence } from "@scopeguard/application/workbench-layout-persistence";
+import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 import {
   IPC_CHANNELS,
   parseCreateAgentInput,
@@ -28,12 +30,12 @@ import {
   parseUpdateConversationSettingsInput,
   parseWorkspaceLayoutRequest,
 } from "@scopeguard/ipc-contracts";
-import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
 import { writeControlledClipboard } from "./main/controlled-clipboard.js";
 import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
+import { LayoutPersistenceFence } from "./main/layout-persistence-fence.js";
 import { persistPilotLifecycleMetadata } from "./main/pilot-desktop-process.js";
 import {
   assertDesktopPilotCredentialStoreIsolation,
@@ -71,6 +73,8 @@ let developmentRendererUrl: string | null = null;
 
 let mainWindow: BrowserWindow | null = null;
 let host: AgentHostClient | null = null;
+let layoutPersistence: WorkbenchLayoutPersistence | null = null;
+let layoutFence: LayoutPersistenceFence | null = null;
 let shutdownStarted = false;
 let shutdownComplete = false;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
@@ -132,18 +136,27 @@ process.once("SIGTERM", () => {
 
 async function stopAgentHostAndQuit(): Promise<void> {
   try {
-    await host?.stop();
+    await runLayoutFence("app quit", async () => {
+      try {
+        await host?.stop();
+      } catch (error) {
+        console.error(
+          `[scopeguard] Agent host shutdown failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    });
   } catch (error) {
-    console.error(
-      `[scopeguard] Agent host shutdown failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  } finally {
-    host = null;
-    shutdownComplete = true;
-    app.quit();
+    shutdownStarted = false;
+    console.error(error);
+    return;
   }
+  host = null;
+  layoutPersistence = null;
+  layoutFence = null;
+  shutdownComplete = true;
+  app.quit();
 }
 
 async function startApplication(): Promise<void> {
@@ -195,6 +208,22 @@ async function startApplication(): Promise<void> {
       utilityProcess.fork(modulePath, args, options),
     onRunEvent: forwardRunEvent,
     onReady: refreshRendererAfterHostReady,
+  });
+  layoutPersistence = new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    save: (layout) => host!.request("saveWorkspaceLayout", layout),
+    onError: (error) => {
+      console.error(
+        `[scopeguard] Deferred Workspace layout save failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    },
+  });
+  layoutFence = new LayoutPersistenceFence({
+    timeoutMs: 5_000,
+    flushAll: () => requireLayoutPersistence().flushAll(),
+    reportError: reportLayoutPersistenceError,
   });
   registerIpcHandlers(host);
   await host.start();
@@ -252,6 +281,8 @@ async function createMainWindow(): Promise<BrowserWindow> {
     },
   });
   mainWindow = window;
+  let closeAllowed = false;
+  let closePending = false;
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, targetUrl) => {
@@ -264,6 +295,22 @@ async function createMainWindow(): Promise<BrowserWindow> {
   });
   window.once("ready-to-show", () => {
     if (!desktopPilotPhase) window.show();
+  });
+  window.on("close", (event) => {
+    if (closeAllowed || shutdownComplete) {
+      return;
+    }
+    event.preventDefault();
+    if (closePending) {
+      return;
+    }
+    closePending = true;
+    void runLayoutFence("BrowserWindow close", () => {
+      closeAllowed = true;
+      window.close();
+    }).catch(() => {
+      closePending = false;
+    });
   });
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -294,8 +341,9 @@ async function createPhase3RendererEvidence() {
 }
 
 function registerIpcHandlers(agentHost: AgentHostClient): void {
-  ipcMain.handle(IPC_CHANNELS.getWorkspaceSnapshot, (event) => {
+  ipcMain.handle(IPC_CHANNELS.getWorkspaceSnapshot, async (event) => {
     assertTrustedSender(event);
+    await runLayoutFence("Workspace snapshot refresh", () => undefined);
     return agentHost.request("getWorkspaceSnapshot");
   });
   ipcMain.handle(IPC_CHANNELS.createWorkspace, async (event, value: unknown) => {
@@ -398,13 +446,27 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       parseUpdateConversationSettingsInput(value),
     );
   });
-  ipcMain.handle(IPC_CHANNELS.getWorkspaceLayout, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.getWorkspaceLayout, async (event, value: unknown) => {
     assertTrustedSender(event);
-    return agentHost.request("getWorkspaceLayout", parseId(value, "workspaceId"));
+    const workspaceId = parseId(value, "workspaceId");
+    await requireLayoutPersistence().flush(workspaceId);
+    return agentHost.request("getWorkspaceLayout", workspaceId);
   });
-  ipcMain.handle(IPC_CHANNELS.saveWorkspaceLayout, (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.stageWorkspaceLayout, (event, value: unknown) => {
     assertTrustedSender(event);
-    return agentHost.request("saveWorkspaceLayout", parseWorkspaceLayoutRequest(value));
+    requireLayoutPersistence().schedule(parseWorkspaceLayoutRequest(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.flushWorkspaceLayouts, async (event) => {
+    assertTrustedSender(event);
+    await runLayoutFence("Renderer layout flush", () => undefined);
+  });
+  ipcMain.handle(IPC_CHANNELS.saveWorkspaceLayout, async (event, value: unknown) => {
+    assertTrustedSender(event);
+    const layout = parseWorkspaceLayoutRequest(value);
+    const persistence = requireLayoutPersistence();
+    persistence.schedule(layout);
+    await persistence.flush(layout.workspaceId);
+    return layout;
   });
   ipcMain.handle(IPC_CHANNELS.listConversationMessages, (event, value: unknown) => {
     assertTrustedSender(event);
@@ -488,9 +550,35 @@ function forwardRunEvent(event: RunEvent): void {
   mainWindow.webContents.send(IPC_CHANNELS.runEvent, event);
 }
 
-function refreshRendererAfterHostReady(): void {
+async function refreshRendererAfterHostReady(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
-  mainWindow.webContents.reload();
+  const window = mainWindow;
+  await runLayoutFence("Agent Host ready Renderer reload", () => {
+    if (!window.isDestroyed()) {
+      window.webContents.reload();
+    }
+  });
+}
+
+function requireLayoutPersistence(): WorkbenchLayoutPersistence {
+  if (!layoutPersistence) {
+    throw new Error("Workspace layout persistence is unavailable.");
+  }
+  return layoutPersistence;
+}
+
+function runLayoutFence(
+  reason: string,
+  action: () => void | Promise<void>,
+): Promise<void> {
+  return layoutFence ? layoutFence.run(reason, action) : Promise.resolve().then(action);
+}
+
+function reportLayoutPersistenceError(message: string): void {
+  console.error(`[scopeguard] ${message}`);
+  if (app.isReady()) {
+    dialog.showErrorBox("ScopeGuard could not save the Workspace layout", message);
+  }
 }
