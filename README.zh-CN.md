@@ -12,10 +12,10 @@ ScopeGuard 是一个个人优先的桌面多 Agent 工作台，用于让多个 A
 
 产品契约已于 2026-08-18 重置。[ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)
 定义产品边界，[ADR 0025](./docs/adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md)
-接受固定版本 Pi RPC 和受控审批 extension。Phase 2 候选已将活动 Native Harness
-composition 替换为 `@earendil-works/pi-coding-agent@0.84.2` 和全新的个人版 schema；
-最终决策等待 [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md)
-复审。
+接受固定版本 Pi RPC 和受控审批 extension。Phase 2 实现已将活动 Native Harness
+composition 替换为 `@earendil-works/pi-coding-agent@0.84.2` 和全新的个人版 schema，
+并由 [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md)
+正式接受。
 
 旧企业路线保留在以下可恢复 checkpoint：
 
@@ -62,14 +62,14 @@ pnpm dev:web
 pnpm dev
 ```
 
-在 Windows 和 Linux 上，`pilot:pi-runtime` 用于验证一次性 Desktop host、确定性
-Provider、真实固定版本 Pi RPC、整进程退出、opaque Session 恢复及第二轮继续执行；
-staged 版本会针对正式打包的 Runtime 树重复同一验证。当前候选尚未执行 Windows/Linux
-的两条 Pilot，因此 Phase 2 尚未验收。
+Windows 是 Phase 2 验收平台。在 Runtime evidence commit `8554a642` 上，development
+和 staged Pilot 均以 15/15 通过，覆盖一次性 Desktop host、确定性 Provider、真实固定
+版本 Pi RPC、整进程退出、opaque Session 恢复及第二轮继续执行。Linux Pilot 仅作为
+可选工程证据，不代表产品支持。
 
 在 macOS 上，两条 Phase 2 Pilot 命令都会在 Electron 启动前主动失败，且不存在环境
-变量覆盖方式。签名 macOS 分发验证将使用未来独立的 Phase 5 入口。阶段门禁见
-[VERIFICATION.md](./docs/VERIFICATION.md)。
+变量覆盖方式。签名 macOS 安装、`safeStorage` 和真实恢复验证将使用未来独立的 Phase 5
+入口。阶段门禁见 [VERIFICATION.md](./docs/VERIFICATION.md)。
 
 ## 文档
 

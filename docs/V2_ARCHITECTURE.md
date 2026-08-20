@@ -3,7 +3,7 @@
 Status: Product boundary accepted by
 [ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md), Pi RPC
 contract accepted by [ADR 0025](./adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md),
-and the Phase 2 Runtime/storage reset is a review candidate under
+and the Phase 2 Runtime/storage reset is accepted by
 [ADR 0026](./adr/0026-replace-the-native-harness-with-pi-runtime.md).
 
 ## Product Shape
@@ -129,7 +129,7 @@ unopenable state stops startup; it never creates an empty replacement Session.
 
 1. Phase 0: product contract, ADR, wayfinding, and historical checkpoint. Complete.
 2. Phase 1: Pi RPC qualification prototype and go/no-go decision. Complete.
-3. Phase 2: fresh local schema and runtime replacement behind stable interfaces. Review candidate.
+3. Phase 2: fresh local schema and runtime replacement behind stable interfaces. Complete.
 4. Phase 3: multi-Conversation workbench, explicit Dispatch, and recovery.
 5. Phase 4: Artifact Review and the bounded Office Tool Pack.
 6. Phase 5: packaging, cross-platform verification, and real-project pilot.

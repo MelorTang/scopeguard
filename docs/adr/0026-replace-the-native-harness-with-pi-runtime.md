@@ -1,6 +1,6 @@
 # Replace the Native Harness with the pinned Pi Runtime
 
-Status: Proposed Phase 2 review candidate on 2026-08-18.
+Status: Accepted on 2026-08-20.
 
 Implements the Runtime ownership chosen by ADR 0024 and the constrained Pi RPC
 Go accepted by ADR 0025. This decision does not authorize Phase 3 workbench or
@@ -21,7 +21,7 @@ fixed upstream production dependency graph, not infer it from static bundling.
 
 ## Decision
 
-The Phase 2 candidate replaces the active Native Harness composition root with
+The Phase 2 implementation replaces the active Native Harness composition root with
 `@scopeguard/pi-runtime`, which owns an exact dependency on
 `@earendil-works/pi-coding-agent@0.84.2` and starts the upstream RPC CLI.
 There is no Native Harness fallback.
@@ -72,7 +72,7 @@ because a Run was active.
 
 ## Verification Contract
 
-The candidate must keep all of these machine-verifiable:
+The accepted implementation must keep all of these machine-verifiable:
 
 1. fresh schema creation and explicit rejection of old or malformed families;
 2. policy allow/block/approve behavior, exact response union, manifest drift,
@@ -98,13 +98,22 @@ despite Chromium's mock-keychain switch on 2026-08-19. Both Phase 2 Pilot comman
 therefore reject macOS unconditionally before spawning Electron; there is no
 environment-variable assertion that can bypass this gate. Desktop `main.ts`
 repeats the platform rejection before creating the test Vault, AgentHostClient,
-or Pi Runtime. Signed-distribution interaction with macOS Keychain will use a
-separate future Phase 5 entry point. Windows or Linux must supply both the
-development and staged Phase 2 restart proofs. Windows Development, Windows
-staged, Linux Development, and Linux staged evidence has been recorded, but the
-four groups must be rebound to the final revision and independently accepted.
-Issue #25 remains open, the #23 Phase 2 checkbox remains unchecked, this ADR
-remains Proposed, and Phase 3 has not started.
+or Pi Runtime. Signed macOS installation, `safeStorage`, and real recovery use a
+separate future Phase 5 entry point.
+
+This decision is accepted from Runtime evidence commit
+`8554a642d52d35f6eb62062f83729501157d418f`. Windows is the Phase 2 acceptance
+platform. Its development and staged Pilots each passed 15/15, including two
+fresh Desktop processes, the same Pi Session across restart, Provider-observed
+first-turn and second-turn context, credential recovery from the disk Vault, and
+complete process-tree cleanup. Repository tests passed 83/83; Pi qualification
+passed 26/26; typecheck, build, package verification, links, secret scan, and
+diff checks also passed.
+
+Linux is not a product target platform. Its Development and staged Pilots are
+optional engineering evidence and create no support commitment or Phase 2 gate.
+The earlier Linux Development failure occurred during Electron environment
+preparation before Desktop or Pi started and is not a product Runtime failure.
 
 ## Consequences
 

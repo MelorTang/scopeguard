@@ -14,9 +14,9 @@ bounded request to another existing Conversation.
 The product contract was reset on 2026-08-18. [ADR 0024](./docs/adr/0024-adopt-a-personal-first-pi-rpc-workbench.md)
 defines the product boundary, and [ADR 0025](./docs/adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md)
 accepts pinned Pi RPC with a controlled approval extension. The Phase 2
-candidate replaces the active Native Harness composition with
-`@earendil-works/pi-coding-agent@0.84.2` and a fresh personal schema; its final
-decision is pending review in [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md).
+implementation replaces the active Native Harness composition with
+`@earendil-works/pi-coding-agent@0.84.2` and a fresh personal schema, as accepted
+by [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md).
 
 The retired enterprise route remains recoverable at:
 
@@ -64,16 +64,16 @@ pnpm dev:web
 pnpm dev
 ```
 
-On Windows and Linux, `pilot:pi-runtime` is intended to prove a disposable
-Desktop host, deterministic Provider, real pinned Pi RPC, full host restart,
-opaque Session resume, and a continued second turn. The staged variant repeats
-that proof against the packaged Runtime tree. Neither Windows/Linux Pilot has
-yet been executed for the current candidate, so Phase 2 is not accepted.
+Windows is the Phase 2 acceptance platform. At Runtime evidence commit
+`8554a642`, the development and staged Pilots each passed 15/15 checks covering
+a disposable Desktop host, deterministic Provider, real pinned Pi RPC, full
+host restart, opaque Session resume, and a continued second turn. Linux Pilots
+are optional engineering evidence and do not imply product support.
 
 On macOS, both Phase 2 Pilot commands intentionally fail before Electron is
-spawned. There is no environment-variable override. Signed macOS distribution
-verification will use a separate Phase 5 entry point. Acceptance gates are
-defined in [VERIFICATION.md](./docs/VERIFICATION.md).
+spawned. There is no environment-variable override. Signed macOS installation,
+`safeStorage`, and restart recovery use a separate Phase 5 entry point.
+Acceptance gates are defined in [VERIFICATION.md](./docs/VERIFICATION.md).
 
 ## Documentation
 

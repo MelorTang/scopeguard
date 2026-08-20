@@ -1,8 +1,8 @@
 # ScopeGuard V1 Verification
 
-Status: Current acceptance entry for the personal multi-Agent reset. Phases 0
-and 1 are accepted; Phase 2 is a review candidate. Historical Native Harness
-and Managed Execution checks are not release gates for the active Runtime.
+Status: Current acceptance entry for the personal multi-Agent reset. Phases 0,
+1, and 2 are accepted. Historical Native Harness and Managed Execution checks
+are not release gates for the active Runtime.
 
 ## Phase 0: Product Reset
 
@@ -53,13 +53,13 @@ Exit gate:
 - a real Desktop host completes a Pi turn, exits fully, restarts against the
   same database and opaque Session, continues, and proves the Provider received
   prior context;
-- development and packaged Runtime trees both pass that restart/resume pilot;
-- the automated Windows/Linux Pilot uses a test-only encrypted Vault adapter and
-  an explicit noninteractive Electron credential-store configuration; normal
+- Windows development and staged Runtime trees both pass that restart/resume
+  Pilot. These are the Phase 2 real Desktop hard gates;
+- the automated Windows Pilot uses a test-only encrypted Vault adapter. Normal
   Desktop startup still uses Electron `safeStorage`. Both Phase 2 Pilot commands
   fail unconditionally on macOS before Electron spawn, with no override. Signed
-  macOS Keychain behavior uses a separate future Phase 5 distribution entry and
-  is not Phase 2 restart evidence;
+  macOS installation, `safeStorage`, and real restart recovery use a separate
+  future Phase 5 distribution entry and are not Phase 2 restart evidence;
 - qualification, frozen install, repository tests, typecheck, build, package
   staging, link checks, secret/temp scans, and `git diff --check` pass.
 
@@ -121,16 +121,17 @@ pnpm --filter @scopeguard/desktop package:prepare
 git diff --check
 ```
 
-The two Pilot commands intentionally reject macOS before Electron spawn.
-Windows Development, Windows staged, Linux Development, and Linux staged Pilot
-evidence has been recorded, but the four groups must be rebound to the final
-revision and independently accepted before Phase 2 closes. Issue #25 remains
-open, the #23 Phase 2 checkbox remains unchecked, ADR 0026 remains Proposed,
-and Phase 3 has not started. On a supported Pilot platform, the pilots use a
-deterministic local Provider and delete their temporary database, Workspace,
-credential profile, and Pi Session only after the complete spawned process tree
-has exited. A real external Provider smoke is optional and must not print or
-fixture its credential.
+Windows Development and Windows staged are the Phase 2 real Desktop hard gates.
+Both passed 15/15 at Runtime evidence commit `8554a642`, including same-session
+restart/resume, Provider-observed prior context, disk Vault credential recovery,
+and complete process-tree cleanup. The two Pilot commands intentionally reject
+unsigned macOS before Electron spawn; signed macOS installation, `safeStorage`,
+and real recovery remain Phase 5 gates. Linux Development and staged are
+optional engineering evidence, do not represent product support, and do not
+block Phase 2. The earlier Linux Development failure occurred while preparing
+the Electron environment before Desktop or Pi started, so it is not a product
+Runtime failure. A real external Provider smoke is optional and must not print
+or fixture its credential.
 
 Every milestone report must identify the exact commit, platform, Pi version,
 fixtures, command results, remaining gaps, and whether evidence comes from the
