@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -31,10 +30,13 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
   await mkdir(profileDirectory);
   await mkdir(sessionDirectory);
   const runtimeEntry = fileURLToPath(import.meta.resolve("@scopeguard/pi-runtime"));
-  const piEntry = createRequire(runtimeEntry).resolve(
-    "@earendil-works/pi-coding-agent",
+  const runtimePackageDirectory = dirname(dirname(runtimeEntry));
+  const piPackageDirectory = join(
+    runtimePackageDirectory,
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
   );
-  const piPackageDirectory = dirname(dirname(piEntry));
   const piCliPath = join(piPackageDirectory, "dist", "cli.js");
   const extensionPath = join(dirname(runtimeEntry), "approval-extension.js");
   const providerName = "scopeguard-utility-probe";
