@@ -3,9 +3,12 @@ import test from "node:test";
 
 import {
   parseCreateAgentInput,
+  parseCreateDispatchRequest,
+  parseHandoffPromptRequest,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseUpdateConversationSettingsInput,
+  parseWorkspaceLayoutRequest,
   toDesktopWorkspaceSnapshot,
   toProviderProfileView,
 } from "./index.js";
@@ -35,11 +38,15 @@ test("projects the canonical V1 snapshot without compatibility collections", () 
     activeRuns: [],
     recentRuns: [],
     pendingApprovals: [],
+    layouts: [],
+    dispatches: [],
   });
   assert.deepEqual(Object.keys(snapshot).sort(), [
     "activeRuns",
     "agents",
     "conversations",
+    "dispatches",
+    "layouts",
     "pendingApprovals",
     "providerProfiles",
     "recentRuns",
@@ -84,4 +91,50 @@ test("validates Conversation settings and approval decisions", () => {
     approvalId: "approval",
     decision: "approved-workspace",
   }), /approved-once or denied/);
+});
+
+test("rejects extra fields and transcript injection in Phase 3 requests", () => {
+  const layout = {
+    workspaceId: "workspace",
+    openConversationIds: ["source", "target"],
+    paneConversationIds: ["source", "target"],
+    activeConversationId: "source",
+    requestedPaneCount: 2,
+  };
+  assert.deepEqual(parseWorkspaceLayoutRequest(layout), layout);
+  assert.throws(
+    () => parseWorkspaceLayoutRequest({ ...layout, messages: [] }),
+    /exactly|field/i,
+  );
+
+  const dispatch = {
+    workspaceId: "workspace",
+    sourceConversationId: "source",
+    targetConversationId: "target",
+    prompt: "Review the output.",
+    sourceRunId: null,
+  };
+  assert.deepEqual(parseCreateDispatchRequest(dispatch), dispatch);
+  for (const forbidden of ["transcript", "messages", "history"]) {
+    assert.throws(
+      () => parseCreateDispatchRequest({ ...dispatch, [forbidden]: [] }),
+      /exactly|field/i,
+    );
+  }
+
+  const handoff = {
+    workspaceId: "workspace",
+    sourceConversationId: "source",
+    targetConversationId: "target",
+    workRequest: "Check the result.",
+  };
+  assert.deepEqual(parseHandoffPromptRequest(handoff), handoff);
+  assert.throws(
+    () => parseHandoffPromptRequest({ ...handoff, transcript: ["secret"] }),
+    /exactly|field/i,
+  );
+  assert.throws(
+    () => parseHandoffPromptRequest({ ...handoff, workRequest: "汉".repeat(5_462) }),
+    /16 KiB/i,
+  );
 });

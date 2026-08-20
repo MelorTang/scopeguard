@@ -16,8 +16,12 @@ import {
   type ConversationMessage,
   type CreateAgentInput,
   type CreateConversationInput,
+  type CreateDispatchInput,
   type CreateWorkspaceInput,
   type Id,
+  type Dispatch,
+  type HandoffPrompt,
+  type HandoffPromptRequest,
   type ProviderConnectionResult,
   type ProviderProfile,
   type ProviderProfileInput,
@@ -30,9 +34,13 @@ import {
   type ToolPermission,
   type UpdateConversationSettingsInput,
   type Workspace,
+  type WorkspaceLayout,
   type WorkspaceContextRevision,
   type WorkspaceSnapshot,
 } from "@scopeguard/domain";
+
+import { DispatchWorkflow } from "./dispatch-workflow.js";
+import { WorkbenchLayoutService } from "./workbench-layout.js";
 
 export interface WorkspaceStore {
   getWorkspaceSnapshot(): WorkspaceSnapshot;
@@ -47,12 +55,20 @@ export interface WorkspaceStore {
   getConversation(id: Id): Conversation | null;
   createConversation(input: CreateConversationInput): Conversation;
   updateConversationSettings(input: UpdateConversationSettingsInput): Conversation;
+  getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null;
+  listWorkspaceLayouts(): WorkspaceLayout[];
+  saveWorkspaceLayout(layout: WorkspaceLayout): WorkspaceLayout;
   setConversationSession(id: Id, locator: Conversation["piSession"] extends infer T ? Exclude<T, null> : never): Conversation;
   createRun(conversationId: Id, config: RunConfigSnapshot): AgentRun;
   getRun(id: Id): AgentRun | null;
   listActiveRuns(): AgentRun[];
   updateRunStatus(id: Id, status: RunStatus, error?: string, effect?: AgentRun["effect"]): AgentRun;
   interruptNonTerminalRuns(): number;
+  createDispatch(input: CreateDispatchInput): Dispatch;
+  getDispatch(id: Id): Dispatch | null;
+  listDispatches(filter?: { workspaceId?: Id; conversationId?: Id }): Dispatch[];
+  updateDispatchStatus(id: Id, status: Dispatch["status"], patch?: { targetRunId?: Id | null; error?: string | null }): Dispatch;
+  interruptNonTerminalDispatches(): number;
   createApproval(runId: Id, request: Omit<ToolApproval, "id" | "runId" | "status" | "createdAt" | "resolvedAt">): ToolApproval;
   resolveApproval(id: Id, decision: ApprovalDecision): ToolApproval;
   expireApproval(id: Id): ToolApproval;
@@ -71,7 +87,7 @@ export type SaveProviderProfileInput = ProviderProfileInput & { id?: Id; clearAp
 export type RunEventPublisher = (event: RunEvent) => void;
 
 export interface ScopeGuardCore {
-  initialize(): { interruptedRuns: number };
+  initialize(): { interruptedRuns: number; interruptedDispatches: number };
   shutdown(): Promise<void>;
   getWorkspaceSnapshot(): WorkspaceSnapshot;
   createWorkspace(input: CreateWorkspaceInput): Workspace;
@@ -81,7 +97,13 @@ export interface ScopeGuardCore {
   createAgent(input: CreateAgentInput): Agent;
   createConversation(input: CreateConversationInput): Conversation;
   updateConversationSettings(input: UpdateConversationSettingsInput): Conversation;
+  getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null;
+  saveWorkspaceLayout(layout: WorkspaceLayout): WorkspaceLayout;
   listConversationMessages(conversationId: Id): ConversationMessage[];
+  createDispatch(input: CreateDispatchInput): Dispatch;
+  listDispatches(workspaceId: Id): Dispatch[];
+  executeDispatch(dispatchId: Id): Promise<Dispatch>;
+  generateHandoffPrompt(input: HandoffPromptRequest): HandoffPrompt;
   startRun(input: StartRunInput): Promise<AgentRun>;
   cancelRun(runId: Id): Promise<void>;
   resolveApproval(approvalId: Id, decision: ApprovalDecision): Promise<void>;
@@ -99,6 +121,8 @@ export class ScopeGuardApplication implements ScopeGuardCore {
   readonly #approvalTimeoutMs: number;
   readonly #active = new Map<Id, ActiveRun>();
   readonly #approvals = new ApprovalWaiters();
+  readonly #layouts: WorkbenchLayoutService;
+  readonly #dispatches: DispatchWorkflow;
 
   constructor(options: {
     store: WorkspaceStore;
@@ -111,20 +135,23 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     this.#secrets = options.secrets;
     this.#runtime = options.runtime;
     this.#publish = options.publish ?? (() => {});
+    this.#layouts = new WorkbenchLayoutService(options.store);
+    this.#dispatches = new DispatchWorkflow(options.store);
     this.#approvalTimeoutMs = options.approvalTimeoutMs ?? 180_000;
     if (!Number.isSafeInteger(this.#approvalTimeoutMs) || this.#approvalTimeoutMs <= 0) {
       throw new Error("Approval timeout must be a positive integer.");
     }
   }
 
-  initialize(): { interruptedRuns: number } {
+  initialize(): { interruptedRuns: number; interruptedDispatches: number } {
     const interruptedRuns = this.#store.interruptNonTerminalRuns();
+    const interruptedDispatches = this.#dispatches.reconcile();
     for (const conversation of this.#store.listConversations()) {
       if (!conversation.piSession) continue;
       const workspace = this.requireWorkspace(conversation.workspaceId);
       this.#runtime.validateLocator(conversation.id, conversation.piSession, workspace.localRootPath);
     }
-    return { interruptedRuns };
+    return { interruptedRuns, interruptedDispatches };
   }
 
   async shutdown(): Promise<void> {
@@ -225,6 +252,14 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     return this.#store.updateConversationSettings(input);
   }
 
+  getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null {
+    return this.#layouts.get(workspaceId);
+  }
+
+  saveWorkspaceLayout(layout: WorkspaceLayout): WorkspaceLayout {
+    return this.#layouts.save(layout);
+  }
+
   listConversationMessages(conversationId: Id): ConversationMessage[] {
     const conversation = this.requireConversation(conversationId);
     if (!conversation.piSession) return [];
@@ -236,7 +271,75 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     }));
   }
 
+  createDispatch(input: CreateDispatchInput): Dispatch {
+    this.requireWorkspace(input.workspaceId);
+    return this.#dispatches.create(input);
+  }
+
+  listDispatches(workspaceId: Id): Dispatch[] {
+    this.requireWorkspace(workspaceId);
+    return this.#dispatches.list(workspaceId);
+  }
+
+  async executeDispatch(dispatchId: Id): Promise<Dispatch> {
+    return this.#dispatches.execute(
+      dispatchId,
+      (conversationId) => this.#store.listActiveRuns().some(
+        (run) => run.conversationId === conversationId,
+      ),
+      (conversationId, prompt, onCreated) => this.#startRun(
+        { conversationId, prompt },
+        onCreated,
+      ),
+    );
+  }
+
+  generateHandoffPrompt(input: HandoffPromptRequest): HandoffPrompt {
+    const source = this.requireConversation(input.sourceConversationId);
+    const target = this.requireConversation(input.targetConversationId);
+    if (
+      source.workspaceId !== input.workspaceId ||
+      target.workspaceId !== input.workspaceId
+    ) {
+      throw new Error("Handoff Conversations must belong to the same Workspace.");
+    }
+    if (source.id === target.id) {
+      throw new Error("Handoff source and target must be a different Conversation.");
+    }
+    const sourceAgent = this.requireAgent(source.agentId);
+    const targetAgent = this.requireAgent(target.agentId);
+    const workRequest = input.workRequest.trim();
+    if (!workRequest) throw new Error("Handoff work request cannot be empty.");
+    if (new TextEncoder().encode(workRequest).byteLength > 16 * 1024) {
+      throw new Error("Handoff work request must not exceed 16 KiB of UTF-8 text.");
+    }
+    return {
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      text: [
+        "# Handoff Prompt",
+        "",
+        `来源 Agent：${sourceAgent.name}`,
+        `来源 Conversation：${source.title}`,
+        `目标 Agent：${targetAgent.name}`,
+        `目标 Conversation：${target.title}`,
+        "",
+        "## 工作请求",
+        workRequest,
+        "",
+        "请仅依据本 Prompt 和目标 Conversation 已有上下文执行；未附带来源 Conversation 的完整历史。",
+      ].join("\n"),
+    };
+  }
+
   async startRun(input: StartRunInput): Promise<AgentRun> {
+    return this.#startRun(input);
+  }
+
+  async #startRun(
+    input: StartRunInput,
+    onCreated?: (run: AgentRun) => void,
+  ): Promise<AgentRun> {
     const prompt = input.prompt.trim();
     if (!prompt) throw new Error("Message cannot be empty.");
     assertLength(prompt, 100_000, "Message");
@@ -258,6 +361,12 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       toolPolicy: agent.toolPolicy,
     };
     const run = this.#store.createRun(conversation.id, config);
+    try {
+      onCreated?.(run);
+    } catch (error) {
+      this.#store.updateRunStatus(run.id, "failed", errorMessage(error));
+      throw error;
+    }
     const pendingSequence = conversation.piSession
       ? this.listConversationMessages(conversation.id).length + 1
       : 1;
@@ -381,6 +490,9 @@ export class ScopeGuardApplication implements ScopeGuardCore {
       } else if (canTransitionRun(current.status, "failed")) {
         this.emitStatus(this.#store.updateRunStatus(run.id, "failed", redact(errorMessage(error), apiKey), effect));
       }
+    } finally {
+      const settled = this.#store.getRun(run.id);
+      if (settled) this.#dispatches.settleRun(settled);
     }
   }
 

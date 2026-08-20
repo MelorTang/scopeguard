@@ -6,10 +6,14 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import {
   SCOPEGUARD_SCHEMA_ID,
   SCOPEGUARD_SCHEMA_VERSION,
+  assertDispatchTransition,
   assertRunTransition,
   mergeToolPolicy,
   parseAgentToolPolicy,
   parseConversationExecutionProfile,
+  parseDispatch,
+  parseDispatchPrompt,
+  parseWorkspaceLayout,
   type Agent,
   type AgentRun,
   type ApprovalDecision,
@@ -17,8 +21,11 @@ import {
   type ConversationExecutionProfile,
   type CreateAgentInput,
   type CreateConversationInput,
+  type CreateDispatchInput,
   type CreateWorkspaceInput,
   type Id,
+  type Dispatch,
+  type DispatchStatus,
   type PiSessionLocator,
   type ProviderProfile,
   type ProviderProfileInput,
@@ -28,6 +35,7 @@ import {
   type ToolCallRecord,
   type UpdateConversationSettingsInput,
   type Workspace,
+  type WorkspaceLayout,
   type WorkspaceContextRevision,
   type WorkspaceSnapshot,
 } from "@scopeguard/domain";
@@ -88,6 +96,8 @@ export class ScopeGuardStore {
         approval,
         toolCall: approvalToolCall(approval),
       })),
+      layouts: this.listWorkspaceLayouts(),
+      dispatches: this.listDispatches(),
     };
   }
 
@@ -237,6 +247,140 @@ export class ScopeGuardStore {
       locator.sessionFile, locator.sessionId, locator.piVersion, locator.sessionVersion, nowIso(), id,
     );
     return this.requireConversation(id);
+  }
+
+  getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null {
+    const row = this.#get("SELECT * FROM layout_state WHERE workspace_id = ?", workspaceId);
+    if (!row) return null;
+    return this.#mapWorkspaceLayout(row);
+  }
+
+  listWorkspaceLayouts(): WorkspaceLayout[] {
+    return this.#all("SELECT * FROM layout_state ORDER BY workspace_id")
+      .map((row) => this.#mapWorkspaceLayout(row));
+  }
+
+  saveWorkspaceLayout(value: WorkspaceLayout): WorkspaceLayout {
+    if (!this.getWorkspace(value.workspaceId)) {
+      throw new Error(`Workspace not found: ${value.workspaceId}`);
+    }
+    const conversationIds = new Set(
+      this.listConversations(value.workspaceId).map(({ id }) => id),
+    );
+    const layout = parseWorkspaceLayout(value, conversationIds);
+    this.#run(
+      `INSERT INTO layout_state VALUES (?, ?)
+       ON CONFLICT(workspace_id) DO UPDATE SET state_json=excluded.state_json`,
+      layout.workspaceId,
+      JSON.stringify(layout),
+    );
+    return layout;
+  }
+
+  createDispatch(input: CreateDispatchInput): Dispatch {
+    const source = this.requireConversation(input.sourceConversationId);
+    const target = this.requireConversation(input.targetConversationId);
+    if (
+      source.workspaceId !== input.workspaceId ||
+      target.workspaceId !== input.workspaceId
+    ) {
+      throw new Error("Dispatch Conversations must belong to the same Workspace.");
+    }
+    if (source.id === target.id) {
+      throw new Error("Dispatch source and target must be a different Conversation.");
+    }
+    if (input.sourceRunId) {
+      this.#assertRunBelongsToConversation(input.sourceRunId, source.id, "source");
+    }
+    const now = nowIso();
+    const dispatch: Dispatch = {
+      id: randomUUID(),
+      workspaceId: input.workspaceId,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      prompt: parseDispatchPrompt(input.prompt),
+      status: "pending",
+      sourceRunId: input.sourceRunId ?? null,
+      targetRunId: null,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#run(
+      "INSERT INTO dispatches VALUES (?, ?, ?)",
+      dispatch.id,
+      dispatch.workspaceId,
+      JSON.stringify(dispatch),
+    );
+    return dispatch;
+  }
+
+  getDispatch(id: Id): Dispatch | null {
+    const row = this.#get("SELECT * FROM dispatches WHERE id = ?", id);
+    return row ? this.#mapDispatch(row) : null;
+  }
+
+  listDispatches(filter: { workspaceId?: Id; conversationId?: Id } = {}): Dispatch[] {
+    return this.#all("SELECT * FROM dispatches ORDER BY id")
+      .map((row) => this.#mapDispatch(row))
+      .filter((dispatch) =>
+        (!filter.workspaceId || dispatch.workspaceId === filter.workspaceId) &&
+        (!filter.conversationId ||
+          dispatch.sourceConversationId === filter.conversationId ||
+          dispatch.targetConversationId === filter.conversationId)
+      );
+  }
+
+  updateDispatchStatus(
+    id: Id,
+    status: DispatchStatus,
+    patch: { targetRunId?: Id | null; error?: string | null } = {},
+  ): Dispatch {
+    const current = this.getDispatch(id);
+    if (!current) throw new Error(`Dispatch not found: ${id}`);
+    assertDispatchTransition(current.status, status);
+    const targetRunId = patch.targetRunId === undefined
+      ? current.targetRunId
+      : patch.targetRunId;
+    if (targetRunId) {
+      this.#assertRunBelongsToConversation(
+        targetRunId,
+        current.targetConversationId,
+        "target",
+      );
+    }
+    const updated = parseDispatch({
+      ...current,
+      status,
+      targetRunId,
+      error: patch.error === undefined ? current.error : patch.error,
+      updatedAt: nowIso(),
+    });
+    this.#run(
+      "UPDATE dispatches SET metadata_json = ? WHERE id = ?",
+      JSON.stringify(updated),
+      id,
+    );
+    return updated;
+  }
+
+  interruptNonTerminalDispatches(): number {
+    const active = this.listDispatches().filter(
+      ({ status }) => status === "pending" || status === "running",
+    );
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const dispatch of active) {
+        this.updateDispatchStatus(dispatch.id, "interrupted", {
+          error: "ScopeGuard restarted before this Dispatch completed.",
+        });
+      }
+      this.#database.exec("COMMIT");
+      return active.length;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   createRun(conversationId: Id, configSnapshot: RunConfigSnapshot): AgentRun {
@@ -399,6 +543,13 @@ export class ScopeGuardStore {
     return value;
   }
 
+  #assertRunBelongsToConversation(runId: Id, conversationId: Id, role: string): void {
+    const run = this.requireRun(runId);
+    if (run.conversationId !== conversationId) {
+      throw new Error(`Dispatch ${role} Run must belong to its Conversation.`);
+    }
+  }
+
   #initializeSchema(): void {
     const tables = this.listSchemaTables();
     if (tables.length > 0) {
@@ -511,6 +662,8 @@ export class ScopeGuardStore {
     try {
       this.#all("SELECT * FROM agents").forEach(mapAgent);
       this.#all("SELECT * FROM conversations").forEach(mapConversation);
+      this.#all("SELECT * FROM layout_state").forEach((row) => this.#mapWorkspaceLayout(row));
+      this.#all("SELECT * FROM dispatches").forEach((row) => this.#mapDispatch(row));
     } catch {
       throw incompatibleSchema();
     }
@@ -523,6 +676,51 @@ export class ScopeGuardStore {
   #run(sql: string, ...values: SQLInputValue[]) { return this.#database.prepare(sql).run(...values); }
   #get(sql: string, ...values: SQLInputValue[]): Row | undefined { return this.#database.prepare(sql).get(...values) as Row | undefined; }
   #all(sql: string, ...values: SQLInputValue[]): Row[] { return this.#database.prepare(sql).all(...values) as Row[]; }
+
+  #mapWorkspaceLayout(row: Row): WorkspaceLayout {
+    const workspaceId = asString(row.workspace_id);
+    const conversationIds = new Set(
+      this.listConversations(workspaceId).map(({ id }) => id),
+    );
+    const layout = parseWorkspaceLayout(parseObject(row.state_json), conversationIds);
+    if (layout.workspaceId !== workspaceId) {
+      throw new Error("Workspace Layout metadata does not match its database owner.");
+    }
+    return layout;
+  }
+
+  #mapDispatch(row: Row): Dispatch {
+    const rowId = asString(row.id);
+    const workspaceId = asString(row.workspace_id);
+    const dispatch = parseDispatch(parseObject(row.metadata_json));
+    if (dispatch.id !== rowId || dispatch.workspaceId !== workspaceId) {
+      throw new Error("Dispatch metadata does not match its database owner.");
+    }
+    const source = this.requireConversation(dispatch.sourceConversationId);
+    const target = this.requireConversation(dispatch.targetConversationId);
+    if (
+      source.id === target.id ||
+      source.workspaceId !== workspaceId ||
+      target.workspaceId !== workspaceId
+    ) {
+      throw new Error("Dispatch has invalid Conversation ownership.");
+    }
+    if (dispatch.sourceRunId) {
+      this.#assertRunBelongsToConversation(
+        dispatch.sourceRunId,
+        dispatch.sourceConversationId,
+        "source",
+      );
+    }
+    if (dispatch.targetRunId) {
+      this.#assertRunBelongsToConversation(
+        dispatch.targetRunId,
+        dispatch.targetConversationId,
+        "target",
+      );
+    }
+    return dispatch;
+  }
 
   #secureFiles(): void {
     if (!this.#databasePath || process.platform === "win32") return;

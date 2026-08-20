@@ -16,13 +16,16 @@ import {
   IPC_CHANNELS,
   parseCreateAgentInput,
   parseCreateConversationInput,
+  parseCreateDispatchRequest,
   parseCreateWorkspaceInput,
   parseId,
+  parseHandoffPromptRequest,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseStartRunInput,
   parseUpdateWorkspaceContextRequest,
   parseUpdateConversationSettingsInput,
+  parseWorkspaceLayoutRequest,
 } from "@scopeguard/ipc-contracts";
 import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
@@ -375,6 +378,14 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       parseUpdateConversationSettingsInput(value),
     );
   });
+  ipcMain.handle(IPC_CHANNELS.getWorkspaceLayout, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("getWorkspaceLayout", parseId(value, "workspaceId"));
+  });
+  ipcMain.handle(IPC_CHANNELS.saveWorkspaceLayout, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("saveWorkspaceLayout", parseWorkspaceLayoutRequest(value));
+  });
   ipcMain.handle(IPC_CHANNELS.listConversationMessages, (event, value: unknown) => {
     assertTrustedSender(event);
     return agentHost.request("listConversationMessages", parseId(value, "conversationId"));
@@ -392,6 +403,25 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
     return agentHost.request(
       "resolveApproval",
       parseResolveApprovalRequest(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.createDispatch, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("createDispatch", parseCreateDispatchRequest(value));
+  });
+  ipcMain.handle(IPC_CHANNELS.listDispatches, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("listDispatches", parseId(value, "workspaceId"));
+  });
+  ipcMain.handle(IPC_CHANNELS.executeDispatch, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request("executeDispatch", parseId(value, "dispatchId"));
+  });
+  ipcMain.handle(IPC_CHANNELS.generateHandoffPrompt, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "generateHandoffPrompt",
+      parseHandoffPromptRequest(value),
     );
   });
   ipcMain.handle(IPC_CHANNELS.getWorkspaceContext, (event, value: unknown) => {

@@ -24,10 +24,13 @@ import {
 import type {
   CreateAgentInput,
   CreateConversationInput,
+  CreateDispatchInput,
   CreateWorkspaceInput,
+  HandoffPromptRequest,
   Id,
   StartRunInput,
   UpdateConversationSettingsInput,
+  WorkspaceLayout,
 } from "@scopeguard/domain";
 
 class MainProcessSecretVault implements SecretVault {
@@ -158,6 +161,7 @@ parentPort.on("message", (messageEvent) => {
 parentPort.postMessage({
   type: "host-ready",
   interruptedRuns: initialized.interruptedRuns,
+  interruptedDispatches: initialized.interruptedDispatches,
 } satisfies AgentHostToMainMessage);
 
 let shuttingDown = false;
@@ -231,6 +235,10 @@ async function dispatch(
       return core.updateConversationSettings(
         request.payload as UpdateConversationSettingsInput,
       );
+    case "getWorkspaceLayout":
+      return core.getWorkspaceLayout(request.payload as Id);
+    case "saveWorkspaceLayout":
+      return core.saveWorkspaceLayout(request.payload as WorkspaceLayout);
     case "listConversationMessages":
       return core.listConversationMessages(request.payload as Id);
     case "startRun":
@@ -241,6 +249,14 @@ async function dispatch(
       const input = request.payload as ResolveApprovalRequest;
       return core.resolveApproval(input.approvalId, input.decision);
     }
+    case "createDispatch":
+      return core.createDispatch(request.payload as CreateDispatchInput);
+    case "listDispatches":
+      return core.listDispatches(request.payload as Id);
+    case "executeDispatch":
+      return core.executeDispatch(request.payload as Id);
+    case "generateHandoffPrompt":
+      return core.generateHandoffPrompt(request.payload as HandoffPromptRequest);
     case "getWorkspaceContext":
       return core.getWorkspaceContext(request.payload as Id);
     case "updateWorkspaceContext": {

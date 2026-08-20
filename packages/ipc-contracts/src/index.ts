@@ -1,3 +1,4 @@
+import { parseDispatchPrompt, parseWorkspaceLayout } from "@scopeguard/domain";
 import type {
   Agent,
   AgentRun,
@@ -7,8 +8,12 @@ import type {
   ConversationMessage,
   CreateAgentInput,
   CreateConversationInput,
+  CreateDispatchInput,
   CreateWorkspaceInput,
   Id,
+  Dispatch,
+  HandoffPrompt,
+  HandoffPromptRequest,
   ProviderConnectionResult,
   ProviderProfile,
   ProviderProfileInput,
@@ -17,6 +22,7 @@ import type {
   StartRunInput,
   UpdateConversationSettingsInput,
   Workspace,
+  WorkspaceLayout,
   WorkspaceContextRevision,
   WorkspaceSnapshot,
 } from "@scopeguard/domain";
@@ -32,10 +38,16 @@ export const IPC_CHANNELS = {
   createAgent: "scopeguard:agent:create",
   createConversation: "scopeguard:conversation:create",
   updateConversationSettings: "scopeguard:conversation:update-settings",
+  getWorkspaceLayout: "scopeguard:layout:get",
+  saveWorkspaceLayout: "scopeguard:layout:save",
   listConversationMessages: "scopeguard:conversation:list-messages",
   startRun: "scopeguard:run:start",
   cancelRun: "scopeguard:run:cancel",
   resolveApproval: "scopeguard:approval:resolve",
+  createDispatch: "scopeguard:dispatch:create",
+  listDispatches: "scopeguard:dispatch:list",
+  executeDispatch: "scopeguard:dispatch:execute",
+  generateHandoffPrompt: "scopeguard:handoff:generate",
   getWorkspaceContext: "scopeguard:context:get",
   updateWorkspaceContext: "scopeguard:context:update",
   runEvent: "scopeguard:event:run",
@@ -50,10 +62,16 @@ export type AgentHostMethod =
   | "createAgent"
   | "createConversation"
   | "updateConversationSettings"
+  | "getWorkspaceLayout"
+  | "saveWorkspaceLayout"
   | "listConversationMessages"
   | "startRun"
   | "cancelRun"
   | "resolveApproval"
+  | "createDispatch"
+  | "listDispatches"
+  | "executeDispatch"
+  | "generateHandoffPrompt"
   | "getWorkspaceContext"
   | "updateWorkspaceContext";
 
@@ -76,6 +94,7 @@ export type AgentHostRunEvent = { type: "host-run-event"; event: RunEvent };
 export type AgentHostReady = {
   type: "host-ready";
   interruptedRuns: number;
+  interruptedDispatches: number;
 };
 export type AgentHostSecretRequest = {
   type: "host-secret-request";
@@ -169,6 +188,8 @@ export type ScopeGuardDesktopApi = {
   updateConversationSettings: (
     input: UpdateConversationSettingsInput,
   ) => Promise<Conversation>;
+  getWorkspaceLayout: (workspaceId: Id) => Promise<WorkspaceLayout | null>;
+  saveWorkspaceLayout: (layout: WorkspaceLayout) => Promise<WorkspaceLayout>;
   listConversationMessages: (
     conversationId: Id,
   ) => Promise<ConversationMessage[]>;
@@ -178,6 +199,10 @@ export type ScopeGuardDesktopApi = {
     approvalId: Id,
     decision: ApprovalDecision,
   ) => Promise<void>;
+  createDispatch: (input: CreateDispatchInput) => Promise<Dispatch>;
+  listDispatches: (workspaceId: Id) => Promise<Dispatch[]>;
+  executeDispatch: (dispatchId: Id) => Promise<Dispatch>;
+  generateHandoffPrompt: (input: HandoffPromptRequest) => Promise<HandoffPrompt>;
   getWorkspaceContext: (
     workspaceId: Id,
   ) => Promise<WorkspaceContextRevision | null>;
@@ -251,6 +276,59 @@ export function parseStartRunInput(value: unknown): StartRunInput {
   return {
     conversationId: requireString(record.conversationId, "conversationId"),
     prompt: requireString(record.prompt, "prompt"),
+  };
+}
+
+export function parseWorkspaceLayoutRequest(value: unknown): WorkspaceLayout {
+  return parseWorkspaceLayout(value);
+}
+
+export function parseCreateDispatchRequest(value: unknown): CreateDispatchInput {
+  const record = requireExactRecord(value, "Dispatch input", [
+    "prompt",
+    "sourceConversationId",
+    "sourceRunId",
+    "targetConversationId",
+    "workspaceId",
+  ]);
+  return {
+    workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
+    sourceConversationId: requireNonEmptyString(
+      record.sourceConversationId,
+      "sourceConversationId",
+    ),
+    targetConversationId: requireNonEmptyString(
+      record.targetConversationId,
+      "targetConversationId",
+    ),
+    prompt: parseDispatchPrompt(record.prompt),
+    sourceRunId: optionalNullableNonEmptyString(record.sourceRunId, "sourceRunId"),
+  };
+}
+
+export function parseHandoffPromptRequest(value: unknown): HandoffPromptRequest {
+  const record = requireExactRecord(value, "Handoff input", [
+    "sourceConversationId",
+    "targetConversationId",
+    "workRequest",
+    "workspaceId",
+  ]);
+  const workRequest = requireString(record.workRequest, "workRequest").trim();
+  if (!workRequest) throw new Error("workRequest is required.");
+  if (new TextEncoder().encode(workRequest).byteLength > 16 * 1024) {
+    throw new Error("workRequest must not exceed 16 KiB of UTF-8 text.");
+  }
+  return {
+    workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
+    sourceConversationId: requireNonEmptyString(
+      record.sourceConversationId,
+      "sourceConversationId",
+    ),
+    targetConversationId: requireNonEmptyString(
+      record.targetConversationId,
+      "targetConversationId",
+    ),
+    workRequest,
   };
 }
 
@@ -333,6 +411,19 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function requireExactRecord(
+  value: unknown,
+  label: string,
+  allowedFields: readonly string[],
+): Record<string, unknown> {
+  const record = requireRecord(value, label);
+  const extra = Object.keys(record).filter((field) => !allowedFields.includes(field));
+  if (extra.length > 0) {
+    throw new Error(`${label} must contain only the supported fields.`);
+  }
+  return record;
+}
+
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string") throw new Error(`${field} must be a string.`);
   return value;
@@ -354,6 +445,14 @@ function optionalNullableString(
 ): string | null | undefined {
   if (value === undefined || value === null) return value;
   return requireString(value, field);
+}
+
+function optionalNullableNonEmptyString(
+  value: unknown,
+  field: string,
+): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  return requireNonEmptyString(value, field);
 }
 
 function optionalBoolean(value: unknown, field: string): boolean | undefined {

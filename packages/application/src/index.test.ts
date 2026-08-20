@@ -220,3 +220,194 @@ test("expires an unanswered approval before the Runtime timeout and completes de
     store.close();
   }
 });
+
+test("runs four independent Conversations concurrently", async () => {
+  const store = new ScopeGuardStore(":memory:");
+  const pending = new Map<string, ReturnType<typeof deferredRun>>();
+  const runtime = {
+    validateLocator() {}, projectMessages() { return []; }, async probe() {}, async shutdown() {},
+    run(options: { conversationId: string; signal: AbortSignal; onSessionReady?: (locator: ReturnType<typeof locatorFor>) => void }) {
+      const deferred = deferredRun();
+      pending.set(options.conversationId, deferred);
+      options.signal.addEventListener("abort", () => deferred.reject(
+        options.signal.reason ?? new DOMException("Cancelled", "AbortError"),
+      ), { once: true });
+      options.onSessionReady?.(locatorFor(options.conversationId));
+      return deferred.promise.then(() => ({
+        locator: locatorFor(options.conversationId),
+        effect: "none" as const,
+        messages: [],
+      }));
+    },
+  } as unknown as PiRuntimeSupervisor;
+  const application = new ScopeGuardApplication({
+    store,
+    runtime,
+    secrets: memorySecrets(),
+  });
+  try {
+    const { workspace, agent } = await createApplicationFixture(application);
+    const conversations = Array.from({ length: 4 }, (_, index) =>
+      application.createConversation({
+        workspaceId: workspace.id,
+        agentId: agent.id,
+        title: `Parallel ${index + 1}`,
+      })
+    );
+    const runs = await Promise.all(conversations.map((conversation) =>
+      application.startRun({ conversationId: conversation.id, prompt: "Work independently" })
+    ));
+    assert.equal(store.listActiveRuns().length, 4);
+    await assert.rejects(
+      application.startRun({ conversationId: conversations[0]!.id, prompt: "Conflict" }),
+      /already has an active Run/,
+    );
+    await application.cancelRun(runs[0]!.id);
+    assert.equal((await application.waitForRun(runs[0]!.id)).status, "cancelled");
+    assert.equal(store.listActiveRuns().length, 3);
+    for (const conversation of conversations.slice(1)) pending.get(conversation.id)!.resolve();
+    assert.deepEqual(await Promise.all(
+      runs.slice(1).map(async ({ id }) => (await application.waitForRun(id)).status),
+    ), ["completed", "completed", "completed"]);
+  } finally {
+    await application.shutdown();
+    store.close();
+  }
+});
+
+test("executes Dispatches, fails busy targets, and reconciles pending work on restart", async () => {
+  const store = new ScopeGuardStore(":memory:");
+  const pending = new Map<string, ReturnType<typeof deferredRun>>();
+  const runtime = {
+    validateLocator() {}, projectMessages() { return []; }, async probe() {}, async shutdown() {},
+    run(options: { conversationId: string; onSessionReady?: (locator: ReturnType<typeof locatorFor>) => void }) {
+      const deferred = deferredRun();
+      pending.set(options.conversationId, deferred);
+      options.onSessionReady?.(locatorFor(options.conversationId));
+      return deferred.promise.then(() => ({
+        locator: locatorFor(options.conversationId),
+        effect: "none" as const,
+        messages: [],
+      }));
+    },
+  } as unknown as PiRuntimeSupervisor;
+  const application = new ScopeGuardApplication({
+    store,
+    runtime,
+    secrets: memorySecrets(),
+  });
+  try {
+    const { workspace, agent } = await createApplicationFixture(application);
+    const source = application.createConversation({ workspaceId: workspace.id, agentId: agent.id, title: "Source" });
+    const target = application.createConversation({ workspaceId: workspace.id, agentId: agent.id, title: "Target" });
+    const sourceRun = await application.startRun({
+      conversationId: source.id,
+      prompt: "SECRET TRANSCRIPT CONTENT",
+    });
+    pending.get(source.id)!.resolve();
+    await application.waitForRun(sourceRun.id);
+    const handoff = application.generateHandoffPrompt({
+      workspaceId: workspace.id,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      workRequest: "Review the source result.",
+    });
+    assert.match(handoff.text, /Source/);
+    assert.match(handoff.text, /Target/);
+    assert.match(handoff.text, /Review the source result/);
+    assert.doesNotMatch(handoff.text, /SECRET TRANSCRIPT CONTENT/);
+    assert.throws(() => application.generateHandoffPrompt({
+      workspaceId: workspace.id,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      workRequest: "汉".repeat(5_462),
+    }), /16 KiB/);
+    const dispatch = application.createDispatch({
+      workspaceId: workspace.id,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      prompt: "Review the source result.",
+    });
+    const running = await application.executeDispatch(dispatch.id);
+    assert.equal(running.status, "running");
+    assert.ok(running.targetRunId);
+    pending.get(target.id)!.resolve();
+    await application.waitForRun(running.targetRunId!);
+    assert.equal(application.listDispatches(workspace.id)[0]?.status, "completed");
+
+    const busyRun = await application.startRun({ conversationId: target.id, prompt: "Stay busy" });
+    const blocked = application.createDispatch({
+      workspaceId: workspace.id,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      prompt: "This must not queue.",
+    });
+    const failed = await application.executeDispatch(blocked.id);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error ?? "", /active Run/);
+    pending.get(target.id)!.resolve();
+    await application.waitForRun(busyRun.id);
+
+    const abandoned = application.createDispatch({
+      workspaceId: workspace.id,
+      sourceConversationId: source.id,
+      targetConversationId: target.id,
+      prompt: "Interrupted by restart.",
+    });
+    assert.deepEqual(application.initialize(), {
+      interruptedRuns: 0,
+      interruptedDispatches: 1,
+    });
+    const reconciled = application.listDispatches(workspace.id)
+      .find(({ id }) => id === abandoned.id);
+    assert.equal(reconciled?.status, "interrupted");
+    assert.match(reconciled?.error ?? "", /restarted/);
+  } finally {
+    await application.shutdown();
+    store.close();
+  }
+});
+
+function deferredRun() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+function locatorFor(conversationId: string) {
+  return {
+    sessionFile: `/sessions/${conversationId}/session.jsonl`,
+    sessionId: `pi-${conversationId}`,
+    piVersion: "0.84.2" as const,
+    sessionVersion: 3 as const,
+  };
+}
+
+function memorySecrets() {
+  return {
+    async put(reference: string) { return reference; },
+    async get() { return null; },
+    async delete() {},
+  };
+}
+
+async function createApplicationFixture(application: ScopeGuardApplication) {
+  const workspace = application.createWorkspace({ name: "Workspace" });
+  const provider = await application.saveProviderProfile({
+    name: "Provider",
+    protocol: "openai-compatible",
+    baseUrl: "http://127.0.0.1/v1",
+    defaultModel: "model",
+  });
+  const agent = application.createAgent({
+    workspaceId: workspace.id,
+    name: "Agent",
+    instructions: "Help",
+    providerProfileId: provider.id,
+  });
+  return { workspace, provider, agent };
+}

@@ -288,6 +288,197 @@ export type WorkspaceContextRevision = {
   createdAt: IsoDateTime;
 };
 
+export const MAX_WORKBENCH_PANES = 4;
+
+export type WorkspaceLayout = {
+  workspaceId: Id;
+  openConversationIds: Id[];
+  paneConversationIds: Id[];
+  activeConversationId: Id | null;
+  requestedPaneCount: 1 | 2 | 3 | 4;
+};
+
+export function parseWorkspaceLayout(
+  value: unknown,
+  workspaceConversationIds?: ReadonlySet<Id>,
+): WorkspaceLayout {
+  const record = exactRecord(value, [
+    "activeConversationId",
+    "openConversationIds",
+    "paneConversationIds",
+    "requestedPaneCount",
+    "workspaceId",
+  ], "Workspace Layout");
+  const workspaceId = requiredId(record.workspaceId, "Layout workspaceId");
+  const openConversationIds = uniqueIds(
+    record.openConversationIds,
+    "Layout openConversationIds",
+  );
+  const paneConversationIds = uniqueIds(
+    record.paneConversationIds,
+    "Layout paneConversationIds",
+  );
+  const requestedPaneCount = record.requestedPaneCount;
+  if (
+    !Number.isInteger(requestedPaneCount) ||
+    Number(requestedPaneCount) < 1 ||
+    Number(requestedPaneCount) > MAX_WORKBENCH_PANES
+  ) {
+    throw new Error("Layout requestedPaneCount must be an integer from 1 to 4.");
+  }
+  if (paneConversationIds.length > Number(requestedPaneCount)) {
+    throw new Error("Layout has more panes than requestedPaneCount.");
+  }
+  if (paneConversationIds.some((id) => !openConversationIds.includes(id))) {
+    throw new Error("Every pane Conversation must also be open.");
+  }
+  if (
+    workspaceConversationIds &&
+    openConversationIds.some((id) => !workspaceConversationIds.has(id))
+  ) {
+    throw new Error("Layout contains a Conversation outside its Workspace.");
+  }
+  const activeConversationId = record.activeConversationId === null
+    ? null
+    : requiredId(record.activeConversationId, "Layout activeConversationId");
+  if (paneConversationIds.length === 0 && activeConversationId !== null) {
+    throw new Error("An empty Layout cannot have an active Conversation.");
+  }
+  if (
+    paneConversationIds.length > 0 &&
+    (!activeConversationId || !paneConversationIds.includes(activeConversationId))
+  ) {
+    throw new Error("Layout activeConversationId must identify a visible pane.");
+  }
+  return {
+    workspaceId,
+    openConversationIds,
+    paneConversationIds,
+    activeConversationId,
+    requestedPaneCount: requestedPaneCount as WorkspaceLayout["requestedPaneCount"],
+  };
+}
+
+export const MAX_DISPATCH_PROMPT_BYTES = 16 * 1024;
+
+export type DispatchStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export type Dispatch = {
+  id: Id;
+  workspaceId: Id;
+  sourceConversationId: Id;
+  targetConversationId: Id;
+  prompt: string;
+  status: DispatchStatus;
+  sourceRunId: Id | null;
+  targetRunId: Id | null;
+  error: string | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type CreateDispatchInput = {
+  workspaceId: Id;
+  sourceConversationId: Id;
+  targetConversationId: Id;
+  prompt: string;
+  sourceRunId?: Id | null;
+};
+
+export function parseDispatchPrompt(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("Dispatch prompt must be text.");
+  }
+  const prompt = value.trim();
+  if (!prompt) {
+    throw new Error("Dispatch prompt cannot be empty.");
+  }
+  if (new TextEncoder().encode(prompt).byteLength > MAX_DISPATCH_PROMPT_BYTES) {
+    throw new Error("Dispatch prompt must not exceed 16 KiB of UTF-8 text.");
+  }
+  return prompt;
+}
+
+export function parseDispatchStatus(value: unknown): DispatchStatus {
+  if (
+    value === "pending" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled" ||
+    value === "interrupted"
+  ) {
+    return value;
+  }
+  throw new Error("Dispatch status is invalid.");
+}
+
+export function parseDispatch(value: unknown): Dispatch {
+  const record = exactRecord(value, [
+    "createdAt",
+    "error",
+    "id",
+    "prompt",
+    "sourceConversationId",
+    "sourceRunId",
+    "status",
+    "targetConversationId",
+    "targetRunId",
+    "updatedAt",
+    "workspaceId",
+  ], "Dispatch");
+  return {
+    id: requiredId(record.id, "Dispatch id"),
+    workspaceId: requiredId(record.workspaceId, "Dispatch workspaceId"),
+    sourceConversationId: requiredId(
+      record.sourceConversationId,
+      "Dispatch sourceConversationId",
+    ),
+    targetConversationId: requiredId(
+      record.targetConversationId,
+      "Dispatch targetConversationId",
+    ),
+    prompt: parseDispatchPrompt(record.prompt),
+    status: parseDispatchStatus(record.status),
+    sourceRunId: nullableId(record.sourceRunId, "Dispatch sourceRunId"),
+    targetRunId: nullableId(record.targetRunId, "Dispatch targetRunId"),
+    error: nullableString(record.error, "Dispatch error"),
+    createdAt: isoDateTime(record.createdAt, "Dispatch createdAt"),
+    updatedAt: isoDateTime(record.updatedAt, "Dispatch updatedAt"),
+  };
+}
+
+const DISPATCH_TRANSITIONS: Record<DispatchStatus, ReadonlySet<DispatchStatus>> = {
+  pending: new Set(["running", "failed", "cancelled", "interrupted"]),
+  running: new Set(["completed", "failed", "cancelled", "interrupted"]),
+  completed: new Set(),
+  failed: new Set(),
+  cancelled: new Set(),
+  interrupted: new Set(),
+};
+
+export function canTransitionDispatch(
+  from: DispatchStatus,
+  to: DispatchStatus,
+): boolean {
+  return DISPATCH_TRANSITIONS[from].has(to);
+}
+
+export function assertDispatchTransition(
+  from: DispatchStatus,
+  to: DispatchStatus,
+): void {
+  if (!canTransitionDispatch(from, to)) {
+    throw new Error(`Invalid Dispatch status transition: ${from} -> ${to}`);
+  }
+}
+
 export type RunEvent =
   | {
       type: "run-status";
@@ -335,6 +526,21 @@ export type WorkspaceSnapshot = {
   activeRuns: AgentRun[];
   recentRuns: AgentRun[];
   pendingApprovals: PendingApprovalItem[];
+  layouts: WorkspaceLayout[];
+  dispatches: Dispatch[];
+};
+
+export type HandoffPromptRequest = {
+  workspaceId: Id;
+  sourceConversationId: Id;
+  targetConversationId: Id;
+  workRequest: string;
+};
+
+export type HandoffPrompt = {
+  text: string;
+  sourceConversationId: Id;
+  targetConversationId: Id;
 };
 
 export type StartRunInput = {
@@ -450,4 +656,57 @@ function assertMaximumLength(
   if (value.length > maximum) {
     throw new Error(`${field} must not exceed ${maximum} characters.`);
   }
+}
+
+function exactRecord(
+  value: unknown,
+  fields: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== [...fields].sort().join(",")) {
+    throw new Error(`${label} must contain exactly the supported fields.`);
+  }
+  return record;
+}
+
+function requiredId(value: unknown, label: string): Id {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim()) {
+    throw new Error(`${label} must be a non-empty ID.`);
+  }
+  return value;
+}
+
+function nullableId(value: unknown, label: string): Id | null {
+  return value === null ? null : requiredId(value, label);
+}
+
+function nullableString(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new Error(`${label} must be text or null.`);
+  return value;
+}
+
+function isoDateTime(value: unknown, label: string): IsoDateTime {
+  if (typeof value !== "string") throw new Error(`${label} must be an ISO timestamp.`);
+  try {
+    if (new Date(value).toISOString() === value) return value;
+  } catch {
+    // Fall through to the stable domain error below.
+  }
+  throw new Error(`${label} must be an ISO timestamp.`);
+}
+
+function uniqueIds(value: unknown, label: string): Id[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  const ids = value.map((id) => requiredId(id, label));
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`${label} must not contain duplicate Conversation IDs.`);
+  }
+  return ids;
 }

@@ -191,3 +191,178 @@ test("restart interruption preserves Tool effect certainty", () => {
     store.close();
   }
 });
+
+test("persists and restores a strict Workspace layout", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-layout-roundtrip-"));
+  const path = join(root, "scopeguard.db");
+  try {
+    const store = new ScopeGuardStore(path);
+    const { workspace, conversations } = createWorkspaceFixture(store, 2);
+    const layout = store.saveWorkspaceLayout({
+      workspaceId: workspace.id,
+      openConversationIds: conversations.map(({ id }) => id),
+      paneConversationIds: conversations.map(({ id }) => id).reverse(),
+      activeConversationId: conversations[1]!.id,
+      requestedPaneCount: 2,
+    });
+    assert.deepEqual(store.getWorkspaceLayout(workspace.id), layout);
+    store.close();
+
+    const reopened = new ScopeGuardStore(path);
+    assert.deepEqual(reopened.getWorkspaceLayout(workspace.id), layout);
+    reopened.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects duplicate, cross-Workspace, and malformed persisted layouts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-layout-rejection-"));
+  try {
+    const store = new ScopeGuardStore(":memory:");
+    const first = createWorkspaceFixture(store, 1);
+    const second = createWorkspaceFixture(store, 1);
+    assert.throws(() => store.saveWorkspaceLayout({
+      workspaceId: first.workspace.id,
+      openConversationIds: [first.conversations[0]!.id, first.conversations[0]!.id],
+      paneConversationIds: [first.conversations[0]!.id],
+      activeConversationId: first.conversations[0]!.id,
+      requestedPaneCount: 1,
+    }), /duplicate/i);
+    assert.throws(() => store.saveWorkspaceLayout({
+      workspaceId: first.workspace.id,
+      openConversationIds: [second.conversations[0]!.id],
+      paneConversationIds: [second.conversations[0]!.id],
+      activeConversationId: second.conversations[0]!.id,
+      requestedPaneCount: 1,
+    }), /outside its Workspace/i);
+    store.close();
+
+    for (const index of [0, 1, 2]) {
+      const path = join(root, `malformed-${index}.db`);
+      const disk = new ScopeGuardStore(path);
+      const fixture = createWorkspaceFixture(disk, 1);
+      disk.close();
+      const conversationId = fixture.conversations[0]!.id;
+      const state = [
+        { workspaceId: fixture.workspace.id, openConversationIds: [], paneConversationIds: [], activeConversationId: null, requestedPaneCount: 1, extra: true },
+        { workspaceId: fixture.workspace.id, openConversationIds: [conversationId, conversationId], paneConversationIds: [conversationId], activeConversationId: conversationId, requestedPaneCount: 1 },
+        { workspaceId: fixture.workspace.id, openConversationIds: [conversationId], paneConversationIds: [conversationId], activeConversationId: "missing", requestedPaneCount: 1 },
+      ][index]!;
+      const database = new DatabaseSync(path);
+      database.prepare("INSERT INTO layout_state VALUES (?, ?)").run(
+        fixture.workspace.id,
+        JSON.stringify(state),
+      );
+      database.close();
+      assert.throws(() => new ScopeGuardStore(path), /Incompatible ScopeGuard database/);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persists Dispatch status and validates Conversation ownership", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const first = createWorkspaceFixture(store, 2);
+    const second = createWorkspaceFixture(store, 1);
+    const dispatch = store.createDispatch({
+      workspaceId: first.workspace.id,
+      sourceConversationId: first.conversations[0]!.id,
+      targetConversationId: first.conversations[1]!.id,
+      prompt: "Review the backend result.",
+    });
+    assert.equal(dispatch.status, "pending");
+    const running = store.updateDispatchStatus(dispatch.id, "running");
+    assert.equal(running.status, "running");
+    const completed = store.updateDispatchStatus(dispatch.id, "completed");
+    assert.equal(completed.status, "completed");
+    assert.deepEqual(
+      store.listDispatches({ conversationId: first.conversations[0]!.id }),
+      [completed],
+    );
+    assert.deepEqual(
+      store.listDispatches({ conversationId: first.conversations[1]!.id }),
+      [completed],
+    );
+    assert.throws(
+      () => store.updateDispatchStatus(dispatch.id, "running"),
+      /Invalid Dispatch status transition/,
+    );
+    assert.throws(() => store.createDispatch({
+      workspaceId: first.workspace.id,
+      sourceConversationId: first.conversations[0]!.id,
+      targetConversationId: second.conversations[0]!.id,
+      prompt: "Cross Workspace",
+    }), /same Workspace/i);
+    assert.throws(() => store.createDispatch({
+      workspaceId: first.workspace.id,
+      sourceConversationId: first.conversations[0]!.id,
+      targetConversationId: first.conversations[0]!.id,
+      prompt: "Self Dispatch",
+    }), /different Conversation/i);
+  } finally {
+    store.close();
+  }
+});
+
+test("rejects malformed persisted Dispatch metadata on reopen", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-dispatch-rejection-"));
+  try {
+    for (const [index, mutate] of [
+      (value: Record<string, unknown>) => ({ ...value, status: "bogus" }),
+      (value: Record<string, unknown>) => ({ ...value, id: "wrong-id" }),
+      (value: Record<string, unknown>) => ({ ...value, prompt: "  " }),
+      (value: Record<string, unknown>) => ({ ...value, transcript: [] }),
+    ].entries()) {
+      const path = join(root, `malformed-${index}.db`);
+      const store = new ScopeGuardStore(path);
+      const fixture = createWorkspaceFixture(store, 2);
+      const dispatch = store.createDispatch({
+        workspaceId: fixture.workspace.id,
+        sourceConversationId: fixture.conversations[0]!.id,
+        targetConversationId: fixture.conversations[1]!.id,
+        prompt: "Review this result.",
+      });
+      store.close();
+
+      const database = new DatabaseSync(path);
+      const row = database.prepare(
+        "SELECT metadata_json FROM dispatches WHERE id = ?",
+      ).get(dispatch.id) as { metadata_json: string };
+      database.prepare("UPDATE dispatches SET metadata_json = ? WHERE id = ?").run(
+        JSON.stringify(mutate(JSON.parse(row.metadata_json) as Record<string, unknown>)),
+        dispatch.id,
+      );
+      database.close();
+      assert.throws(() => new ScopeGuardStore(path), /Incompatible ScopeGuard database/);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function createWorkspaceFixture(store: ScopeGuardStore, conversationCount: number) {
+  const workspace = store.createWorkspace({ name: `Workspace ${Math.random()}` });
+  const provider = store.saveProviderProfile({
+    name: `Provider ${Math.random()}`,
+    protocol: "openai-compatible",
+    baseUrl: "http://localhost/v1",
+    defaultModel: "model",
+  }, null);
+  const agent = store.createAgent({
+    workspaceId: workspace.id,
+    name: "Agent",
+    instructions: "",
+    providerProfileId: provider.id,
+  });
+  const conversations = Array.from({ length: conversationCount }, (_, index) =>
+    store.createConversation({
+      workspaceId: workspace.id,
+      agentId: agent.id,
+      title: `Conversation ${index + 1}`,
+    })
+  );
+  return { workspace, provider, agent, conversations };
+}
