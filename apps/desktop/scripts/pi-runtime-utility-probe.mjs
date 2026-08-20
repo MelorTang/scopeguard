@@ -7,6 +7,7 @@ import electronPath from "electron";
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const environment = { ...process.env };
 delete environment.ELECTRON_RUN_AS_NODE;
+environment.SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE = process.execPath;
 const child = spawn(
   electronPath,
   [join(desktopRoot, "dist", "main", "pi-runtime-utility-probe-main.js")],

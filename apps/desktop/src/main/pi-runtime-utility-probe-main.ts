@@ -12,7 +12,13 @@ void app.whenReady().then(async () => {
     join(moduleDirectory, "pi-runtime-utility-probe-child.js"),
     [],
     {
-      env: agentHostEnvironment(),
+      env: {
+        ...agentHostEnvironment(),
+        SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE:
+          process.env.SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE,
+        SCOPEGUARD_PI_UTILITY_PROBE_MODE:
+          process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE,
+      },
       serviceName: "ScopeGuard Pi Runtime Utility Probe",
       stdio: "pipe",
     },

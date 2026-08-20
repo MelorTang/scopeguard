@@ -60,19 +60,30 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
     "--system-prompt", "ScopeGuard utility probe",
     "--no-tools",
   ];
+  const probeMode = process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE ?? "product";
+  if (!["product", "host-node", "electron-run-as-node"].includes(probeMode)) {
+    throw new Error("Unsupported Pi utility probe mode.");
+  }
+  const executable = probeMode === "host-node"
+    ? requiredEnvironment("SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE")
+    : process.execPath;
+  const childEnvironment = cleanProbeEnvironment({
+    PI_CODING_AGENT_DIR: profileDirectory,
+    PI_OFFLINE: "1",
+    PI_SKIP_VERSION_CHECK: "1",
+    PI_TELEMETRY: "0",
+    PI_PACKAGE_DIR: piPackageDirectory,
+    SCOPEGUARD_WORKSPACE_ROOT: "",
+    SCOPEGUARD_READ_PERMISSION: "deny",
+    ...(probeMode === "electron-run-as-node"
+      ? { ELECTRON_RUN_AS_NODE: "1" }
+      : {}),
+  });
   const startedAt = new Date().toISOString();
   const startedMonotonic = performance.now();
-  const child = spawn(process.execPath, args, {
+  const child = spawn(executable, args, {
     cwd: sessionDirectory,
-    env: cleanProbeEnvironment({
-      PI_CODING_AGENT_DIR: profileDirectory,
-      PI_OFFLINE: "1",
-      PI_SKIP_VERSION_CHECK: "1",
-      PI_TELEMETRY: "0",
-      PI_PACKAGE_DIR: piPackageDirectory,
-      SCOPEGUARD_WORKSPACE_ROOT: "",
-      SCOPEGUARD_READ_PERMISSION: "deny",
-    }),
+    env: childEnvironment,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -283,4 +294,10 @@ async function waitFor(condition: () => boolean, timeoutMs: number): Promise<voi
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required.`);
+  return value;
 }
