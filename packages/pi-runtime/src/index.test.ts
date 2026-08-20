@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { classifyToolPolicy } from "./approval-policy.js";
@@ -44,7 +44,7 @@ test("Pi launch enters Electron Node mode through the Runtime bootstrap", () => 
   }), {
     args: [
       "--import",
-      join("/runtime", "electron-node-bootstrap.js"),
+      pathToFileURL(join("/runtime", "electron-node-bootstrap.js")).href,
       "/runtime/pi/cli.js",
       "--mode",
       "rpc",

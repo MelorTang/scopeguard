@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import type {
@@ -51,7 +51,7 @@ export function preparePiNodeInvocation(options: {
   return {
     args: [
       "--import",
-      join(options.assetRoot, "electron-node-bootstrap.js"),
+      pathToFileURL(join(options.assetRoot, "electron-node-bootstrap.js")).href,
       options.cliPath,
       ...options.cliArgs,
     ],

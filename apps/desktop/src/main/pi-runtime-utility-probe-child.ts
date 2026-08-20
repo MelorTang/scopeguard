@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { preparePiNodeInvocation } from "@scopeguard/pi-runtime";
 
@@ -210,7 +210,9 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
     piCliPath,
     cwd: sessionDirectory,
     sanitizedArgv: sanitizeArgv(invocation.args, {
-      bootstrapPath: join(dirname(runtimeEntry), "electron-node-bootstrap.js"),
+      bootstrapPath: pathToFileURL(
+        join(dirname(runtimeEntry), "electron-node-bootstrap.js"),
+      ).href,
       extensionPath,
       piCliPath,
       profileDirectory,

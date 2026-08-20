@@ -8,17 +8,25 @@ import { agentHostEnvironment } from "./agent-host-client.js";
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 
 void app.whenReady().then(async () => {
+  const hostNode = process.env.SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE;
+  if (!hostNode) {
+    throw new Error("Pi Runtime utility probe host Node path is required.");
+  }
+  const probeEnvironment = {
+    ...agentHostEnvironment(),
+    SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE: hostNode,
+    ...(process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE === undefined
+      ? {}
+      : {
+          SCOPEGUARD_PI_UTILITY_PROBE_MODE:
+            process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE,
+        }),
+  };
   const child = utilityProcess.fork(
     join(moduleDirectory, "pi-runtime-utility-probe-child.js"),
     [],
     {
-      env: {
-        ...agentHostEnvironment(),
-        SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE:
-          process.env.SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE,
-        SCOPEGUARD_PI_UTILITY_PROBE_MODE:
-          process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE,
-      },
+      env: probeEnvironment,
       serviceName: "ScopeGuard Pi Runtime Utility Probe",
       stdio: "pipe",
     },
