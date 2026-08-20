@@ -53,7 +53,20 @@ for (const [entry, outfile] of [
 }
 
 const repositoryRoot = join(desktopRoot, "..", "..");
-const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const pnpmArgs = [
+  "--dir", runtimeDeployTarget,
+  "--config.node-linker=hoisted",
+  "install",
+  "--ignore-workspace",
+  "--prod",
+  "--frozen-lockfile",
+];
+const pnpmInvocation = process.platform === "win32"
+  ? {
+      command: process.env.ComSpec ?? "cmd.exe",
+      args: ["/d", "/s", "/c", "pnpm.cmd", ...pnpmArgs],
+    }
+  : { command: "pnpm", args: pnpmArgs };
 try {
   await Promise.all([
     copyFile(
@@ -65,14 +78,7 @@ try {
       join(runtimeDeployTarget, "pnpm-lock.yaml"),
     ),
   ]);
-  await execFileAsync(pnpmCommand, [
-    "--dir", runtimeDeployTarget,
-    "--config.node-linker=hoisted",
-    "install",
-    "--ignore-workspace",
-    "--prod",
-    "--frozen-lockfile",
-  ], {
+  await execFileAsync(pnpmInvocation.command, pnpmInvocation.args, {
     cwd: repositoryRoot,
     maxBuffer: 16 * 1024 * 1024,
   });
