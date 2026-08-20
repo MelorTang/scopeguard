@@ -115,6 +115,12 @@ unopenable state stops startup; it never creates an empty replacement Session.
 - Conversation history is not implicitly shared.
 - Shared Workspace writes retain version checks and stop on conflicts.
 - Closing a pane does not delete a Conversation or stop an active Run.
+- Workspace layout transitions validate every active, open, and pane Conversation
+  against the selected Workspace before display or persistence. Pending layout
+  saves and revisions are isolated per Workspace.
+- Pane widths are bounded Workspace metadata. Accessible mouse and keyboard
+  separators adjust adjacent panes; constrained windows scroll horizontally and
+  never remove requested panes as a responsive shortcut.
 
 ## Explicit Non-Goals
 

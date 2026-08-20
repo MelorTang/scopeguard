@@ -202,6 +202,7 @@ test("persists and restores a strict Workspace layout", async () => {
       workspaceId: workspace.id,
       openConversationIds: conversations.map(({ id }) => id),
       paneConversationIds: conversations.map(({ id }) => id).reverse(),
+      paneWidths: [480, 360],
       activeConversationId: conversations[1]!.id,
       requestedPaneCount: 2,
     });
@@ -227,6 +228,7 @@ test("persists and restores five open Conversations with only four visible panes
       workspaceId: workspace.id,
       openConversationIds: ids,
       paneConversationIds: [ids[0]!, ids[4]!, ids[2]!, ids[3]!],
+      paneWidths: [360, 420, 480, 540],
       activeConversationId: ids[4]!,
       requestedPaneCount: 4,
     });
@@ -252,6 +254,7 @@ test("rejects duplicate, cross-Workspace, and malformed persisted layouts", asyn
       workspaceId: first.workspace.id,
       openConversationIds: [first.conversations[0]!.id, first.conversations[0]!.id],
       paneConversationIds: [first.conversations[0]!.id],
+      paneWidths: [420],
       activeConversationId: first.conversations[0]!.id,
       requestedPaneCount: 1,
     }), /duplicate/i);
@@ -259,6 +262,7 @@ test("rejects duplicate, cross-Workspace, and malformed persisted layouts", asyn
       workspaceId: first.workspace.id,
       openConversationIds: [second.conversations[0]!.id],
       paneConversationIds: [second.conversations[0]!.id],
+      paneWidths: [420],
       activeConversationId: second.conversations[0]!.id,
       requestedPaneCount: 1,
     }), /outside its Workspace/i);
@@ -271,9 +275,9 @@ test("rejects duplicate, cross-Workspace, and malformed persisted layouts", asyn
       disk.close();
       const conversationId = fixture.conversations[0]!.id;
       const state = [
-        { workspaceId: fixture.workspace.id, openConversationIds: [], paneConversationIds: [], activeConversationId: null, requestedPaneCount: 1, extra: true },
-        { workspaceId: fixture.workspace.id, openConversationIds: [conversationId, conversationId], paneConversationIds: [conversationId], activeConversationId: conversationId, requestedPaneCount: 1 },
-        { workspaceId: fixture.workspace.id, openConversationIds: [conversationId], paneConversationIds: [conversationId], activeConversationId: "missing", requestedPaneCount: 1 },
+        { workspaceId: fixture.workspace.id, openConversationIds: [], paneConversationIds: [], paneWidths: [], activeConversationId: null, requestedPaneCount: 1, extra: true },
+        { workspaceId: fixture.workspace.id, openConversationIds: [conversationId, conversationId], paneConversationIds: [conversationId], paneWidths: [420], activeConversationId: conversationId, requestedPaneCount: 1 },
+        { workspaceId: fixture.workspace.id, openConversationIds: [conversationId], paneConversationIds: [conversationId], paneWidths: [420], activeConversationId: "missing", requestedPaneCount: 1 },
       ][index]!;
       const database = new DatabaseSync(path);
       database.prepare("INSERT INTO layout_state VALUES (?, ?)").run(

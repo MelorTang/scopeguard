@@ -71,13 +71,17 @@ independent Standards and Spec review.
 
 Exit gate:
 
-- one to four Conversations remain visible with independent composers and Run
-  state at supported desktop widths;
+- one to four Conversations remain present with independent composers and Run
+  state; each Workspace owns its open/active/pane IDs and bounded pane widths;
+- mouse and keyboard separators resize adjacent panes independently, and narrow
+  windows retain every requested pane behind horizontal scrolling instead of
+  hiding panes;
 - four real Pi sessions can run concurrently and one can be stopped in isolation;
 - manual Handoff prompts copy cleanly;
 - Agent Dispatch targets an existing Conversation, records source attribution,
   never copies a full transcript, and is visible at both ends;
-- restart restores Workspace, pane layout, Conversations, and resumable sessions;
+- restart restores each Workspace's own pane IDs and widths, Conversations, and
+  resumable sessions without cross-Workspace debounce or ID leakage;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on

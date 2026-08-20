@@ -31,6 +31,12 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     updatedAt: now,
     lastOpenedAt: now,
   };
+  const workspaceB: Workspace = {
+    ...workspace,
+    id: "workspace-b",
+    name: "独立工作区 B",
+    localRootPath: "/Users/demo/WorkspaceB",
+  };
   const provider: ProviderProfileView = {
     id: "provider-demo",
     name: "公司模型服务",
@@ -43,7 +49,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     updatedAt: now,
   };
   let snapshot: DesktopWorkspaceSnapshot = {
-    workspaces: [workspace],
+    workspaces: [workspace, workspaceB],
     providerProfiles: [provider],
     agents: [
       makeAgent("agent-research", "调研 Agent", "收集证据并形成摘要。"),
@@ -51,6 +57,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       makeAgent("agent-review", "核验 Agent", "核验结论并指出证据缺口。"),
       makeAgent("agent-ops", "执行 Agent", "执行明确任务并反馈结果。"),
       makeAgent("agent-archive", "归档 Agent", "整理交付资料并归档。"),
+      makeAgent("agent-b-primary", "B 主 Agent", "只处理 B 工作区。", workspaceB.id),
+      makeAgent("agent-b-review", "B 核验 Agent", "只核验 B 工作区。", workspaceB.id),
     ],
     conversations: [
       makeConversation("conversation-research", "agent-research", "供应商对比"),
@@ -58,6 +66,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       makeConversation("conversation-review", "agent-review", "结论核验"),
       makeConversation("conversation-ops", "agent-ops", "交付执行"),
       makeConversation("conversation-archive", "agent-archive", "数据归档"),
+      makeConversation("conversation-b-primary", "agent-b-primary", "B 对话", workspaceB.id),
+      makeConversation("conversation-b-review", "agent-b-review", "B 核验", workspaceB.id),
     ],
     activeRuns: [],
     recentRuns: [],
@@ -76,15 +86,28 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         "conversation-review",
         "conversation-ops",
       ],
+      paneWidths: [400, 400, 400, 400],
       activeConversationId: "conversation-research",
       requestedPaneCount: 4,
+    }, {
+      workspaceId: workspaceB.id,
+      openConversationIds: ["conversation-b-primary", "conversation-b-review"],
+      paneConversationIds: ["conversation-b-primary", "conversation-b-review"],
+      paneWidths: [400, 400],
+      activeConversationId: "conversation-b-primary",
+      requestedPaneCount: 2,
     }],
     dispatches: [],
   };
-  const persistedMockLayout = readPersistedMockLayout(
-    new Set(snapshot.conversations.map(({ id }) => id)),
+  const persistedLayouts = snapshot.layouts.map((layout) =>
+    readPersistedMockLayout(
+      layout.workspaceId,
+      new Set(snapshot.conversations
+        .filter(({ workspaceId }) => workspaceId === layout.workspaceId)
+        .map(({ id }) => id)),
+    ) ?? layout
   );
-  if (persistedMockLayout) snapshot = { ...snapshot, layouts: [persistedMockLayout] };
+  snapshot = { ...snapshot, layouts: persistedLayouts };
   const messages = new Map<string, ConversationMessage[]>([
     ["conversation-research", [
       makeMessage("conversation-research", "user", "整理三家供应商的差异。", 1),
@@ -101,6 +124,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     ["conversation-review", []],
     ["conversation-ops", []],
     ["conversation-archive", []],
+    ["conversation-b-primary", []],
+    ["conversation-b-review", []],
   ]);
   const contexts = new Map<string, WorkspaceContextRevision>();
   const listeners = new Set<(event: RunEvent) => void>();
@@ -129,7 +154,10 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       return clone(created);
     },
     async chooseWorkspaceDirectory() {
-      return { canceled: true };
+      return {
+        canceled: false,
+        localRootPath: "/Users/demo/OpenedLocalB",
+      };
     },
     async chooseWorkspaceFiles() {
       return { canceled: true, files: [] };
@@ -233,7 +261,10 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       return clone(snapshot.layouts.find((layout) => layout.workspaceId === workspaceId) ?? null);
     },
     async saveWorkspaceLayout(layout) {
-      sessionStorage.setItem("scopeguard.mock.workspace-layout", JSON.stringify(layout));
+      sessionStorage.setItem(
+        `scopeguard.mock.workspace-layout:${layout.workspaceId}`,
+        JSON.stringify(layout),
+      );
       snapshot = {
         ...snapshot,
         layouts: [layout, ...snapshot.layouts.filter((item) => item.workspaceId !== layout.workspaceId)],
@@ -436,10 +467,15 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     },
   };
 
-  function makeAgent(id: string, name: string, instructions: string): Agent {
+  function makeAgent(
+    id: string,
+    name: string,
+    instructions: string,
+    workspaceId = workspace.id,
+  ): Agent {
     return {
       id,
-      workspaceId: workspace.id,
+      workspaceId,
       name,
       instructions,
       providerProfileId: provider.id,
@@ -452,13 +488,17 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
   }
 }
 
-function readPersistedMockLayout(conversationIds: ReadonlySet<string>) {
-  const value = sessionStorage.getItem("scopeguard.mock.workspace-layout");
+function readPersistedMockLayout(
+  workspaceId: string,
+  conversationIds: ReadonlySet<string>,
+) {
+  const key = `scopeguard.mock.workspace-layout:${workspaceId}`;
+  const value = sessionStorage.getItem(key);
   if (!value) return null;
   try {
     return parseWorkspaceLayout(JSON.parse(value), conversationIds);
   } catch {
-    sessionStorage.removeItem("scopeguard.mock.workspace-layout");
+    sessionStorage.removeItem(key);
     return null;
   }
 }

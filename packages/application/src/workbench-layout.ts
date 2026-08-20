@@ -33,19 +33,6 @@ export class WorkbenchLayoutService {
     );
   }
 
-  restore(workspaceId: Id): WorkspaceLayout {
-    const persisted = this.get(workspaceId);
-    if (persisted) return persisted;
-    const firstConversationId = this.#store.listConversations(workspaceId)[0]?.id;
-    return {
-      workspaceId,
-      openConversationIds: firstConversationId ? [firstConversationId] : [],
-      paneConversationIds: firstConversationId ? [firstConversationId] : [],
-      activeConversationId: firstConversationId ?? null,
-      requestedPaneCount: 1,
-    };
-  }
-
   #requireWorkspace(workspaceId: Id): void {
     if (!this.#store.getWorkspace(workspaceId)) {
       throw new Error(`Workspace not found: ${workspaceId}`);

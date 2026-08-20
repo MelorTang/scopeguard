@@ -13,6 +13,7 @@ import { ConversationDialog } from "./components/ConversationDialog.js";
 import { ProviderDialog } from "./components/ProviderDialog.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ThreadPane } from "./components/ThreadPane.js";
+import { PaneSplitter } from "./components/PaneSplitter.js";
 import { WorkspaceToolbar } from "./components/WorkspaceToolbar.js";
 import { WorkspaceDialog } from "./components/WorkspaceDialog.js";
 import { useWorkspace } from "./useWorkspace.js";
@@ -85,19 +86,38 @@ export function App(): JSX.Element {
           <div
             className="workbench"
             style={{
-              "--pane-count": workspace.effectiveSplitCount,
+              gridTemplateColumns: workspace.paneWidths
+                .flatMap((width, index) => index === workspace.paneWidths.length - 1
+                  ? [`${width}px`]
+                  : [`${width}px`, "8px"])
+                .join(" "),
             } as CSSProperties}
           >
-            {workspace.visibleThreads.map((thread, paneIndex) => (
-              <ThreadPane
-                key={thread.id}
-                thread={thread}
-                workspace={workspace}
-                paneIndex={paneIndex}
-                active={workspace.activePaneIndex === paneIndex}
-                onActivate={() => workspace.selectPane(paneIndex)}
-              />
-            ))}
+            {workspace.visibleThreads.flatMap((thread, paneIndex) => {
+              const pane = (
+                <ThreadPane
+                  key={thread.id}
+                  thread={thread}
+                  workspace={workspace}
+                  paneIndex={paneIndex}
+                  active={workspace.activePaneIndex === paneIndex}
+                  onActivate={() => workspace.selectPane(paneIndex)}
+                />
+              );
+              const next = workspace.visibleThreads[paneIndex + 1];
+              return next ? [
+                pane,
+                <PaneSplitter
+                  key={`${thread.id}:${next.id}`}
+                  index={paneIndex}
+                  leftTitle={thread.title}
+                  rightTitle={next.title}
+                  leftWidth={workspace.paneWidths[paneIndex]!}
+                  rightWidth={workspace.paneWidths[paneIndex + 1]!}
+                  onResize={(deltaPixels) => workspace.resizePane(paneIndex, deltaPixels)}
+                />,
+              ] : [pane];
+            })}
           </div>
         ) : (
           <WorkspaceEmpty

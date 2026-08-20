@@ -289,11 +289,15 @@ export type WorkspaceContextRevision = {
 };
 
 export const MAX_WORKBENCH_PANES = 4;
+export const MIN_WORKBENCH_PANE_WIDTH = 320;
+export const MAX_WORKBENCH_PANE_WIDTH = 960;
+export const DEFAULT_WORKBENCH_PANE_WIDTH = 400;
 
 export type WorkspaceLayout = {
   workspaceId: Id;
   openConversationIds: Id[];
   paneConversationIds: Id[];
+  paneWidths: number[];
   activeConversationId: Id | null;
   requestedPaneCount: 1 | 2 | 3 | 4;
 };
@@ -306,6 +310,7 @@ export function parseWorkspaceLayout(
     "activeConversationId",
     "openConversationIds",
     "paneConversationIds",
+    "paneWidths",
     "requestedPaneCount",
     "workspaceId",
   ], "Workspace Layout");
@@ -318,6 +323,24 @@ export function parseWorkspaceLayout(
     record.paneConversationIds,
     "Layout paneConversationIds",
   );
+  if (!Array.isArray(record.paneWidths)) {
+    throw new Error("Layout paneWidths must be an array.");
+  }
+  const paneWidths = record.paneWidths.map((width) => {
+    if (
+      !Number.isInteger(width) ||
+      Number(width) < MIN_WORKBENCH_PANE_WIDTH ||
+      Number(width) > MAX_WORKBENCH_PANE_WIDTH
+    ) {
+      throw new Error(
+        `Layout pane widths must be integers from ${MIN_WORKBENCH_PANE_WIDTH} to ${MAX_WORKBENCH_PANE_WIDTH}.`,
+      );
+    }
+    return Number(width);
+  });
+  if (paneWidths.length !== paneConversationIds.length) {
+    throw new Error("Layout paneWidths must identify exactly one width per pane.");
+  }
   const requestedPaneCount = record.requestedPaneCount;
   if (
     !Number.isInteger(requestedPaneCount) ||
@@ -354,35 +377,35 @@ export function parseWorkspaceLayout(
     workspaceId,
     openConversationIds,
     paneConversationIds,
+    paneWidths,
     activeConversationId,
     requestedPaneCount: requestedPaneCount as WorkspaceLayout["requestedPaneCount"],
   };
 }
 
-export function projectWorkspaceLayout(
-  value: WorkspaceLayout,
-  maximumVisiblePanes: number,
+export function createWorkspaceLayout(
+  workspaceId: Id,
+  conversationIds: readonly Id[],
+  persisted?: WorkspaceLayout | null,
 ): WorkspaceLayout {
-  const layout = parseWorkspaceLayout(value);
-  if (
-    !Number.isInteger(maximumVisiblePanes) ||
-    maximumVisiblePanes < 1 ||
-    maximumVisiblePanes > MAX_WORKBENCH_PANES
-  ) {
-    throw new Error("Maximum visible panes must be an integer from 1 to 4.");
+  const id = requiredId(workspaceId, "Workspace id");
+  const ids = uniqueIds([...conversationIds], "Workspace Conversation ids");
+  if (persisted) {
+    const layout = parseWorkspaceLayout(persisted, new Set(ids));
+    if (layout.workspaceId !== id) {
+      throw new Error("Persisted Layout does not belong to the selected Workspace.");
+    }
+    return layout;
   }
-  const paneConversationIds = layout.paneConversationIds.slice(
-    0,
-    maximumVisiblePanes,
-  );
-  if (
-    layout.activeConversationId &&
-    layout.paneConversationIds.includes(layout.activeConversationId) &&
-    !paneConversationIds.includes(layout.activeConversationId)
-  ) {
-    paneConversationIds[paneConversationIds.length - 1] = layout.activeConversationId;
-  }
-  return { ...layout, paneConversationIds };
+  const firstConversationId = ids[0] ?? null;
+  return parseWorkspaceLayout({
+    workspaceId: id,
+    openConversationIds: firstConversationId ? [firstConversationId] : [],
+    paneConversationIds: firstConversationId ? [firstConversationId] : [],
+    paneWidths: firstConversationId ? [DEFAULT_WORKBENCH_PANE_WIDTH] : [],
+    activeConversationId: firstConversationId,
+    requestedPaneCount: 1,
+  }, new Set(ids));
 }
 
 export function activateConversationInLayout(
@@ -399,8 +422,10 @@ export function activateConversationInLayout(
   }
 
   const paneConversationIds = [...layout.paneConversationIds];
+  const paneWidths = [...layout.paneWidths];
   if (paneConversationIds.length < layout.requestedPaneCount) {
     paneConversationIds.push(id);
+    paneWidths.push(DEFAULT_WORKBENCH_PANE_WIDTH);
   } else {
     const activeIndex = paneConversationIds.indexOf(layout.activeConversationId ?? "");
     paneConversationIds[Math.max(0, activeIndex)] = id;
@@ -409,8 +434,93 @@ export function activateConversationInLayout(
     ...layout,
     openConversationIds,
     paneConversationIds,
+    paneWidths,
     activeConversationId: id,
   });
+}
+
+export function setWorkspacePaneCount(
+  value: WorkspaceLayout,
+  requestedPaneCount: number,
+): WorkspaceLayout {
+  const layout = parseWorkspaceLayout(value);
+  if (
+    !Number.isInteger(requestedPaneCount) ||
+    requestedPaneCount < 1 ||
+    requestedPaneCount > MAX_WORKBENCH_PANES
+  ) {
+    throw new Error("Requested pane count must be an integer from 1 to 4.");
+  }
+  const target = Math.min(requestedPaneCount, layout.openConversationIds.length);
+  const paneConversationIds = [...layout.paneConversationIds];
+  const paneWidths = [...layout.paneWidths];
+  for (const id of layout.openConversationIds) {
+    if (paneConversationIds.length >= target) break;
+    if (!paneConversationIds.includes(id)) {
+      paneConversationIds.push(id);
+      paneWidths.push(DEFAULT_WORKBENCH_PANE_WIDTH);
+    }
+  }
+  paneConversationIds.length = target;
+  paneWidths.length = target;
+  const activeConversationId = paneConversationIds.includes(
+    layout.activeConversationId ?? "",
+  ) ? layout.activeConversationId : paneConversationIds[0] ?? null;
+  return parseWorkspaceLayout({
+    ...layout,
+    paneConversationIds,
+    paneWidths,
+    activeConversationId,
+    requestedPaneCount,
+  });
+}
+
+export function closeConversationInLayout(
+  value: WorkspaceLayout,
+  conversationId: Id,
+): WorkspaceLayout {
+  const layout = parseWorkspaceLayout(value);
+  const index = layout.paneConversationIds.indexOf(conversationId);
+  const openConversationIds = layout.openConversationIds.filter((id) => id !== conversationId);
+  const paneConversationIds = layout.paneConversationIds.filter((id) => id !== conversationId);
+  const paneWidths = layout.paneWidths.filter((_, paneIndex) => paneIndex !== index);
+  const next = setWorkspacePaneCount({
+    ...layout,
+    openConversationIds,
+    paneConversationIds,
+    paneWidths,
+    activeConversationId: layout.activeConversationId === conversationId
+      ? paneConversationIds[0] ?? null
+      : layout.activeConversationId,
+  }, layout.requestedPaneCount);
+  return next;
+}
+
+export function resizeWorkspacePanePair(
+  value: WorkspaceLayout,
+  dividerIndex: number,
+  deltaPixels: number,
+): WorkspaceLayout {
+  const layout = parseWorkspaceLayout(value);
+  if (!Number.isInteger(dividerIndex) || dividerIndex < 0 || dividerIndex >= layout.paneWidths.length - 1) {
+    throw new Error("Pane divider index is outside the Layout.");
+  }
+  if (!Number.isFinite(deltaPixels)) throw new Error("Pane resize delta must be finite.");
+  const left = layout.paneWidths[dividerIndex]!;
+  const right = layout.paneWidths[dividerIndex + 1]!;
+  const minimumDelta = Math.max(
+    MIN_WORKBENCH_PANE_WIDTH - left,
+    right - MAX_WORKBENCH_PANE_WIDTH,
+  );
+  const maximumDelta = Math.min(
+    MAX_WORKBENCH_PANE_WIDTH - left,
+    right - MIN_WORKBENCH_PANE_WIDTH,
+  );
+  const delta = Math.round(Math.max(minimumDelta, Math.min(maximumDelta, deltaPixels)));
+  const paneWidths = [...layout.paneWidths];
+  paneWidths[dividerIndex] = left + delta;
+  paneWidths[dividerIndex + 1] = right - delta;
+  return parseWorkspaceLayout({ ...layout, paneWidths });
 }
 
 export const MAX_DISPATCH_PROMPT_BYTES = 16 * 1024;

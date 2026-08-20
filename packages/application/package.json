@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./workbench-layout-persistence": {
+      "types": "./dist/workbench-layout-persistence.d.ts",
+      "import": "./dist/workbench-layout-persistence.js"
     }
   },
   "files": [

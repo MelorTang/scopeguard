@@ -99,6 +99,7 @@ test("rejects extra fields and transcript injection in Phase 3 requests", () => 
     workspaceId: "workspace",
     openConversationIds: ["source", "target"],
     paneConversationIds: ["source", "target"],
+    paneWidths: [420, 420],
     activeConversationId: "source",
     requestedPaneCount: 2,
   };

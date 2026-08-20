@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { activateConversationInLayout, projectWorkspaceLayout } from "@scopeguard/domain";
+import { WorkbenchLayoutPersistence } from "@scopeguard/application/workbench-layout-persistence";
+import {
+  activateConversationInLayout,
+  closeConversationInLayout,
+  createWorkspaceLayout,
+  parseWorkspaceLayout,
+  resizeWorkspacePanePair,
+  setWorkspacePaneCount,
+} from "@scopeguard/domain";
 import type {
   Agent,
   AgentRun,
@@ -30,6 +38,7 @@ type PersistedUiState = {
   activeConversationId: string | null;
   openConversationIds: string[];
   paneConversationIds: string[];
+  paneWidths: number[];
   requestedSplitCount: number;
   sidebarCollapsed: boolean;
   professionalMode: boolean;
@@ -46,6 +55,7 @@ const DEFAULT_UI_STATE: PersistedUiState = {
   activeConversationId: null,
   openConversationIds: [],
   paneConversationIds: [],
+  paneWidths: [],
   requestedSplitCount: 1,
   sidebarCollapsed: false,
   professionalMode: false,
@@ -65,6 +75,7 @@ export type WorkspaceController = {
   requestedSplitCount: number;
   effectiveSplitCount: number;
   maxSplitCount: number;
+  paneWidths: number[];
   activePaneIndex: number;
   sidebarCollapsed: boolean;
   professionalMode: boolean;
@@ -74,9 +85,10 @@ export type WorkspaceController = {
   focusApproval: (conversationId: string, approvalId: string) => void;
   selectPane: (paneIndex: number) => void;
   setRequestedSplitCount: (count: number) => void;
+  resizePane: (dividerIndex: number, deltaPixels: number) => void;
   setSidebarCollapsed: (value: boolean) => void;
   setProfessionalMode: (value: boolean) => void;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<DesktopWorkspaceSnapshot | null>;
   createWorkspace: (name: string) => Promise<Workspace>;
   openLocalWorkspace: () => Promise<Workspace | null>;
   saveProvider: (
@@ -126,24 +138,48 @@ export function useWorkspace(): WorkspaceController {
     Record<string, ConversationMessage[]>
   >({});
   const [streamingByThread, setStreamingByThread] = useState<Record<string, string>>({});
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const [approvalFocus, setApprovalFocus] = useState<ApprovalFocusRequest | null>(null);
-  const [layoutMutationRevision, setLayoutMutationRevision] = useState(0);
-  const persistedLayoutRevision = useRef(0);
   const approvalSequence = useRef(0);
   const snapshotRef = useRef(snapshot);
+  const uiRef = useRef(ui);
   const messagesRef = useRef(messagesByThread);
   snapshotRef.current = snapshot;
+  uiRef.current = ui;
   messagesRef.current = messagesByThread;
+
+  const layoutPersistence = useMemo(() => new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    save: (layout) => desktopApi.saveWorkspaceLayout(layout),
+    onSaved: (saved) => {
+      setSnapshot((current) => {
+        if (!current) return current;
+        const next = {
+          ...current,
+          layouts: [
+            saved,
+            ...current.layouts.filter((item) => item.workspaceId !== saved.workspaceId),
+          ],
+        };
+        snapshotRef.current = next;
+        return next;
+      });
+    },
+    onError: (cause) => setError(messageFromError(cause)),
+  }), []);
 
   const refresh = useCallback(async () => {
     try {
       const next = await desktopApi.getWorkspaceSnapshot();
+      const normalized = normalizeUi(uiRef.current, next);
+      snapshotRef.current = next;
+      uiRef.current = normalized;
       setSnapshot(next);
-      setUi((current) => normalizeUi(current, next));
+      setUi(normalized);
       setError(null);
+      return next;
     } catch (cause) {
       setError(messageFromError(cause));
+      return null;
     } finally {
       setLoading(false);
     }
@@ -168,12 +204,6 @@ export function useWorkspace(): WorkspaceController {
   }, [refresh]);
 
   useEffect(() => {
-    const resize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, []);
-
-  useEffect(() => {
     localStorage.setItem("scopeguard.ui.v3", JSON.stringify({
       selectedWorkspaceId: ui.selectedWorkspaceId,
       sidebarCollapsed: ui.sidebarCollapsed,
@@ -181,47 +211,20 @@ export function useWorkspace(): WorkspaceController {
     }));
   }, [ui.professionalMode, ui.selectedWorkspaceId, ui.sidebarCollapsed]);
 
-  useEffect(() => {
-    if (!snapshot || !ui.selectedWorkspaceId) return;
-    const revision = layoutMutationRevision;
-    if (revision <= persistedLayoutRevision.current) return;
-    const layout: WorkspaceLayout = {
-      workspaceId: ui.selectedWorkspaceId,
-      openConversationIds: ui.openConversationIds,
-      paneConversationIds: ui.paneConversationIds,
-      activeConversationId: ui.activeConversationId,
-      requestedPaneCount: ui.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
-    };
-    const timer = window.setTimeout(() => {
-      if (revision <= persistedLayoutRevision.current) return;
-      persistedLayoutRevision.current = revision;
-      void desktopApi.saveWorkspaceLayout(layout)
-        .then((saved) => setSnapshot((current) => current ? {
-          ...current,
-          layouts: [
-            saved,
-            ...current.layouts.filter((item) => item.workspaceId !== saved.workspaceId),
-          ],
-        } : current))
-        .catch((cause: unknown) => setError(messageFromError(cause)));
-    }, 80);
-    return () => window.clearTimeout(timer);
-  }, [
-    snapshot !== null,
-    layoutMutationRevision,
-    ui.activeConversationId,
-    ui.openConversationIds,
-    ui.paneConversationIds,
-    ui.requestedSplitCount,
-    ui.selectedWorkspaceId,
-  ]);
-
   const mutateLayout = useCallback((
     update: (current: PersistedUiState) => PersistedUiState,
   ) => {
-    setUi(update);
-    setLayoutMutationRevision((current) => current + 1);
-  }, []);
+    try {
+      const next = update(uiRef.current);
+      const layout = layoutFromUi(next, snapshotRef.current);
+      const normalized = applyLayoutToUi(next, layout);
+      uiRef.current = normalized;
+      setUi(normalized);
+      layoutPersistence.schedule(layout);
+    } catch (cause) {
+      setError(messageFromError(cause));
+    }
+  }, [layoutPersistence]);
 
   const selectedWorkspace = useMemo(() =>
     snapshot?.workspaces.find((item) => item.id === ui.selectedWorkspaceId)
@@ -229,33 +232,28 @@ export function useWorkspace(): WorkspaceController {
       ?? null,
   [snapshot, ui.selectedWorkspaceId]);
   const activeThread = useMemo(() =>
-    snapshot?.conversations.find((item) => item.id === ui.activeConversationId)
+    snapshot?.conversations.find((item) =>
+      item.id === ui.activeConversationId && item.workspaceId === selectedWorkspace?.id
+    )
       ?? null,
-  [snapshot, ui.activeConversationId]);
+  [selectedWorkspace?.id, snapshot, ui.activeConversationId]);
   const activeAgent = useMemo(() =>
     snapshot?.agents.find((item) => item.id === activeThread?.agentId) ?? null,
   [activeThread?.agentId, snapshot?.agents]);
 
   const openThreads = useMemo(() => ui.openConversationIds.flatMap((id) => {
-    const conversation = snapshot?.conversations.find((item) => item.id === id);
+    const conversation = snapshot?.conversations.find((item) =>
+      item.id === id && item.workspaceId === selectedWorkspace?.id
+    );
     return conversation ? [conversation] : [];
-  }), [snapshot?.conversations, ui.openConversationIds]);
-  const responsiveMaximum = maxPaneCount(windowWidth, ui.sidebarCollapsed);
-  const maxSplitCount = Math.min(responsiveMaximum, Math.max(1, openThreads.length));
-  const effectiveSplitCount = Math.min(ui.requestedSplitCount, maxSplitCount);
-  const paneIds = projectWorkspaceLayout({
-    workspaceId: ui.selectedWorkspaceId ?? "unselected-workspace",
-    openConversationIds: ui.openConversationIds,
-    paneConversationIds: normalizePaneIds(
-      ui.paneConversationIds,
-      ui.openConversationIds,
-      ui.requestedSplitCount,
-    ),
-    activeConversationId: ui.activeConversationId,
-    requestedPaneCount: ui.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
-  }, effectiveSplitCount).paneConversationIds;
+  }), [selectedWorkspace?.id, snapshot?.conversations, ui.openConversationIds]);
+  const maxSplitCount = Math.min(4, Math.max(1, openThreads.length));
+  const effectiveSplitCount = ui.paneConversationIds.length;
+  const paneIds = ui.paneConversationIds;
   const visibleThreads = paneIds.flatMap((id) => {
-    const conversation = snapshot?.conversations.find((item) => item.id === id);
+    const conversation = snapshot?.conversations.find((item) =>
+      item.id === id && item.workspaceId === selectedWorkspace?.id
+    );
     return conversation ? [conversation] : [];
   });
   const activePaneIndex = Math.max(
@@ -275,30 +273,35 @@ export function useWorkspace(): WorkspaceController {
     }
   }, [messagesByThread, openThreads]);
 
+  const transitionWorkspace = useCallback(async (workspaceId: string) => {
+    const currentWorkspaceId = uiRef.current.selectedWorkspaceId;
+    if (currentWorkspaceId) await layoutPersistence.flush(currentWorkspaceId);
+    const nextSnapshot = await desktopApi.getWorkspaceSnapshot();
+    const nextUi = selectWorkspace(uiRef.current, nextSnapshot, workspaceId);
+    snapshotRef.current = nextSnapshot;
+    uiRef.current = nextUi;
+    setSnapshot(nextSnapshot);
+    setUi(nextUi);
+    layoutPersistence.schedule(layoutFromUi(nextUi, nextSnapshot));
+    setError(null);
+  }, [layoutPersistence]);
+
   const selectProject = useCallback((workspaceId: string) => {
-    setUi((current) => selectWorkspace(current, snapshotRef.current, workspaceId));
-  }, []);
+    void transitionWorkspace(workspaceId).catch((cause: unknown) => {
+      setError(messageFromError(cause));
+    });
+  }, [transitionWorkspace]);
 
   const activateConversation = useCallback((conversationId: string, workspaceId: string) => {
     mutateLayout((current) => {
-      const next = activateConversationInLayout({
-        workspaceId,
-        openConversationIds: current.openConversationIds,
-        paneConversationIds: normalizePaneIds(
-          current.paneConversationIds,
-          current.openConversationIds,
-          current.requestedSplitCount,
-        ),
-        activeConversationId: current.activeConversationId,
-        requestedPaneCount: current.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
-      }, conversationId);
-      return {
-        ...current,
-        selectedWorkspaceId: workspaceId,
-        activeConversationId: next.activeConversationId,
-        openConversationIds: next.openConversationIds,
-        paneConversationIds: next.paneConversationIds,
-      };
+      if (current.selectedWorkspaceId !== workspaceId) {
+        throw new Error("Conversation cannot be opened outside the selected Workspace.");
+      }
+      const next = activateConversationInLayout(
+        layoutFromUi(current, snapshotRef.current),
+        conversationId,
+      );
+      return applyLayoutToUi(current, next);
     });
   }, [mutateLayout]);
 
@@ -307,8 +310,14 @@ export function useWorkspace(): WorkspaceController {
       (item) => item.id === conversationId,
     );
     if (!conversation) return;
-    activateConversation(conversationId, conversation.workspaceId);
-  }, [activateConversation]);
+    if (uiRef.current.selectedWorkspaceId === conversation.workspaceId) {
+      activateConversation(conversationId, conversation.workspaceId);
+      return;
+    }
+    void transitionWorkspace(conversation.workspaceId)
+      .then(() => activateConversation(conversationId, conversation.workspaceId))
+      .catch((cause: unknown) => setError(messageFromError(cause)));
+  }, [activateConversation, transitionWorkspace]);
 
   const focusApproval = useCallback((conversationId: string, approvalId: string) => {
     openThread(conversationId);
@@ -318,12 +327,8 @@ export function useWorkspace(): WorkspaceController {
 
   const selectPane = useCallback((paneIndex: number) => {
     mutateLayout((current) => {
-      const panes = normalizePaneIds(
-        current.paneConversationIds,
-        current.openConversationIds,
-        current.requestedSplitCount,
-      );
-      const conversationId = panes[paneIndex];
+      const layout = layoutFromUi(current, snapshotRef.current);
+      const conversationId = layout.paneConversationIds[paneIndex];
       return conversationId
         ? { ...current, activeConversationId: conversationId }
         : current;
@@ -332,53 +337,51 @@ export function useWorkspace(): WorkspaceController {
 
   const setRequestedSplitCount = useCallback((count: number) => {
     mutateLayout((current) => {
-      const requestedSplitCount = Math.max(1, Math.min(4, count));
-      return {
-        ...current,
-        requestedSplitCount,
-        paneConversationIds: normalizePaneIds(
-          current.paneConversationIds,
-          current.openConversationIds,
-          requestedSplitCount,
-        ),
-      };
+      const next = setWorkspacePaneCount(
+        layoutFromUi(current, snapshotRef.current),
+        count,
+      );
+      return applyLayoutToUi(current, next);
     });
   }, [mutateLayout]);
 
+  const resizePane = useCallback((dividerIndex: number, deltaPixels: number) => {
+    mutateLayout((current) => applyLayoutToUi(
+      current,
+      resizeWorkspacePanePair(
+        layoutFromUi(current, snapshotRef.current),
+        dividerIndex,
+        deltaPixels,
+      ),
+    ));
+  }, [mutateLayout]);
+
   const setSidebarCollapsed = useCallback((value: boolean) => {
-    setUi((current) => ({ ...current, sidebarCollapsed: value }));
+    const next = { ...uiRef.current, sidebarCollapsed: value };
+    uiRef.current = next;
+    setUi(next);
   }, []);
   const setProfessionalMode = useCallback((value: boolean) => {
-    setUi((current) => ({ ...current, professionalMode: value }));
+    const next = { ...uiRef.current, professionalMode: value };
+    uiRef.current = next;
+    setUi(next);
   }, []);
 
   const closePane = useCallback((conversationId: string) => {
-    mutateLayout((current) => {
-      const openConversationIds = current.openConversationIds.filter(
-        (id) => id !== conversationId,
-      );
-      const paneConversationIds = normalizePaneIds(
-        current.paneConversationIds.filter((id) => id !== conversationId),
-        openConversationIds,
-        current.requestedSplitCount,
-      );
-      return {
-        ...current,
-        openConversationIds,
-        paneConversationIds,
-        activeConversationId: current.activeConversationId === conversationId
-          ? paneConversationIds[0] ?? null
-          : current.activeConversationId,
-      };
-    });
+    mutateLayout((current) => applyLayoutToUi(
+      current,
+      closeConversationInLayout(
+        layoutFromUi(current, snapshotRef.current),
+        conversationId,
+      ),
+    ));
   }, [mutateLayout]);
 
   const createWorkspace = useCallback(async (name: string) => {
     const workspace = await desktopApi.createWorkspace({ name });
-    await refresh();
-    setUi((current) => selectWorkspace(current, snapshotRef.current, workspace.id));
+    await transitionWorkspace(workspace.id);
     return workspace;
-  }, [refresh]);
+  }, [transitionWorkspace]);
 
   const openLocalWorkspace = useCallback(async () => {
     const selection = await desktopApi.chooseWorkspaceDirectory();
@@ -389,10 +392,9 @@ export function useWorkspace(): WorkspaceController {
       name,
       localRootPath: selection.localRootPath,
     });
-    await refresh();
-    setUi((current) => ({ ...current, selectedWorkspaceId: workspace.id }));
+    await transitionWorkspace(workspace.id);
     return workspace;
-  }, [refresh]);
+  }, [transitionWorkspace]);
 
   const saveProvider = useCallback(async (input: SaveProviderProfileRequest) => {
     const provider = await desktopApi.saveProviderProfile(input);
@@ -565,6 +567,7 @@ export function useWorkspace(): WorkspaceController {
     requestedSplitCount: ui.requestedSplitCount,
     effectiveSplitCount,
     maxSplitCount,
+    paneWidths: ui.paneWidths,
     activePaneIndex,
     sidebarCollapsed: ui.sidebarCollapsed,
     professionalMode: ui.professionalMode,
@@ -574,6 +577,7 @@ export function useWorkspace(): WorkspaceController {
     focusApproval,
     selectPane,
     setRequestedSplitCount,
+    resizePane,
     setSidebarCollapsed,
     setProfessionalMode,
     refresh,
@@ -675,42 +679,15 @@ function normalizeUi(
   const workspaceId = snapshot.workspaces.some(
     (item) => item.id === current.selectedWorkspaceId,
   ) ? current.selectedWorkspaceId : snapshot.workspaces[0]?.id ?? null;
-  const conversations = snapshot.conversations.filter(
-    (item) => item.workspaceId === workspaceId,
-  );
-  const persistedLayout = snapshot.layouts.find(
-    (layout) => layout.workspaceId === workspaceId,
-  );
-  const restorePersistedLayout =
-    current.selectedWorkspaceId !== workspaceId ||
-    current.openConversationIds.length === 0;
-  const validIds = new Set(conversations.map((item) => item.id));
-  const layoutOpenIds = (restorePersistedLayout ? persistedLayout?.openConversationIds : null)
-    ?? (current.selectedWorkspaceId === workspaceId ? current.openConversationIds : []);
-  const openConversationIds = layoutOpenIds.filter((id) => validIds.has(id));
-  if (openConversationIds.length === 0 && conversations[0]) {
-    openConversationIds.push(conversations[0].id);
-  }
-  const requestedSplitCount = (restorePersistedLayout ? persistedLayout?.requestedPaneCount : null)
-    ?? current.requestedSplitCount;
-  const candidateActiveId = (restorePersistedLayout ? persistedLayout?.activeConversationId : null)
-    ?? current.activeConversationId;
-  const activeConversationId = openConversationIds.includes(candidateActiveId ?? "")
-    ? candidateActiveId
-    : openConversationIds[0] ?? null;
-  return {
-    ...current,
-    selectedWorkspaceId: workspaceId,
-    activeConversationId,
-    openConversationIds,
-    requestedSplitCount,
-    paneConversationIds: normalizePaneIds(
-      (restorePersistedLayout ? persistedLayout?.paneConversationIds : null)
-        ?? current.paneConversationIds,
-      openConversationIds,
-      requestedSplitCount,
-    ),
+  if (!workspaceId) return {
+    ...DEFAULT_UI_STATE,
+    sidebarCollapsed: current.sidebarCollapsed,
+    professionalMode: current.professionalMode,
   };
+  if (current.selectedWorkspaceId === workspaceId && current.openConversationIds.length > 0) {
+    return applyLayoutToUi(current, layoutFromUi(current, snapshot));
+  }
+  return selectWorkspace(current, snapshot, workspaceId);
 }
 
 function selectWorkspace(
@@ -718,48 +695,54 @@ function selectWorkspace(
   snapshot: DesktopWorkspaceSnapshot | null,
   workspaceId: string,
 ): PersistedUiState {
-  const conversations = snapshot?.conversations.filter(
-    (item) => item.workspaceId === workspaceId,
-  ) ?? [];
-  const layout = snapshot?.layouts.find((item) => item.workspaceId === workspaceId);
-  const validIds = new Set(conversations.map(({ id }) => id));
-  const openConversationIds = (layout?.openConversationIds ?? [])
-    .filter((id) => validIds.has(id));
-  if (openConversationIds.length === 0 && conversations[0]) {
-    openConversationIds.push(conversations[0].id);
+  if (!snapshot?.workspaces.some(({ id }) => id === workspaceId)) {
+    throw new Error(`Workspace not found: ${workspaceId}`);
   }
-  const requestedSplitCount = layout?.requestedPaneCount ?? 1;
-  const paneConversationIds = normalizePaneIds(
-    layout?.paneConversationIds ?? openConversationIds,
-    openConversationIds,
-    requestedSplitCount,
+  const conversations = snapshot.conversations.filter(
+    (item) => item.workspaceId === workspaceId,
   );
-  return {
-    ...current,
-    selectedWorkspaceId: workspaceId,
-    activeConversationId: paneConversationIds.includes(layout?.activeConversationId ?? "")
-      ? layout!.activeConversationId
-      : paneConversationIds[0] ?? null,
-    openConversationIds,
-    paneConversationIds,
-    requestedSplitCount,
-  };
+  const persisted = snapshot.layouts.find((item) => item.workspaceId === workspaceId);
+  return applyLayoutToUi(current, createWorkspaceLayout(
+    workspaceId,
+    conversations.map(({ id }) => id),
+    persisted,
+  ));
 }
 
-function normalizePaneIds(
-  paneIds: string[],
-  openIds: string[],
-  count: number,
-): string[] {
-  const target = Math.min(Math.max(1, count), Math.max(1, openIds.length));
-  const unique = paneIds.filter(
-    (id, index) => openIds.includes(id) && paneIds.indexOf(id) === index,
-  );
-  for (const id of openIds) {
-    if (unique.length >= target) break;
-    if (!unique.includes(id)) unique.push(id);
+function layoutFromUi(
+  ui: PersistedUiState,
+  snapshot: DesktopWorkspaceSnapshot | null,
+): WorkspaceLayout {
+  const workspaceId = ui.selectedWorkspaceId;
+  if (!workspaceId || !snapshot?.workspaces.some(({ id }) => id === workspaceId)) {
+    throw new Error("Selected Workspace is unavailable.");
   }
-  return unique.slice(0, target);
+  const conversationIds = new Set(snapshot.conversations
+    .filter((conversation) => conversation.workspaceId === workspaceId)
+    .map(({ id }) => id));
+  return parseWorkspaceLayout({
+    workspaceId,
+    openConversationIds: ui.openConversationIds,
+    paneConversationIds: ui.paneConversationIds,
+    paneWidths: ui.paneWidths,
+    activeConversationId: ui.activeConversationId,
+    requestedPaneCount: ui.requestedSplitCount,
+  }, conversationIds);
+}
+
+function applyLayoutToUi(
+  current: PersistedUiState,
+  layout: WorkspaceLayout,
+): PersistedUiState {
+  return {
+    ...current,
+    selectedWorkspaceId: layout.workspaceId,
+    activeConversationId: layout.activeConversationId,
+    openConversationIds: layout.openConversationIds,
+    paneConversationIds: layout.paneConversationIds,
+    paneWidths: layout.paneWidths,
+    requestedSplitCount: layout.requestedPaneCount,
+  };
 }
 
 function mergeMessages(
@@ -769,14 +752,6 @@ function mergeMessages(
   const byId = new Map(current.map((message) => [message.id, message]));
   for (const message of incoming) byId.set(message.id, message);
   return [...byId.values()].sort((left, right) => left.sequence - right.sequence);
-}
-
-function maxPaneCount(width: number, sidebarCollapsed: boolean): number {
-  const available = width - (sidebarCollapsed ? 72 : 264);
-  if (available >= 1520) return 4;
-  if (available >= 1180) return 3;
-  if (available >= 760) return 2;
-  return 1;
 }
 
 function readUiState(): PersistedUiState {

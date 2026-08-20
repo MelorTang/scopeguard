@@ -97,6 +97,7 @@ async function runFirstProcess(
     workspaceId: workspace.id,
     openConversationIds: conversations.map(({ id }) => id),
     paneConversationIds: conversations.map(({ id }) => id),
+    paneWidths: [420, 460, 500, 540],
     activeConversationId: conversations[2]!.id,
     requestedPaneCount: 4,
   });

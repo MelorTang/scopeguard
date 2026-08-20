@@ -43,6 +43,7 @@ try {
   assert.equal(first.conversationIds.length, 4);
   assert.equal(new Set(Object.values(first.locators).map((locator) => locator.sessionId)).size, 4);
   assert.equal(first.layout.requestedPaneCount, 4);
+  assert.deepEqual(first.layout.paneWidths, [420, 460, 500, 540]);
   assert.equal(first.rendererApi, "production-preload-ipc");
   assert.equal(first.clipboardVerified, true);
   assert.ok(first.browserWindowId > 0);
@@ -66,6 +67,7 @@ try {
   assert.equal(second.clipboardVerified, true);
   assert.deepEqual(second.locators, first.locators);
   assert.deepEqual(second.layout, first.layout);
+  assert.deepEqual(second.layout.paneWidths, [420, 460, 500, 540]);
 
   const finalRequest = provider.requests.at(-1);
   assert.deepEqual(finalRequest?.userTexts, [
@@ -75,7 +77,7 @@ try {
   assert.equal(provider.requests.every((request) => request.authorized), true);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
   console.log(JSON.stringify({
-    checks: 31,
+    checks: 33,
     mode: stageRoot ? "staged" : "development",
     electronVersion: "42.0.1",
     piVersion: Object.values(second.locators)[0]?.piVersion,
@@ -93,6 +95,7 @@ try {
     conversationCount: second.conversationIds.length,
     distinctSessionIds: new Set(Object.values(second.locators).map((locator) => locator.sessionId)).size,
     activePaneConversationId: second.layout.activeConversationId,
+    paneWidths: second.layout.paneWidths,
     completedDispatchId: second.completedDispatchId,
     failedDispatchId: second.failedDispatchId,
     providerObservedHistory: finalRequest.userTexts,

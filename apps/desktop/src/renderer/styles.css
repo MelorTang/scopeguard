@@ -654,19 +654,49 @@ textarea:disabled {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: repeat(var(--pane-count), minmax(0, 1fr));
-  overflow: hidden;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
 }
 
 .thread-pane {
   container-type: inline-size;
   display: grid;
-  min-width: 0;
+  min-width: 320px;
   min-height: 0;
   grid-template-rows: 48px minmax(0, 1fr) auto;
   overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface);
+}
+
+.pane-splitter {
+  position: relative;
+  z-index: 2;
+  width: 8px;
+  min-width: 8px;
+  min-height: 0;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--surface);
+  border: 0;
+  outline: 0;
+}
+
+.pane-splitter span {
+  position: absolute;
+  inset: 0 3px;
+  background: var(--border);
+}
+
+.pane-splitter:hover span,
+.pane-splitter:focus-visible span {
+  background: var(--accent);
+}
+
+.pane-splitter:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .thread-pane:last-child {
