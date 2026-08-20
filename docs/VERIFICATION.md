@@ -121,13 +121,16 @@ pnpm --filter @scopeguard/desktop package:prepare
 git diff --check
 ```
 
-The two Pilot commands intentionally reject macOS before Electron spawn. The
-current candidate has not yet run either the development or staged Pilot on
-Windows/Linux, so Phase 2 remains unaccepted. On a supported Pilot platform, the
-pilots use a deterministic local Provider and delete their temporary database,
-Workspace, credential profile, and Pi Session only after the complete spawned
-process tree has exited. A real external Provider smoke is optional and must not
-print or fixture its credential.
+The two Pilot commands intentionally reject macOS before Electron spawn.
+Windows Development, Windows staged, Linux Development, and Linux staged Pilot
+evidence has been recorded, but the four groups must be rebound to the final
+revision and independently accepted before Phase 2 closes. Issue #25 remains
+open, the #23 Phase 2 checkbox remains unchecked, ADR 0026 remains Proposed,
+and Phase 3 has not started. On a supported Pilot platform, the pilots use a
+deterministic local Provider and delete their temporary database, Workspace,
+credential profile, and Pi Session only after the complete spawned process tree
+has exited. A real external Provider smoke is optional and must not print or
+fixture its credential.
 
 Every milestone report must identify the exact commit, platform, Pi version,
 fixtures, command results, remaining gaps, and whether evidence comes from the

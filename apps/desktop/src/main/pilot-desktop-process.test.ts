@@ -40,8 +40,8 @@ test("nonzero exit preserves bounded stdout and stderr as the primary failure", 
   try {
     const failure = await expectPilotFailure(fixture);
     assert.match(failure.primaryError.message, /code=1 signal=null/);
-    assert.match(failure.primaryError.message, /stdout detail/);
-    assert.match(failure.primaryError.message, /stderr detail/);
+    assert.match(failure.message, /stdout:\nstdout detail/);
+    assert.match(failure.message, /stderr:\nstderr detail/);
     assert.equal(failure.cleanupError, null);
   } finally {
     await fixture.dispose();
@@ -74,7 +74,7 @@ test("missing lifecycle preserves primary and cleanup errors with diagnostics", 
   const startedAt = Date.now();
   try {
     const failure = await expectPilotFailure(fixture);
-    assert.match(failure.primaryError.message, /primary stderr/);
+    assert.match(failure.message, /primary stderr/);
     assert.match(failure.cleanupError?.message ?? "", /lifecycle metadata/i);
     assert.equal(failure.cleanupConfirmed, false);
     assert.equal(existsSync(fixture.root), true);
@@ -97,11 +97,40 @@ test("diagnostics are byte bounded and redact secrets across chunks", async () =
       maxDiagnosticBytes: 256,
       redactions: [secret],
     });
-    assert.equal(failure.primaryError.message.includes(secret), false);
-    assert.equal(failure.primaryError.message.includes("pilot-cross-chunk-secret"), false);
-    assert.match(failure.primaryError.message, /\[REDACTED\]/);
+    assert.equal(failure.message.includes(secret), false);
+    assert.equal(failure.message.includes("pilot-cross-chunk-secret"), false);
+    assert.match(failure.message, /\[REDACTED\]/);
     assert.ok(Buffer.byteLength(failure.stdout, "utf8") <= 256);
     assert.ok(Buffer.byteLength(failure.stderr, "utf8") <= 256);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("timeout prints redacted diagnostics before additional cleanup failure", async () => {
+  const secret = "timeout-cross-chunk-secret";
+  const fixture = await createPilotProcessFixture({
+    exitCode: 0,
+    hang: true,
+    stderrChunks: ["timeout-cross-", "chunk-secret\n"],
+    stdout: "child reached timeout boundary\n",
+    writeLifecycle: false,
+  });
+  try {
+    const failure = await expectPilotFailure(fixture, {
+      redactions: [secret],
+      timeoutMs: 300,
+    });
+    assert.match(failure.primaryError.message, /exit timed out/);
+    assert.match(failure.message, /^Process exit timed out/);
+    assert.match(failure.message, /stdout:\nchild reached timeout boundary/);
+    assert.match(failure.message, /stderr:\n\[REDACTED\]/);
+    assert.doesNotMatch(failure.message, /timeout-cross-chunk-secret/);
+    assert.match(failure.message, /Additional cleanup diagnostic:/);
+    assert.match(failure.cleanupError?.message ?? "", /lifecycle metadata/i);
+    assert.equal(failure.cleanupConfirmed, false);
+    assert.equal(isProcessAlive(fixture.child.pid), false);
+    assert.equal(existsSync(fixture.root), true);
   } finally {
     await fixture.dispose();
   }
@@ -118,6 +147,7 @@ type PilotProcessFixture = {
 
 async function createPilotProcessFixture(options: {
   exitCode: number;
+  hang?: boolean;
   spawnShortLivedAgentHost?: boolean;
   stderr?: string;
   stderrChunks?: string[];
@@ -135,7 +165,7 @@ async function createPilotProcessFixture(options: {
     ${options.stdout ? `process.stdout.write(${JSON.stringify(options.stdout)});` : ""}
     ${options.stderr ? `process.stderr.write(${JSON.stringify(options.stderr)});` : ""}
     ${JSON.stringify(options.stderrChunks ?? [])}.forEach((chunk) => process.stderr.write(chunk));
-    setTimeout(() => process.exit(${options.exitCode}), 20);
+    ${options.hang ? "setInterval(() => {}, 1000);" : `setTimeout(() => process.exit(${options.exitCode}), 20);`}
   `;
   const child = spawn(process.execPath, ["-e", source], {
     detached: process.platform !== "win32",
@@ -175,7 +205,11 @@ async function createPilotProcessFixture(options: {
 
 async function expectPilotFailure(
   fixture: PilotProcessFixture,
-  options: { maxDiagnosticBytes?: number; redactions?: string[] } = {},
+  options: {
+    maxDiagnosticBytes?: number;
+    redactions?: string[];
+    timeoutMs?: number;
+  } = {},
 ): Promise<PilotDesktopProcessFailure> {
   try {
     await supervisePilotDesktopProcess({
@@ -187,7 +221,7 @@ async function expectPilotFailure(
       phase: 1,
       redactions: options.redactions,
       statePath: fixture.statePath,
-      timeoutMs: 1_000,
+      timeoutMs: options.timeoutMs ?? 1_000,
     });
   } catch (error) {
     assert(error instanceof PilotDesktopProcessFailure);

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { app, utilityProcess } from "electron";
 
-import { agentHostEnvironment } from "./agent-host-client.js";
+import { isolatedChildEnvironment } from "./child-process-environment.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -12,8 +12,7 @@ void app.whenReady().then(async () => {
   if (!hostNode) {
     throw new Error("Pi Runtime utility probe host Node path is required.");
   }
-  const probeEnvironment = {
-    ...agentHostEnvironment(),
+  const probeEnvironment = isolatedChildEnvironment(process.env, {
     SCOPEGUARD_PI_UTILITY_PROBE_HOST_NODE: hostNode,
     ...(process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE === undefined
       ? {}
@@ -21,7 +20,7 @@ void app.whenReady().then(async () => {
           SCOPEGUARD_PI_UTILITY_PROBE_MODE:
             process.env.SCOPEGUARD_PI_UTILITY_PROBE_MODE,
         }),
-  };
+  });
   const child = utilityProcess.fork(
     join(moduleDirectory, "pi-runtime-utility-probe-child.js"),
     [],

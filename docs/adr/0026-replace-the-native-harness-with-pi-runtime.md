@@ -100,8 +100,11 @@ environment-variable assertion that can bypass this gate. Desktop `main.ts`
 repeats the platform rejection before creating the test Vault, AgentHostClient,
 or Pi Runtime. Signed-distribution interaction with macOS Keychain will use a
 separate future Phase 5 entry point. Windows or Linux must supply both the
-development and staged Phase 2 restart proofs; neither has yet been executed for
-this candidate, so this ADR remains Proposed.
+development and staged Phase 2 restart proofs. Windows Development, Windows
+staged, Linux Development, and Linux staged evidence has been recorded, but the
+four groups must be rebound to the final revision and independently accepted.
+Issue #25 remains open, the #23 Phase 2 checkbox remains unchecked, this ADR
+remains Proposed, and Phase 3 has not started.
 
 ## Consequences
 

@@ -16,6 +16,7 @@ import type {
 import type { RunEvent } from "@scopeguard/domain";
 
 import { EncryptedSecretVault } from "./encrypted-secret-vault.js";
+import { isolatedChildEnvironment } from "./child-process-environment.js";
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
@@ -117,15 +118,14 @@ export class AgentHostClient {
     try {
       child = this.#fork(this.#modulePath, [], {
         serviceName: "ScopeGuard Agent Host",
-        env: {
-          ...agentHostEnvironment(),
+        env: isolatedChildEnvironment(process.env, {
           SCOPEGUARD_DB_PATH: this.#databasePath,
           SCOPEGUARD_PI_SESSION_ROOT: this.#piSessionRoot,
           ...(this.#piCliPath ? { SCOPEGUARD_PI_CLI_PATH: this.#piCliPath } : {}),
           ...(this.#piRuntimeAssetRoot
             ? { SCOPEGUARD_PI_RUNTIME_ASSET_ROOT: this.#piRuntimeAssetRoot }
             : {}),
-        },
+        }),
         stdio: "pipe",
       });
     } catch (error) {
@@ -421,34 +421,6 @@ export function boundedBackoffDelay(
 ): number {
   const safeAttempt = Math.max(0, Math.min(attempt, 30));
   return Math.min(baseDelayMs * 2 ** safeAttempt, maxDelayMs);
-}
-
-export function agentHostEnvironment(
-  source: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  const allowedNames = [
-    "PATH",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "SystemRoot",
-    "WINDIR",
-    "ComSpec",
-    "PATHEXT",
-    "USERPROFILE",
-  ];
-  return Object.fromEntries(
-    allowedNames.flatMap((name) => {
-      const value = source[name];
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
 }
 
 function asError(error: unknown, fallback = "Agent host operation failed."): Error {

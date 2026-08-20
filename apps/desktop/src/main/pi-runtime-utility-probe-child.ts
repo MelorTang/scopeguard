@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { preparePiNodeInvocation } from "@scopeguard/pi-runtime";
 
+import { isolatedChildEnvironment } from "./child-process-environment.js";
+
 const parentPort = process.parentPort;
 if (!parentPort) {
   throw new Error("Pi Runtime utility probe requires an Electron parent port.");
@@ -82,7 +84,7 @@ async function runProbe(root: string): Promise<Record<string, unknown>> {
           ? { ELECTRON_RUN_AS_NODE: "1" }
           : {},
       };
-  const childEnvironment = cleanProbeEnvironment({
+  const childEnvironment = isolatedChildEnvironment(process.env, {
     PI_CODING_AGENT_DIR: profileDirectory,
     PI_OFFLINE: "1",
     PI_SKIP_VERSION_CHECK: "1",
@@ -265,34 +267,6 @@ async function writeProbeProfile(
     join(profileDirectory, "settings.json"),
     `${JSON.stringify({ compaction: { enabled: true } }, null, 2)}\n`,
   );
-}
-
-function cleanProbeEnvironment(extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const allowed = [
-    "PATH",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "SystemRoot",
-    "WINDIR",
-    "ComSpec",
-    "PATHEXT",
-    "USERPROFILE",
-  ];
-  return {
-    ...Object.fromEntries(
-      allowed.flatMap((name) =>
-        process.env[name] === undefined ? [] : [[name, process.env[name]]]
-      ),
-    ),
-    ...extra,
-  };
 }
 
 function sanitizeArgv(

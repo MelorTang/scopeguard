@@ -24,12 +24,9 @@ export class PilotDesktopProcessFailure extends Error {
     readonly stdout: string,
     readonly stderr: string,
   ) {
-    super(
-      cleanupError
-        ? `${primaryError.message}\nAdditional cleanup diagnostic: ${cleanupError.message}`
-        : primaryError.message,
-      { cause: primaryError },
-    );
+    super(formatPilotFailure(primaryError, stdout, stderr, cleanupError), {
+      cause: primaryError,
+    });
     this.name = "PilotDesktopProcessFailure";
   }
 }
@@ -98,8 +95,6 @@ export async function supervisePilotDesktopProcess(options: {
       ];
       if (missingCompletion) details.push("The completion marker was absent.");
       if (missingState) details.push("The success state was absent.");
-      details.push(`stdout:\n${capturedStdout || "<empty>"}`);
-      details.push(`stderr:\n${capturedStderr || "<empty>"}`);
       primaryError = new Error(details.join("\n"));
     }
   }
@@ -143,6 +138,22 @@ export async function supervisePilotDesktopProcess(options: {
     );
   }
   return capturedStdout;
+}
+
+function formatPilotFailure(
+  primaryError: Error,
+  stdout: string,
+  stderr: string,
+  cleanupError: Error | null,
+): string {
+  return [
+    primaryError.message,
+    `stdout:\n${stdout || "<empty>"}`,
+    `stderr:\n${stderr || "<empty>"}`,
+    ...(cleanupError
+      ? [`Additional cleanup diagnostic: ${cleanupError.message}`]
+      : []),
+  ].join("\n");
 }
 
 export async function readPilotLifecycleMetadata(

@@ -7,9 +7,9 @@ import type { UtilityProcess } from "electron";
 
 import {
   AgentHostClient,
-  agentHostEnvironment,
   boundedBackoffDelay,
 } from "./agent-host-client.js";
+import { isolatedChildEnvironment } from "./child-process-environment.js";
 
 test("bounds Agent host restart delay", () => {
   assert.equal(boundedBackoffDelay(0, 100, 1_000), 100);
@@ -19,7 +19,7 @@ test("bounds Agent host restart delay", () => {
 
 test("does not inherit Provider or cloud credentials", () => {
   assert.deepEqual(
-    agentHostEnvironment({
+    isolatedChildEnvironment({
       PATH: "/bin",
       HOME: "/home/user",
       OPENAI_API_KEY: "secret",

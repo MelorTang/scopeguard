@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 import { build } from "esbuild";
 
+import { preparePnpmInvocation } from "../dist/main/package-manager-invocation.js";
+
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const stageRoot = join(desktopRoot, ".package", "app");
 const stageDist = join(stageRoot, "dist");
@@ -61,12 +63,7 @@ const pnpmArgs = [
   "--prod",
   "--frozen-lockfile",
 ];
-const pnpmInvocation = process.platform === "win32"
-  ? {
-      command: process.env.ComSpec ?? "cmd.exe",
-      args: ["/d", "/s", "/c", "pnpm.cmd", ...pnpmArgs],
-    }
-  : { command: "pnpm", args: pnpmArgs };
+const pnpmInvocation = preparePnpmInvocation({ args: pnpmArgs });
 try {
   await Promise.all([
     copyFile(
