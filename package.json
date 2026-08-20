@@ -16,6 +16,7 @@
     "pilot:local": "pnpm pilot:pi-runtime",
     "pilot:pi-runtime": "pnpm --filter @scopeguard/desktop pilot:pi-runtime",
     "pilot:pi-runtime:staged": "pnpm --filter @scopeguard/desktop pilot:pi-runtime:staged",
+    "probe:pi-runtime:utility": "pnpm --filter @scopeguard/desktop probe:pi-runtime:utility",
     "qualify:pi-rpc": "pnpm --dir prototypes/pi-rpc-qualification install --ignore-workspace --frozen-lockfile && pnpm --dir prototypes/pi-rpc-qualification typecheck && pnpm --dir prototypes/pi-rpc-qualification qualify"
   },
   "devDependencies": {

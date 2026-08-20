@@ -29,6 +29,7 @@ import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 import { AgentHostClient } from "./main/agent-host-client.js";
 import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
+import { persistPilotLifecycleMetadata } from "./main/pilot-desktop-process.js";
 import {
   assertDesktopPilotCredentialStoreIsolation,
   assertDesktopPilotLaunchAllowed,
@@ -193,6 +194,21 @@ async function startApplication(): Promise<void> {
   registerIpcHandlers(host);
   await host.start();
   if (desktopPilotPhase) {
+    const agentHostPid = host.processId;
+    if (!agentHostPid) {
+      throw new Error(
+        "Production AgentHostClient did not expose a running utility process.",
+      );
+    }
+    await persistPilotLifecycleMetadata(
+      requiredPilotEnvironment("SCOPEGUARD_DESKTOP_PILOT_LIFECYCLE"),
+      {
+        schemaVersion: 1,
+        phase: desktopPilotPhase === "1" ? 1 : 2,
+        mainPid: process.pid,
+        agentHostPid,
+      },
+    );
     await runDesktopPilotPhase(host);
     app.quit();
     return;

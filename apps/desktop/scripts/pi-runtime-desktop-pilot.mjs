@@ -9,11 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import electronPath from "electron";
 
-import {
-  ProcessTreeExitedWithFailure,
-  terminateProcessTree,
-  waitForProcessTree,
-} from "../dist/main/pilot-process-tree.js";
+import { supervisePilotDesktopProcess } from "../dist/main/pilot-desktop-process.js";
 import { assertDesktopPilotLaunchAllowed } from "../dist/main/pilot-safe-storage.js";
 import { startPiRuntimeFakeProvider } from "./pi-runtime-fake-provider.mjs";
 
@@ -27,11 +23,13 @@ const applicationRoot = stageRoot ?? desktopRoot;
 const root = await mkdtemp(join(tmpdir(), "scopeguard-desktop-pi-pilot-"));
 const workspaceRoot = join(root, "workspace");
 const userDataRoot = join(root, "user-data");
+const lifecyclePath = join(root, "pilot-lifecycle.json");
 const statePath = join(root, "pilot-state.json");
 const secret = "desktop-pilot-secret";
 const pilotStorageKey = randomBytes(32).toString("base64url");
 const provider = await startPiRuntimeFakeProvider(secret);
-const activeDesktopProcesses = new Map();
+let primaryError = null;
+let providerCleanupError = null;
 
 try {
   await mkdir(workspaceRoot);
@@ -76,34 +74,39 @@ try {
     pilotStorage: "aes-256-gcm",
     electronCredentialStoreMode: pilotCredentialStoreMode(),
   }));
+} catch (error) {
+  primaryError = asError(error, "Desktop Pilot failed without an Error object.");
 } finally {
-  let processCleanupError = null;
-  for (const [child, processTreeOptions] of activeDesktopProcesses) {
-    try {
-      await terminateProcessTree(child, processTreeOptions);
-      activeDesktopProcesses.delete(child);
-    } catch (error) {
-      processCleanupError = error;
-      break;
-    }
-  }
-  await provider.close().catch(() => {});
-  if (processCleanupError) {
-    const message = processCleanupError instanceof Error
-      ? processCleanupError.message
-      : String(processCleanupError);
-    throw new Error(
-      `Desktop Pilot could not confirm complete process-tree exit; temporary diagnostics retained at ${root}: ${message}`,
+  try {
+    await provider.close();
+  } catch (error) {
+    providerCleanupError = asError(
+      error,
+      "Desktop Pilot Provider cleanup failed without an Error object.",
     );
   }
-  await rm(root, { recursive: true, force: true });
-  assert.equal(existsSync(root), false);
+  if (!primaryError && !providerCleanupError) {
+    await rm(root, { recursive: true, force: true });
+    assert.equal(existsSync(root), false);
+  }
+}
+
+if (primaryError || providerCleanupError) {
+  const primary = primaryError ?? new Error("Desktop Pilot Provider cleanup failed.");
+  const additional = providerCleanupError
+    ? `\nAdditional Provider cleanup diagnostic: ${providerCleanupError.message}`
+    : "";
+  throw new Error(
+    `${primary.message}${additional}\nTemporary diagnostics retained at ${root}.`,
+    { cause: primary },
+  );
 }
 
 async function launchDesktop(phase, extraEnvironment = {}) {
   const environment = {
     ...process.env,
     SCOPEGUARD_DESKTOP_PILOT_PHASE: String(phase),
+    SCOPEGUARD_DESKTOP_PILOT_LIFECYCLE: lifecyclePath,
     SCOPEGUARD_DESKTOP_PILOT_STATE: statePath,
     SCOPEGUARD_DESKTOP_PILOT_USER_DATA: userDataRoot,
     SCOPEGUARD_DESKTOP_PILOT_WORKSPACE: workspaceRoot,
@@ -119,59 +122,17 @@ async function launchDesktop(phase, extraEnvironment = {}) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  const processTreeOptions = {
-    knownDescendantPids: () => readKnownPilotDescendantPids(phase, child.pid),
-  };
-  activeDesktopProcesses.set(child, processTreeOptions);
-  const stdout = [];
-  const stderr = [];
-  child.stdout.on("data", (chunk) => stdout.push(chunk));
-  child.stderr.on("data", (chunk) => stderr.push(chunk));
-  let result;
-  try {
-    result = await waitForProcessTree(
-      child,
-      90_000,
-      `Desktop Pilot phase ${phase}`,
-      processTreeOptions,
-    );
-    activeDesktopProcesses.delete(child);
-  } catch (error) {
-    if (!child.pid || error instanceof ProcessTreeExitedWithFailure) {
-      activeDesktopProcesses.delete(child);
-    }
-    throw error;
-  }
-  const output = Buffer.concat(stdout).toString("utf8");
-  const diagnostics = Buffer.concat(stderr).toString("utf8");
-  if (result.code !== 0) {
-    throw new Error(
-      `Desktop Pilot phase ${phase} failed code=${result.code} signal=${result.signal}:\n${output}\n${diagnostics}`,
-    );
-  }
   const completion = `ScopeGuard Desktop Pilot phase ${phase} complete`;
-  if (!output.includes(completion) || !existsSync(statePath)) {
-    throw new Error(
-      `Desktop Pilot phase ${phase} exited without entering the production Pilot main path:\n${output}\n${diagnostics}`,
-    );
-  }
-  return output;
-}
-
-async function readKnownPilotDescendantPids(phase, expectedMainPid) {
-  assert.ok(expectedMainPid, "Desktop Pilot Electron Main has no process ID.");
-  const state = JSON.parse(await readFile(statePath, "utf8"));
-  assert.equal(state.phase, phase, "Desktop Pilot state phase was not persisted.");
-  assert.equal(
-    state.mainPid,
-    expectedMainPid,
-    "Desktop Pilot state does not belong to the exited Electron Main.",
-  );
-  assert.ok(
-    Number.isSafeInteger(state.agentHostPid) && state.agentHostPid > 0,
-    "Desktop Pilot state has no valid Agent Host process ID.",
-  );
-  return [state.agentHostPid];
+  return await supervisePilotDesktopProcess({
+    child,
+    completion,
+    description: `Desktop Pilot phase ${phase}`,
+    lifecyclePath,
+    phase,
+    redactions: [secret, pilotStorageKey],
+    statePath,
+    timeoutMs: 90_000,
+  });
 }
 
 function pilotElectronArguments() {
@@ -182,4 +143,8 @@ function pilotElectronArguments() {
 function pilotCredentialStoreMode() {
   if (process.platform === "linux") return "basic-test-store";
   return "platform-noninteractive";
+}
+
+function asError(error, fallback) {
+  return error instanceof Error ? error : new Error(fallback, { cause: error });
 }

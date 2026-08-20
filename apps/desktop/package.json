@@ -21,6 +21,7 @@
     "pilot:local": "pnpm run pilot:pi-runtime",
     "pilot:pi-runtime": "pnpm run build:main && node scripts/pi-runtime-desktop-pilot.mjs",
     "pilot:pi-runtime:staged": "pnpm run package:prepare && cross-env SCOPEGUARD_PILOT_STAGE_ROOT=.package/app node scripts/pi-runtime-desktop-pilot.mjs",
+    "probe:pi-runtime:utility": "pnpm run build:main && node scripts/pi-runtime-utility-probe.mjs",
     "start": "electron ."
   },
   "dependencies": {
