@@ -48,6 +48,7 @@ export const IPC_CHANNELS = {
   listDispatches: "scopeguard:dispatch:list",
   executeDispatch: "scopeguard:dispatch:execute",
   generateHandoffPrompt: "scopeguard:handoff:generate",
+  copyHandoffPrompt: "scopeguard:handoff:copy",
   getWorkspaceContext: "scopeguard:context:get",
   updateWorkspaceContext: "scopeguard:context:update",
   runEvent: "scopeguard:event:run",
@@ -203,6 +204,7 @@ export type ScopeGuardDesktopApi = {
   listDispatches: (workspaceId: Id) => Promise<Dispatch[]>;
   executeDispatch: (dispatchId: Id) => Promise<Dispatch>;
   generateHandoffPrompt: (input: HandoffPromptRequest) => Promise<HandoffPrompt>;
+  copyHandoffPrompt: (text: string) => Promise<void>;
   getWorkspaceContext: (
     workspaceId: Id,
   ) => Promise<WorkspaceContextRevision | null>;
@@ -330,6 +332,15 @@ export function parseHandoffPromptRequest(value: unknown): HandoffPromptRequest 
     ),
     workRequest,
   };
+}
+
+export function parseClipboardText(value: unknown): string {
+  const text = requireString(value, "Clipboard text");
+  if (!text) throw new Error("Clipboard text cannot be empty.");
+  if (new TextEncoder().encode(text).byteLength > 32 * 1024) {
+    throw new Error("Clipboard text must not exceed 32 KiB of UTF-8 text.");
+  }
+  return text;
 }
 
 export function parseResolveApprovalRequest(

@@ -21,6 +21,7 @@ const channels = Object.freeze({
   listDispatches: "scopeguard:dispatch:list",
   executeDispatch: "scopeguard:dispatch:execute",
   generateHandoffPrompt: "scopeguard:handoff:generate",
+  copyHandoffPrompt: "scopeguard:handoff:copy",
   getWorkspaceContext: "scopeguard:context:get",
   updateWorkspaceContext: "scopeguard:context:update",
   runEvent: "scopeguard:event:run",
@@ -60,6 +61,8 @@ const api = Object.freeze({
     ipcRenderer.invoke(channels.executeDispatch, dispatchId),
   generateHandoffPrompt: (input) =>
     ipcRenderer.invoke(channels.generateHandoffPrompt, input),
+  copyHandoffPrompt: (text) =>
+    ipcRenderer.invoke(channels.copyHandoffPrompt, text),
   getWorkspaceContext: (workspaceId) =>
     ipcRenderer.invoke(channels.getWorkspaceContext, workspaceId),
   updateWorkspaceContext: (request) =>

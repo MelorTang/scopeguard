@@ -35,6 +35,9 @@ test("four-pane workbench keeps independent controls and supports handoff", asyn
   await research.getByRole("button", { name: "Handoff 与 Agent Dispatch" }).click();
   const handoff = research.getByRole("region", { name: "Handoff 与 Agent Dispatch" });
   await handoff.getByLabel("Handoff 工作请求").fill("慢速核验并给出下一步建议");
+  await expect(handoff.getByRole("combobox")).toHaveValue("");
+  await expect(handoff.getByRole("button", { name: "发送 Dispatch" })).toBeDisabled();
+  await handoff.getByRole("combobox").selectOption({ label: "季度简报" });
   await handoff.getByRole("button", { name: "生成 Prompt" }).click();
   await expect(handoff.locator(".handoff-preview")).toContainText("未附带来源 Conversation 的完整历史");
   await handoff.getByRole("button", { name: "复制", exact: true }).click();
@@ -96,6 +99,17 @@ test("responsive projection keeps the active pane visible", async ({ page }) => 
   await expect(page.getByRole("region", { name: /交付执行，第/ })).toBeVisible();
 });
 
+test("opening a fifth Conversation replaces the active pane and keeps four panes", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await page.goto("/");
+  const panes = page.locator(".thread-pane");
+  await expect(panes).toHaveCount(4);
+  await page.getByRole("button", { name: /数据归档/ }).click();
+  await expect(panes).toHaveCount(4);
+  await expect(page.getByRole("region", { name: /数据归档，第/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: /供应商对比，第/ })).toHaveCount(0);
+});
+
 test("handoff copy reports clipboard failure", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 800 });
   await page.goto("/");
@@ -108,6 +122,7 @@ test("handoff copy reports clipboard failure", async ({ page }) => {
   const source = page.getByRole("region", { name: /供应商对比，第/ });
   await source.getByRole("button", { name: "Handoff 与 Agent Dispatch" }).click();
   const handoff = source.getByRole("region", { name: "Handoff 与 Agent Dispatch" });
+  await handoff.getByRole("combobox").selectOption({ label: "季度简报" });
   await handoff.getByLabel("Handoff 工作请求").fill("复制失败回归");
   await handoff.getByRole("button", { name: "复制", exact: true }).click();
   await expect(handoff.getByRole("status")).toContainText("复制失败");

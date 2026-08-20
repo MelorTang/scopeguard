@@ -5,6 +5,7 @@ import {
   MAX_DISPATCH_PROMPT_BYTES,
   SCOPEGUARD_SCHEMA_ID,
   SCOPEGUARD_SCHEMA_VERSION,
+  activateConversationInLayout,
   canTransitionDispatch,
   canTransitionRun,
   mergeToolPolicy,
@@ -161,4 +162,19 @@ test("responsive layout projection keeps the active Conversation visible", () =>
     activeConversationId: "four",
     requestedPaneCount: 4,
   }, 2).paneConversationIds, ["one", "four"]);
+});
+
+test("opening a fifth Conversation replaces the active pane without exceeding four panes", () => {
+  const layout = activateConversationInLayout({
+    workspaceId: "workspace",
+    openConversationIds: ["one", "two", "three", "four"],
+    paneConversationIds: ["one", "two", "three", "four"],
+    activeConversationId: "two",
+    requestedPaneCount: 4,
+  }, "five");
+
+  assert.deepEqual(layout.openConversationIds, ["one", "two", "three", "four", "five"]);
+  assert.deepEqual(layout.paneConversationIds, ["one", "five", "three", "four"]);
+  assert.equal(layout.activeConversationId, "five");
+  assert.equal(layout.paneConversationIds.length, layout.requestedPaneCount);
 });

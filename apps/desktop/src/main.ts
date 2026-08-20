@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   session,
@@ -30,6 +31,7 @@ import {
 import type { RunEvent, WorkspaceSnapshot } from "@scopeguard/domain";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
+import { writeControlledClipboard } from "./main/controlled-clipboard.js";
 import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
 import { persistPilotLifecycleMetadata } from "./main/pilot-desktop-process.js";
@@ -40,6 +42,7 @@ import {
   parseDesktopPilotPhase,
 } from "./main/pilot-safe-storage.js";
 import { preparePrivateDataDirectory } from "./main/private-data-directory.js";
+import { Phase3RendererClient } from "./main/phase3-renderer-client.js";
 import {
   canonicalizeProjectDirectory,
   ProjectDirectoryAuthorizer,
@@ -48,6 +51,7 @@ import {
   isTrustedRendererUrl as checkTrustedRendererUrl,
   resolveDevelopmentRendererUrl,
 } from "./main/renderer-security.js";
+import { configureDenyAllSessionPermissions } from "./main/session-security.js";
 import { validateWorkspaceFileSelection } from "./main/workspace-file-selection.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -147,9 +151,7 @@ async function startApplication(): Promise<void> {
   if (process.platform === "win32") {
     app.setAppUserModelId("com.melortang.scopeguard");
   }
-  if (!desktopPilotPhase) {
-    configureSessionSecurity();
-  }
+  configureSessionSecurity();
   developmentRendererUrl = resolveDevelopmentRendererUrl({
     configuredUrl: process.env.SCOPEGUARD_RENDERER_URL,
     isPackaged: app.isPackaged,
@@ -212,7 +214,10 @@ async function startApplication(): Promise<void> {
         agentHostPid,
       },
     );
-    await runDesktopPilotPhase(host);
+    const phase3Renderer = process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3"
+      ? await createPhase3RendererEvidence()
+      : undefined;
+    await runDesktopPilotPhase(host, phase3Renderer);
     app.quit();
     return;
   }
@@ -225,9 +230,9 @@ function requiredPilotEnvironment(name: string): string {
   return value;
 }
 
-async function createMainWindow(): Promise<void> {
+async function createMainWindow(): Promise<BrowserWindow> {
   if (mainWindow) {
-    return;
+    return mainWindow;
   }
   const window = new BrowserWindow({
     width: 1440,
@@ -258,7 +263,7 @@ async function createMainWindow(): Promise<void> {
     event.preventDefault();
   });
   window.once("ready-to-show", () => {
-    window.show();
+    if (!desktopPilotPhase) window.show();
   });
   window.on("closed", () => {
     if (mainWindow === window) {
@@ -271,6 +276,21 @@ async function createMainWindow(): Promise<void> {
   } else {
     await window.loadFile(join(rendererDirectory, "index.html"));
   }
+  return window;
+}
+
+async function createPhase3RendererEvidence() {
+  const window = await createMainWindow();
+  const rendererProcessId = window.webContents.getOSProcessId();
+  if (!Number.isInteger(rendererProcessId) || rendererProcessId <= 0) {
+    throw new Error("Phase 3 Desktop Pilot Renderer process is unavailable.");
+  }
+  return {
+    client: new Phase3RendererClient(window.webContents),
+    browserWindowId: window.id,
+    rendererProcessId,
+    readClipboardText: () => clipboard.readText(),
+  };
 }
 
 function registerIpcHandlers(agentHost: AgentHostClient): void {
@@ -424,6 +444,12 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
       parseHandoffPromptRequest(value),
     );
   });
+  ipcMain.handle(IPC_CHANNELS.copyHandoffPrompt, (event, value: unknown) => {
+    writeControlledClipboard(event, value, {
+      assertTrustedSender: (sender) => assertTrustedSender(sender as IpcMainInvokeEvent),
+      writeText: (text) => clipboard.writeText(text),
+    });
+  });
   ipcMain.handle(IPC_CHANNELS.getWorkspaceContext, (event, value: unknown) => {
     assertTrustedSender(event);
     return agentHost.request("getWorkspaceContext", parseId(value, "workspaceId"));
@@ -452,10 +478,7 @@ function isTrustedRendererUrl(value: string): boolean {
 }
 
 function configureSessionSecurity(): void {
-  session.defaultSession.setPermissionRequestHandler(
-    (_webContents, _permission, callback) => callback(false),
-  );
-  session.defaultSession.setPermissionCheckHandler(() => false);
+  configureDenyAllSessionPermissions(session.defaultSession);
 }
 
 function forwardRunEvent(event: RunEvent): void {

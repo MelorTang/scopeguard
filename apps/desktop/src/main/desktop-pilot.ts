@@ -12,7 +12,10 @@ import type {
 } from "@scopeguard/domain";
 
 import type { AgentHostClient } from "./agent-host-client.js";
-import { runPhase3DesktopPilotPhase } from "./phase3-desktop-pilot.js";
+import {
+  runPhase3DesktopPilotPhase,
+  type Phase3DesktopRendererEvidence,
+} from "./phase3-desktop-pilot.js";
 
 type PilotState = {
   schemaVersion: 1;
@@ -27,11 +30,17 @@ type PilotState = {
   messageCount: number;
 };
 
-export async function runDesktopPilotPhase(host: AgentHostClient): Promise<void> {
+export async function runDesktopPilotPhase(
+  host: AgentHostClient,
+  phase3Renderer?: Phase3DesktopRendererEvidence,
+): Promise<void> {
   const phase = parsePhase(process.env.SCOPEGUARD_DESKTOP_PILOT_PHASE);
   const statePath = requiredEnvironment("SCOPEGUARD_DESKTOP_PILOT_STATE");
   if (process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3") {
-    await runPhase3DesktopPilotPhase(host, phase, statePath);
+    if (!phase3Renderer) {
+      throw new Error("Phase 3 Desktop Pilot requires a production BrowserWindow Renderer.");
+    }
+    await runPhase3DesktopPilotPhase(host, phase3Renderer, phase, statePath);
     return;
   }
   const hostPid = host.processId;

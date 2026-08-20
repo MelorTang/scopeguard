@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { projectWorkspaceLayout } from "@scopeguard/domain";
+import { activateConversationInLayout, projectWorkspaceLayout } from "@scopeguard/domain";
 import type {
   Agent,
   AgentRun,
@@ -109,6 +109,7 @@ export type WorkspaceController = {
     targetConversationId: string,
     workRequest: string,
   ) => Promise<HandoffPrompt>;
+  copyHandoffPrompt: (text: string) => Promise<void>;
   dispatchPrompt: (
     sourceConversationId: string,
     targetConversationId: string,
@@ -266,27 +267,23 @@ export function useWorkspace(): WorkspaceController {
 
   const activateConversation = useCallback((conversationId: string, workspaceId: string) => {
     setUi((current) => {
-      const openConversationIds = current.openConversationIds.includes(conversationId)
-        ? current.openConversationIds
-        : [...current.openConversationIds, conversationId];
-      const paneConversationIds = assignToPane(
-        normalizePaneIds(
+      const next = activateConversationInLayout({
+        workspaceId,
+        openConversationIds: current.openConversationIds,
+        paneConversationIds: normalizePaneIds(
           current.paneConversationIds,
-          openConversationIds,
+          current.openConversationIds,
           current.requestedSplitCount,
         ),
-        conversationId,
-        Math.min(
-          Math.max(0, current.paneConversationIds.indexOf(current.activeConversationId ?? "")),
-          current.requestedSplitCount - 1,
-        ),
-      );
+        activeConversationId: current.activeConversationId,
+        requestedPaneCount: current.requestedSplitCount as WorkspaceLayout["requestedPaneCount"],
+      }, conversationId);
       return {
         ...current,
         selectedWorkspaceId: workspaceId,
-        activeConversationId: conversationId,
-        openConversationIds,
-        paneConversationIds,
+        activeConversationId: next.activeConversationId,
+        openConversationIds: next.openConversationIds,
+        paneConversationIds: next.paneConversationIds,
       };
     });
   }, []);
@@ -496,6 +493,10 @@ export function useWorkspace(): WorkspaceController {
     });
   }, []);
 
+  const copyHandoffPrompt = useCallback((text: string) => {
+    return desktopApi.copyHandoffPrompt(text);
+  }, []);
+
   const dispatchPrompt = useCallback(async (
     sourceConversationId: string,
     targetConversationId: string,
@@ -578,6 +579,7 @@ export function useWorkspace(): WorkspaceController {
     retryThread,
     closePane,
     generateHandoffPrompt,
+    copyHandoffPrompt,
     dispatchPrompt,
   };
 }
@@ -744,12 +746,6 @@ function normalizePaneIds(
     if (!unique.includes(id)) unique.push(id);
   }
   return unique.slice(0, target);
-}
-
-function assignToPane(panes: string[], conversationId: string, index: number): string[] {
-  const next = panes.filter((id) => id !== conversationId);
-  next.splice(Math.max(0, Math.min(index, next.length)), 0, conversationId);
-  return next;
 }
 
 function mergeMessages(

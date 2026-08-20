@@ -15,6 +15,14 @@ import type {
 } from "@scopeguard/domain";
 
 import type { AgentHostClient } from "./agent-host-client.js";
+import type { Phase3RendererClient } from "./phase3-renderer-client.js";
+
+export type Phase3DesktopRendererEvidence = {
+  client: Phase3RendererClient;
+  browserWindowId: number;
+  rendererProcessId: number;
+  readClipboardText: () => string;
+};
 
 type Phase3PilotState = {
   schemaVersion: 1;
@@ -22,6 +30,10 @@ type Phase3PilotState = {
   phase: 1 | 2;
   mainPid: number;
   agentHostPid: number;
+  browserWindowId: number;
+  rendererProcessId: number;
+  rendererApi: "production-preload-ipc";
+  clipboardVerified: true;
   workspaceId: string;
   providerId: string;
   agentIds: string[];
@@ -35,20 +47,22 @@ type Phase3PilotState = {
 
 export async function runPhase3DesktopPilotPhase(
   host: AgentHostClient,
+  renderer: Phase3DesktopRendererEvidence,
   phase: 1 | 2,
   statePath: string,
 ): Promise<void> {
   const hostPid = host.processId;
   assert.ok(hostPid, "Production AgentHostClient did not expose a running utility process.");
   if (phase === 1) {
-    await runFirstProcess(host, hostPid, statePath);
+    await runFirstProcess(host, renderer, hostPid, statePath);
   } else {
-    await runSecondProcess(host, hostPid, statePath);
+    await runSecondProcess(renderer, hostPid, statePath);
   }
 }
 
 async function runFirstProcess(
   host: AgentHostClient,
+  renderer: Phase3DesktopRendererEvidence,
   hostPid: number,
   statePath: string,
 ): Promise<void> {
@@ -66,20 +80,20 @@ async function runFirstProcess(
   const agents: Agent[] = [];
   const conversations: Conversation[] = [];
   for (let index = 0; index < 4; index += 1) {
-    const agent = await host.request<Agent>("createAgent", {
+    const agent = await renderer.client.invoke<Agent>("createAgent", {
       workspaceId: workspace.id,
       name: `Phase 3 Agent ${index + 1}`,
       instructions: "Reply briefly and do not call tools.",
       providerProfileId: provider.id,
     });
     agents.push(agent);
-    conversations.push(await host.request<Conversation>("createConversation", {
+    conversations.push(await renderer.client.invoke<Conversation>("createConversation", {
       workspaceId: workspace.id,
       agentId: agent.id,
       title: `Parallel Conversation ${index + 1}`,
     }));
   }
-  const layout = await host.request<WorkspaceLayout>("saveWorkspaceLayout", {
+  const layout = await renderer.client.invoke<WorkspaceLayout>("saveWorkspaceLayout", {
     workspaceId: workspace.id,
     openConversationIds: conversations.map(({ id }) => id),
     paneConversationIds: conversations.map(({ id }) => id),
@@ -88,27 +102,29 @@ async function runFirstProcess(
   });
   const runs: AgentRun[] = [];
   for (let index = 0; index < conversations.length; index += 1) {
-    runs.push(await host.request<AgentRun>("startRun", {
+    runs.push(await renderer.client.invoke<AgentRun>("startRun", {
       conversationId: conversations[index]!.id,
       prompt: index === 0
         ? "[phase3-slow] cancel only this Conversation"
         : `[phase3-parallel] complete Conversation ${index + 1}`,
     }));
   }
-  const concurrent = await host.request<WorkspaceSnapshot>("getWorkspaceSnapshot");
+  const concurrent = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
   assert.equal(concurrent.activeRuns.length, 4, "Four Runs were not concurrently active.");
-  await host.request("cancelRun", runs[0]!.id);
-  await waitForRun(host, runs[0]!.id, "cancelled");
-  await Promise.all(runs.slice(1).map((run) => waitForRun(host, run.id, "completed")));
+  await renderer.client.invoke("cancelRun", runs[0]!.id);
+  await waitForRun(renderer.client, runs[0]!.id, "cancelled");
+  await Promise.all(runs.slice(1).map((run) =>
+    waitForRun(renderer.client, run.id, "completed")
+  ));
 
-  const afterParallel = await host.request<WorkspaceSnapshot>("getWorkspaceSnapshot");
+  const afterParallel = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
   const locators = Object.fromEntries(conversations.map(({ id }) => [
     id,
     requireLocator(afterParallel, id),
   ]));
   assert.equal(new Set(Object.values(locators).map(({ sessionId }) => sessionId)).size, 4);
 
-  const handoff = await host.request<HandoffPrompt>("generateHandoffPrompt", {
+  const handoff = await renderer.client.invoke<HandoffPrompt>("generateHandoffPrompt", {
     workspaceId: workspace.id,
     sourceConversationId: conversations[1]!.id,
     targetConversationId: conversations[0]!.id,
@@ -117,37 +133,43 @@ async function runFirstProcess(
   assert.match(handoff.text, /Phase 3 Agent 2/);
   assert.match(handoff.text, /Parallel Conversation 1/);
   assert.doesNotMatch(handoff.text, /complete Conversation 2/);
+  await renderer.client.invoke("copyHandoffPrompt", handoff.text);
+  assert.equal(
+    renderer.readClipboardText(),
+    handoff.text,
+    "Controlled Handoff clipboard IPC did not preserve the exact text.",
+  );
 
-  const created = await host.request<Dispatch>("createDispatch", {
+  const created = await renderer.client.invoke<Dispatch>("createDispatch", {
     workspaceId: workspace.id,
     sourceConversationId: conversations[1]!.id,
     targetConversationId: conversations[0]!.id,
     prompt: "successful explicit dispatch",
     sourceRunId: runs[1]!.id,
   });
-  const running = await host.request<Dispatch>("executeDispatch", created.id);
+  const running = await renderer.client.invoke<Dispatch>("executeDispatch", created.id);
   assert.equal(running.status, "running");
   assert.ok(running.targetRunId);
-  await waitForRun(host, running.targetRunId, "completed");
+  await waitForRun(renderer.client, running.targetRunId, "completed");
 
-  const busyRun = await host.request<AgentRun>("startRun", {
+  const busyRun = await renderer.client.invoke<AgentRun>("startRun", {
     conversationId: conversations[2]!.id,
     prompt: "[phase3-slow] keep the Dispatch target busy",
   });
-  const blocked = await host.request<Dispatch>("createDispatch", {
+  const blocked = await renderer.client.invoke<Dispatch>("createDispatch", {
     workspaceId: workspace.id,
     sourceConversationId: conversations[3]!.id,
     targetConversationId: conversations[2]!.id,
     prompt: "must fail instead of queueing",
     sourceRunId: runs[3]!.id,
   });
-  const failed = await host.request<Dispatch>("executeDispatch", blocked.id);
+  const failed = await renderer.client.invoke<Dispatch>("executeDispatch", blocked.id);
   assert.equal(failed.status, "failed");
   assert.match(failed.error ?? "", /active Run/);
-  await host.request("cancelRun", busyRun.id);
-  await waitForRun(host, busyRun.id, "cancelled");
+  await renderer.client.invoke("cancelRun", busyRun.id);
+  await waitForRun(renderer.client, busyRun.id, "cancelled");
 
-  const finalSnapshot = await host.request<WorkspaceSnapshot>("getWorkspaceSnapshot");
+  const finalSnapshot = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
   assert.equal(requireDispatch(finalSnapshot, created.id).status, "completed");
   assert.equal(requireDispatch(finalSnapshot, blocked.id).status, "failed");
   await persistState(statePath, {
@@ -156,6 +178,10 @@ async function runFirstProcess(
     phase: 1,
     mainPid: process.pid,
     agentHostPid: hostPid,
+    browserWindowId: renderer.browserWindowId,
+    rendererProcessId: renderer.rendererProcessId,
+    rendererApi: "production-preload-ipc",
+    clipboardVerified: true,
     workspaceId: workspace.id,
     providerId: provider.id,
     agentIds: agents.map(({ id }) => id),
@@ -170,18 +196,18 @@ async function runFirstProcess(
 }
 
 async function runSecondProcess(
-  host: AgentHostClient,
+  renderer: Phase3DesktopRendererEvidence,
   hostPid: number,
   statePath: string,
 ): Promise<void> {
   const previous = parseState(await readFile(statePath, "utf8"));
   assert.equal(previous.phase, 1);
-  const snapshot = await host.request<WorkspaceSnapshot>("getWorkspaceSnapshot");
+  const snapshot = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
   assert.equal(snapshot.conversations.filter(
     ({ workspaceId }) => workspaceId === previous.workspaceId,
   ).length, 4);
   assert.deepEqual(
-    snapshot.layouts.find(({ workspaceId }) => workspaceId === previous.workspaceId),
+    await renderer.client.invoke<WorkspaceLayout>("getWorkspaceLayout", previous.workspaceId),
     previous.layout,
   );
   for (const conversationId of previous.conversationIds) {
@@ -191,17 +217,17 @@ async function runSecondProcess(
   assert.equal(requireDispatch(snapshot, previous.failedDispatchId).status, "failed");
 
   const resumedConversationId = previous.conversationIds[1]!;
-  const run = await host.request<AgentRun>("startRun", {
+  const run = await renderer.client.invoke<AgentRun>("startRun", {
     conversationId: resumedConversationId,
     prompt: "phase3-restart-continuation",
   });
-  await waitForRun(host, run.id, "completed");
-  const finalSnapshot = await host.request<WorkspaceSnapshot>("getWorkspaceSnapshot");
+  await waitForRun(renderer.client, run.id, "completed");
+  const finalSnapshot = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
   assert.deepEqual(
     requireLocator(finalSnapshot, resumedConversationId),
     previous.locators[resumedConversationId],
   );
-  const messages = await host.request<unknown[]>(
+  const messages = await renderer.client.invoke<unknown[]>(
     "listConversationMessages",
     resumedConversationId,
   );
@@ -211,19 +237,21 @@ async function runSecondProcess(
     phase: 2,
     mainPid: process.pid,
     agentHostPid: hostPid,
+    browserWindowId: renderer.browserWindowId,
+    rendererProcessId: renderer.rendererProcessId,
     resumedMessageCount: messages.length,
   });
   console.log("ScopeGuard Phase 3 Desktop Pilot phase 2 complete");
 }
 
 async function waitForRun(
-  host: AgentHostClient,
+  renderer: Phase3RendererClient,
   runId: string,
   expected: AgentRun["status"],
 ): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    const snapshot = await host.request<WorkspaceSnapshot>("getWorkspaceSnapshot");
+    const snapshot = await renderer.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
     const run = [...snapshot.activeRuns, ...snapshot.recentRuns]
       .find(({ id }) => id === runId);
     if (run && ["completed", "failed", "cancelled", "interrupted"].includes(run.status)) {

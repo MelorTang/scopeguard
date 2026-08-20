@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  parseClipboardText,
   parseCreateAgentInput,
   parseCreateDispatchRequest,
   parseHandoffPromptRequest,
@@ -137,4 +138,11 @@ test("rejects extra fields and transcript injection in Phase 3 requests", () => 
     () => parseHandoffPromptRequest({ ...handoff, workRequest: "汉".repeat(5_462) }),
     /16 KiB/i,
   );
+});
+
+test("accepts only bounded exact strings for controlled clipboard writes", () => {
+  assert.equal(parseClipboardText("# Handoff Prompt\n\nReview this."), "# Handoff Prompt\n\nReview this.");
+  assert.throws(() => parseClipboardText({ text: "not an exact string" }), /string/i);
+  assert.throws(() => parseClipboardText(""), /empty/i);
+  assert.throws(() => parseClipboardText("汉".repeat(10_923)), /32 KiB/i);
 });

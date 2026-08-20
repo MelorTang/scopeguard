@@ -385,6 +385,34 @@ export function projectWorkspaceLayout(
   return { ...layout, paneConversationIds };
 }
 
+export function activateConversationInLayout(
+  value: WorkspaceLayout,
+  conversationId: Id,
+): WorkspaceLayout {
+  const layout = parseWorkspaceLayout(value);
+  const id = requiredId(conversationId, "Conversation id");
+  const openConversationIds = layout.openConversationIds.includes(id)
+    ? layout.openConversationIds
+    : [...layout.openConversationIds, id];
+  if (layout.paneConversationIds.includes(id)) {
+    return { ...layout, openConversationIds, activeConversationId: id };
+  }
+
+  const paneConversationIds = [...layout.paneConversationIds];
+  if (paneConversationIds.length < layout.requestedPaneCount) {
+    paneConversationIds.push(id);
+  } else {
+    const activeIndex = paneConversationIds.indexOf(layout.activeConversationId ?? "");
+    paneConversationIds[Math.max(0, activeIndex)] = id;
+  }
+  return parseWorkspaceLayout({
+    ...layout,
+    openConversationIds,
+    paneConversationIds,
+    activeConversationId: id,
+  });
+}
+
 export const MAX_DISPATCH_PROMPT_BYTES = 16 * 1024;
 
 export type DispatchStatus =

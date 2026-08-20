@@ -49,12 +49,14 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       makeAgent("agent-docs", "文档 Agent", "起草清晰的内部文档。"),
       makeAgent("agent-review", "核验 Agent", "核验结论并指出证据缺口。"),
       makeAgent("agent-ops", "执行 Agent", "执行明确任务并反馈结果。"),
+      makeAgent("agent-archive", "归档 Agent", "整理交付资料并归档。"),
     ],
     conversations: [
       makeConversation("conversation-research", "agent-research", "供应商对比"),
       makeConversation("conversation-docs", "agent-docs", "季度简报"),
       makeConversation("conversation-review", "agent-review", "结论核验"),
       makeConversation("conversation-ops", "agent-ops", "交付执行"),
+      makeConversation("conversation-archive", "agent-archive", "数据归档"),
     ],
     activeRuns: [],
     recentRuns: [],
@@ -93,6 +95,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     ]],
     ["conversation-review", []],
     ["conversation-ops", []],
+    ["conversation-archive", []],
   ]);
   const contexts = new Map<string, WorkspaceContextRevision>();
   const listeners = new Set<(event: RunEvent) => void>();
@@ -388,6 +391,9 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
           "请仅依据本 Prompt 和目标 Conversation 已有上下文执行；未附带来源 Conversation 的完整历史。",
         ].join("\n"),
       };
+    },
+    async copyHandoffPrompt(text) {
+      await navigator.clipboard.writeText(text);
     },
     async getWorkspaceContext(workspaceId) {
       return clone(contexts.get(workspaceId) ?? null);

@@ -43,6 +43,10 @@ try {
   assert.equal(first.conversationIds.length, 4);
   assert.equal(new Set(Object.values(first.locators).map((locator) => locator.sessionId)).size, 4);
   assert.equal(first.layout.requestedPaneCount, 4);
+  assert.equal(first.rendererApi, "production-preload-ipc");
+  assert.equal(first.clipboardVerified, true);
+  assert.ok(first.browserWindowId > 0);
+  assert.ok(first.rendererProcessId > 0);
   assert.match(firstOutput, /ScopeGuard Phase 3 Desktop Pilot phase 1 complete/);
 
   const credentialPath = join(userDataRoot, "credentials", "providers.json");
@@ -57,6 +61,9 @@ try {
   assert.match(secondOutput, /ScopeGuard Phase 3 Desktop Pilot phase 2 complete/);
   assert.notEqual(second.mainPid, first.mainPid);
   assert.notEqual(second.agentHostPid, first.agentHostPid);
+  assert.notEqual(second.rendererProcessId, first.rendererProcessId);
+  assert.equal(second.rendererApi, "production-preload-ipc");
+  assert.equal(second.clipboardVerified, true);
   assert.deepEqual(second.locators, first.locators);
   assert.deepEqual(second.layout, first.layout);
 
@@ -68,7 +75,7 @@ try {
   assert.equal(provider.requests.every((request) => request.authorized), true);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
   console.log(JSON.stringify({
-    checks: 24,
+    checks: 31,
     mode: stageRoot ? "staged" : "development",
     electronVersion: "42.0.1",
     piVersion: Object.values(second.locators)[0]?.piVersion,
@@ -76,6 +83,13 @@ try {
     secondMainPid: second.mainPid,
     firstAgentHostPid: first.agentHostPid,
     secondAgentHostPid: second.agentHostPid,
+    firstBrowserWindowId: first.browserWindowId,
+    secondBrowserWindowId: second.browserWindowId,
+    firstRendererProcessId: first.rendererProcessId,
+    secondRendererProcessId: second.rendererProcessId,
+    rendererApi: second.rendererApi,
+    clipboardVerified: second.clipboardVerified,
+    permissionPolicy: "deny-all",
     conversationCount: second.conversationIds.length,
     distinctSessionIds: new Set(Object.values(second.locators).map((locator) => locator.sessionId)).size,
     activePaneConversationId: second.layout.activeConversationId,

@@ -81,9 +81,12 @@ Exit gate:
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on
-  the exact candidate SHA. The Pilot proves four distinct Pi Sessions, targeted
-  cancellation, Handoff, successful and busy-target Dispatch, full Desktop
-  restart, layout/session/Dispatch recovery, disk Vault credential recovery,
+  the exact candidate SHA. Each Desktop process creates a real BrowserWindow
+  and uses the production preload/IPC API under the deny-all permission policy;
+  `createMockDesktopApi` is not part of this gate. The Pilot proves four
+  distinct Pi Sessions, targeted cancellation, controlled Handoff clipboard
+  write, successful and busy-target Dispatch, full Desktop restart,
+  SQLite layout/session/Dispatch recovery, disk Vault credential recovery,
   secret absence, and complete process-tree cleanup.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux

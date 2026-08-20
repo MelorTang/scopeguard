@@ -604,7 +604,7 @@ function HandoffPanel(props: {
       conversation.workspaceId === props.source.workspaceId &&
       conversation.id !== props.source.id,
   ) ?? [];
-  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
+  const [targetId, setTargetId] = useState("");
   const [workRequest, setWorkRequest] = useState("");
   const [generated, setGenerated] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -648,7 +648,7 @@ function HandoffPanel(props: {
     setFeedback(null);
     try {
       const text = generated ?? await generate();
-      await navigator.clipboard.writeText(text);
+      await props.workspace.copyHandoffPrompt(text);
       setFeedback({ text: "已复制 Handoff Prompt", tone: "success" });
     } catch (error) {
       setFeedback({
@@ -706,6 +706,7 @@ function HandoffPanel(props: {
           setGenerated(null);
           setFeedback(null);
         }}>
+          <option value="" disabled>请选择目标 Conversation</option>
           {targets.map((target) => (
             <option value={target.id} key={target.id}>{target.title}</option>
           ))}

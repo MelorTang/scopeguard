@@ -216,6 +216,32 @@ test("persists and restores a strict Workspace layout", async () => {
   }
 });
 
+test("persists and restores five open Conversations with only four visible panes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-five-conversation-layout-"));
+  const path = join(root, "scopeguard.db");
+  try {
+    const store = new ScopeGuardStore(path);
+    const { workspace, conversations } = createWorkspaceFixture(store, 5);
+    const ids = conversations.map(({ id }) => id);
+    const layout = store.saveWorkspaceLayout({
+      workspaceId: workspace.id,
+      openConversationIds: ids,
+      paneConversationIds: [ids[0]!, ids[4]!, ids[2]!, ids[3]!],
+      activeConversationId: ids[4]!,
+      requestedPaneCount: 4,
+    });
+    assert.equal(layout.openConversationIds.length, 5);
+    assert.equal(layout.paneConversationIds.length, 4);
+    store.close();
+
+    const reopened = new ScopeGuardStore(path);
+    assert.deepEqual(reopened.getWorkspaceLayout(workspace.id), layout);
+    reopened.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects duplicate, cross-Workspace, and malformed persisted layouts", async () => {
   const root = await mkdtemp(join(tmpdir(), "scopeguard-layout-rejection-"));
   try {
