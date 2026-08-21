@@ -13,7 +13,11 @@ import {
   canTransitionRun,
   mergeToolPolicy,
   normalizeProviderBaseUrl,
+  parseArtifact,
+  parseArtifactVersion,
   parseDispatchPrompt,
+  parseWorkspaceCenterState,
+  parseWorkspaceFileVersion,
   resizeWorkspacePanePair,
   parseWorkspaceLayout,
   validateProviderProfileInput,
@@ -21,7 +25,82 @@ import {
 
 test("identifies the fresh personal Pi schema family", () => {
   assert.equal(SCOPEGUARD_SCHEMA_ID, "scopeguard-personal-pi-v1");
-  assert.equal(SCOPEGUARD_SCHEMA_VERSION, 1);
+  assert.equal(SCOPEGUARD_SCHEMA_VERSION, 2);
+});
+
+test("keeps Artifact Versions immutable and Workspace File identity explicit", () => {
+  const hash = "a".repeat(64);
+  const source = parseWorkspaceFileVersion({
+    workspaceId: "workspace-1",
+    relativePath: "reports/quarter.docx",
+    contentHash: hash,
+    byteSize: 42,
+  });
+  assert.equal(source.relativePath, "reports/quarter.docx");
+  assert.throws(
+    () => parseWorkspaceFileVersion({ ...source, relativePath: "../quarter.docx" }),
+    /traversal/i,
+  );
+
+  const artifact = parseArtifact({
+    id: "artifact-1",
+    workspaceId: "workspace-1",
+    title: "Quarterly report",
+    format: "docx",
+    sourceRelativePath: source.relativePath,
+    currentVersionId: "version-2",
+    associatedConversationId: "conversation-1",
+    createdAt: "2026-08-21T00:00:00.000Z",
+    updatedAt: "2026-08-21T00:01:00.000Z",
+  });
+  assert.equal(artifact.currentVersionId, "version-2");
+
+  const version = parseArtifactVersion({
+    id: "version-2",
+    artifactId: artifact.id,
+    version: 2,
+    parentVersionId: "version-1",
+    source,
+    contentHash: "b".repeat(64),
+    byteSize: 43,
+    producedByConversationId: "conversation-1",
+    producedByRunId: "run-1",
+    toolchain: "selected Agent workflow",
+    limitations: ["Preview fidelity is not guaranteed."],
+    createdAt: "2026-08-21T00:01:00.000Z",
+  });
+  assert.equal(version.parentVersionId, "version-1");
+  assert.throws(
+    () => parseArtifactVersion({ ...version, limitations: ["same", "same"] }),
+    /duplicates/i,
+  );
+});
+
+test("persists Workbench and Artifact Review as exact separate center states", () => {
+  assert.deepEqual(
+    parseWorkspaceCenterState({ workspaceId: "workspace-1", mode: "workbench" }),
+    { workspaceId: "workspace-1", mode: "workbench" },
+  );
+  assert.equal(
+    parseWorkspaceCenterState({
+      workspaceId: "workspace-1",
+      mode: "artifact-review",
+      artifactId: "artifact-1",
+      versionId: "version-2",
+      comparisonVersionId: "version-1",
+      associatedConversationId: "conversation-1",
+      conversationPanelOpen: true,
+    }).mode,
+    "artifact-review",
+  );
+  assert.throws(
+    () => parseWorkspaceCenterState({
+      workspaceId: "workspace-1",
+      mode: "workbench",
+      artifactId: "artifact-1",
+    }),
+    /exactly/i,
+  );
 });
 
 test("normalizes provider URLs without changing their path", () => {

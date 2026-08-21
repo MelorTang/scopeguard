@@ -14,7 +14,9 @@ test("creates only the personal Pi product metadata schema", () => {
   try {
     assert.deepEqual(store.listSchemaTables(), [
       "agents",
+      "artifact_versions",
       "artifacts",
+      "center_state",
       "conversations",
       "dispatches",
       "layout_state",
@@ -370,6 +372,107 @@ test("rejects malformed persisted Dispatch metadata on reopen", async () => {
     }
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persists immutable Artifact Versions, provenance, current selection, and Review state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-artifact-roundtrip-"));
+  const path = join(root, "scopeguard.db");
+  try {
+    const store = new ScopeGuardStore(path);
+    const fixture = createWorkspaceFixture(store, 1);
+    const artifact = store.createArtifact({
+      workspaceId: fixture.workspace.id,
+      title: "Quarterly report",
+      format: "docx",
+      sourceRelativePath: "reports/quarter.docx",
+      associatedConversationId: fixture.conversations[0]!.id,
+    });
+    const first = store.createArtifactVersion({
+      artifactId: artifact.id,
+      source: {
+        workspaceId: fixture.workspace.id,
+        relativePath: "reports/quarter.docx",
+        contentHash: "a".repeat(64),
+        byteSize: 40,
+      },
+      contentHash: "a".repeat(64),
+      byteSize: 40,
+      producedByConversationId: fixture.conversations[0]!.id,
+      toolchain: "import",
+    }, `aa/${"a".repeat(64)}`);
+    const second = store.createArtifactVersion({
+      artifactId: artifact.id,
+      parentVersionId: first.id,
+      source: {
+        workspaceId: fixture.workspace.id,
+        relativePath: "reports/quarter.docx",
+        contentHash: "a".repeat(64),
+        byteSize: 40,
+      },
+      contentHash: "b".repeat(64),
+      byteSize: 41,
+      producedByConversationId: fixture.conversations[0]!.id,
+      toolchain: "Agent Skill: documents",
+      limitations: ["External viewer required."],
+    }, `bb/${"b".repeat(64)}`);
+    assert.equal(first.version, 1);
+    assert.equal(second.version, 2);
+    assert.equal(store.getArtifact(artifact.id)?.currentVersionId, second.id);
+    assert.equal(store.setArtifactCurrentVersion(artifact.id, first.id).currentVersionId, first.id);
+    const review = store.saveWorkspaceCenterState({
+      workspaceId: fixture.workspace.id,
+      mode: "artifact-review",
+      artifactId: artifact.id,
+      versionId: second.id,
+      comparisonVersionId: first.id,
+      associatedConversationId: fixture.conversations[0]!.id,
+      conversationPanelOpen: true,
+    });
+    assert.equal(review.mode, "artifact-review");
+    store.close();
+
+    const reopened = new ScopeGuardStore(path);
+    assert.equal(reopened.listArtifacts(fixture.workspace.id).length, 1);
+    assert.deepEqual(reopened.listArtifactVersions(artifact.id), [first, second]);
+    assert.deepEqual(reopened.getWorkspaceCenterState(fixture.workspace.id), review);
+    assert.equal(reopened.getArtifactVersionStorageKey(second.id), `bb/${"b".repeat(64)}`);
+    reopened.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects cross-Workspace Artifact provenance and Review selections", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const first = createWorkspaceFixture(store, 1);
+    const second = createWorkspaceFixture(store, 1);
+    assert.throws(() => store.createArtifact({
+      workspaceId: first.workspace.id,
+      title: "Wrong owner",
+      format: "pdf",
+      associatedConversationId: second.conversations[0]!.id,
+    }), /must belong to its Workspace/i);
+    const artifact = store.createArtifact({
+      workspaceId: first.workspace.id,
+      title: "Report",
+      format: "pdf",
+    });
+    assert.throws(() => store.createArtifactVersion({
+      artifactId: artifact.id,
+      source: {
+        workspaceId: second.workspace.id,
+        relativePath: "report.pdf",
+        contentHash: "c".repeat(64),
+        byteSize: 1,
+      },
+      contentHash: "c".repeat(64),
+      byteSize: 1,
+      toolchain: "import",
+    }, `cc/${"c".repeat(64)}`), /source must belong/i);
+  } finally {
+    store.close();
   }
 });
 

@@ -1,5 +1,5 @@
 export const SCOPEGUARD_SCHEMA_ID = "scopeguard-personal-pi-v1";
-export const SCOPEGUARD_SCHEMA_VERSION = 1;
+export const SCOPEGUARD_SCHEMA_VERSION = 2;
 export const SCOPEGUARD_PI_VERSION = "0.84.2";
 export const SCOPEGUARD_PI_SESSION_VERSION = 3;
 
@@ -547,6 +547,253 @@ export type Dispatch = {
   updatedAt: IsoDateTime;
 };
 
+export type ArtifactFormat = string;
+export type Sha256Digest = string;
+
+export type WorkspaceFileVersion = {
+  workspaceId: Id;
+  relativePath: string;
+  contentHash: Sha256Digest;
+  byteSize: number;
+};
+
+export type Artifact = {
+  id: Id;
+  workspaceId: Id;
+  title: string;
+  format: ArtifactFormat;
+  sourceRelativePath: string | null;
+  currentVersionId: Id | null;
+  associatedConversationId: Id | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+
+export type ArtifactVersion = {
+  id: Id;
+  artifactId: Id;
+  version: number;
+  parentVersionId: Id | null;
+  source: WorkspaceFileVersion | null;
+  contentHash: Sha256Digest;
+  byteSize: number;
+  producedByConversationId: Id | null;
+  producedByRunId: Id | null;
+  toolchain: string;
+  limitations: string[];
+  createdAt: IsoDateTime;
+};
+
+export type WorkspaceCenterState =
+  | { workspaceId: Id; mode: "workbench" }
+  | {
+      workspaceId: Id;
+      mode: "artifact-review";
+      artifactId: Id;
+      versionId: Id;
+      comparisonVersionId: Id | null;
+      associatedConversationId: Id | null;
+      conversationPanelOpen: boolean;
+    };
+
+export type CreateArtifactInput = {
+  workspaceId: Id;
+  title: string;
+  format: ArtifactFormat;
+  sourceRelativePath?: string | null;
+  associatedConversationId?: Id | null;
+};
+
+export type CreateArtifactVersionInput = {
+  artifactId: Id;
+  parentVersionId?: Id | null;
+  source?: WorkspaceFileVersion | null;
+  contentHash: Sha256Digest;
+  byteSize: number;
+  producedByConversationId?: Id | null;
+  producedByRunId?: Id | null;
+  toolchain: string;
+  limitations?: string[];
+};
+
+export function parseArtifactFormat(value: unknown): ArtifactFormat {
+  if (
+    typeof value !== "string" ||
+    value !== value.trim() ||
+    !/^[a-z0-9][a-z0-9+.-]{0,31}$/.test(value)
+  ) {
+    throw new Error("Artifact format must be a lowercase portable format identifier.");
+  }
+  return value;
+}
+
+export function parseSha256Digest(value: unknown, field = "SHA-256 digest"): Sha256Digest {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error(`${field} must be a lowercase SHA-256 digest.`);
+  }
+  return value;
+}
+
+export function parseWorkspaceRelativePath(value: unknown): string {
+  if (typeof value !== "string" || value !== value.trim() || !value) {
+    throw new Error("Workspace File path must be a non-empty relative path.");
+  }
+  if (value.length > 4_096 || value.includes("\\") || value.includes("\0") || value.startsWith("/")) {
+    throw new Error("Workspace File path must use a bounded portable relative path.");
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error("Workspace File path must not contain empty or traversal segments.");
+  }
+  return value;
+}
+
+export function parseWorkspaceFileVersion(value: unknown): WorkspaceFileVersion {
+  const record = exactRecord(value, [
+    "byteSize",
+    "contentHash",
+    "relativePath",
+    "workspaceId",
+  ], "Workspace File version");
+  return {
+    workspaceId: requiredId(record.workspaceId, "Workspace File workspaceId"),
+    relativePath: parseWorkspaceRelativePath(record.relativePath),
+    contentHash: parseSha256Digest(record.contentHash, "Workspace File contentHash"),
+    byteSize: nonNegativeSafeInteger(record.byteSize, "Workspace File byteSize"),
+  };
+}
+
+export function parseArtifact(value: unknown): Artifact {
+  const record = exactRecord(value, [
+    "associatedConversationId",
+    "createdAt",
+    "currentVersionId",
+    "format",
+    "id",
+    "sourceRelativePath",
+    "title",
+    "updatedAt",
+    "workspaceId",
+  ], "Artifact");
+  if (typeof record.title !== "string" || !record.title.trim() || record.title !== record.title.trim()) {
+    throw new Error("Artifact title must be non-empty trimmed text.");
+  }
+  assertMaximumLength(record.title, 512, "Artifact title");
+  return {
+    id: requiredId(record.id, "Artifact id"),
+    workspaceId: requiredId(record.workspaceId, "Artifact workspaceId"),
+    title: record.title,
+    format: parseArtifactFormat(record.format),
+    sourceRelativePath: record.sourceRelativePath === null
+      ? null
+      : parseWorkspaceRelativePath(record.sourceRelativePath),
+    currentVersionId: nullableId(record.currentVersionId, "Artifact currentVersionId"),
+    associatedConversationId: nullableId(
+      record.associatedConversationId,
+      "Artifact associatedConversationId",
+    ),
+    createdAt: isoDateTime(record.createdAt, "Artifact createdAt"),
+    updatedAt: isoDateTime(record.updatedAt, "Artifact updatedAt"),
+  };
+}
+
+export function parseArtifactVersion(value: unknown): ArtifactVersion {
+  const record = exactRecord(value, [
+    "artifactId",
+    "byteSize",
+    "contentHash",
+    "createdAt",
+    "id",
+    "limitations",
+    "parentVersionId",
+    "producedByConversationId",
+    "producedByRunId",
+    "source",
+    "toolchain",
+    "version",
+  ], "Artifact Version");
+  if (typeof record.toolchain !== "string" || !record.toolchain.trim() || record.toolchain !== record.toolchain.trim()) {
+    throw new Error("Artifact Version toolchain must be non-empty trimmed text.");
+  }
+  assertMaximumLength(record.toolchain, 512, "Artifact Version toolchain");
+  if (!Array.isArray(record.limitations) || record.limitations.length > 32) {
+    throw new Error("Artifact Version limitations must be a bounded text array.");
+  }
+  const limitations = record.limitations.map((limitation) => {
+    if (typeof limitation !== "string" || !limitation.trim() || limitation !== limitation.trim()) {
+      throw new Error("Artifact Version limitation must be non-empty trimmed text.");
+    }
+    assertMaximumLength(limitation, 1_024, "Artifact Version limitation");
+    return limitation;
+  });
+  if (new Set(limitations).size !== limitations.length) {
+    throw new Error("Artifact Version limitations must not contain duplicates.");
+  }
+  const version = nonNegativeSafeInteger(record.version, "Artifact Version number");
+  if (version < 1) throw new Error("Artifact Version number must be at least 1.");
+  return {
+    id: requiredId(record.id, "Artifact Version id"),
+    artifactId: requiredId(record.artifactId, "Artifact Version artifactId"),
+    version,
+    parentVersionId: nullableId(record.parentVersionId, "Artifact Version parentVersionId"),
+    source: record.source === null ? null : parseWorkspaceFileVersion(record.source),
+    contentHash: parseSha256Digest(record.contentHash, "Artifact Version contentHash"),
+    byteSize: nonNegativeSafeInteger(record.byteSize, "Artifact Version byteSize"),
+    producedByConversationId: nullableId(
+      record.producedByConversationId,
+      "Artifact Version producedByConversationId",
+    ),
+    producedByRunId: nullableId(record.producedByRunId, "Artifact Version producedByRunId"),
+    toolchain: record.toolchain,
+    limitations,
+    createdAt: isoDateTime(record.createdAt, "Artifact Version createdAt"),
+  };
+}
+
+export function parseWorkspaceCenterState(value: unknown): WorkspaceCenterState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Workspace center state must be an object.");
+  }
+  const mode = (value as Record<string, unknown>).mode;
+  if (mode === "workbench") {
+    const record = exactRecord(value, ["mode", "workspaceId"], "Workspace center state");
+    return {
+      workspaceId: requiredId(record.workspaceId, "Workspace center state workspaceId"),
+      mode,
+    };
+  }
+  if (mode !== "artifact-review") {
+    throw new Error("Workspace center state mode is invalid.");
+  }
+  const record = exactRecord(value, [
+    "artifactId",
+    "associatedConversationId",
+    "comparisonVersionId",
+    "conversationPanelOpen",
+    "mode",
+    "versionId",
+    "workspaceId",
+  ], "Workspace center state");
+  if (typeof record.conversationPanelOpen !== "boolean") {
+    throw new Error("Artifact Review conversationPanelOpen must be boolean.");
+  }
+  return {
+    workspaceId: requiredId(record.workspaceId, "Workspace center state workspaceId"),
+    mode,
+    artifactId: requiredId(record.artifactId, "Artifact Review artifactId"),
+    versionId: requiredId(record.versionId, "Artifact Review versionId"),
+    comparisonVersionId: nullableId(
+      record.comparisonVersionId,
+      "Artifact Review comparisonVersionId",
+    ),
+    associatedConversationId: nullableId(
+      record.associatedConversationId,
+      "Artifact Review associatedConversationId",
+    ),
+    conversationPanelOpen: record.conversationPanelOpen,
+  };
+}
+
 export type CreateDispatchInput = {
   workspaceId: Id;
   sourceConversationId: Id;
@@ -692,6 +939,9 @@ export type WorkspaceSnapshot = {
   pendingApprovals: PendingApprovalItem[];
   layouts: WorkspaceLayout[];
   dispatches: Dispatch[];
+  artifacts: Artifact[];
+  artifactVersions: ArtifactVersion[];
+  centerStates: WorkspaceCenterState[];
 };
 
 export type HandoffPromptRequest = {
@@ -852,6 +1102,13 @@ function nullableString(value: unknown, label: string): string | null {
   if (value === null) return null;
   if (typeof value !== "string") throw new Error(`${label} must be text or null.`);
   return value;
+}
+
+function nonNegativeSafeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return value as number;
 }
 
 function isoDateTime(value: unknown, label: string): IsoDateTime {

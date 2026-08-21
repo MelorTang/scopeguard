@@ -9,17 +9,26 @@ import {
   assertDispatchTransition,
   assertRunTransition,
   mergeToolPolicy,
+  parseArtifact,
+  parseArtifactFormat,
+  parseArtifactVersion,
   parseAgentToolPolicy,
   parseConversationExecutionProfile,
   parseDispatch,
   parseDispatchPrompt,
+  parseWorkspaceCenterState,
+  parseWorkspaceRelativePath,
   parseWorkspaceLayout,
+  type Artifact,
+  type ArtifactVersion,
   type Agent,
   type AgentRun,
   type ApprovalDecision,
   type Conversation,
   type ConversationExecutionProfile,
   type CreateAgentInput,
+  type CreateArtifactInput,
+  type CreateArtifactVersionInput,
   type CreateConversationInput,
   type CreateDispatchInput,
   type CreateWorkspaceInput,
@@ -35,6 +44,7 @@ import {
   type ToolCallRecord,
   type UpdateConversationSettingsInput,
   type Workspace,
+  type WorkspaceCenterState,
   type WorkspaceLayout,
   type WorkspaceContextRevision,
   type WorkspaceSnapshot,
@@ -44,7 +54,9 @@ type Row = Record<string, unknown>;
 const TERMINAL: RunStatus[] = ["completed", "failed", "cancelled", "interrupted"];
 const EXPECTED_SCHEMA_COLUMNS = {
   agents: ["id", "workspace_id", "name", "instructions", "provider_profile_id", "model_override", "default_execution_profile", "tool_policy_json", "created_at", "updated_at"],
-  artifacts: ["id", "workspace_id", "metadata_json"],
+  artifact_versions: ["id", "artifact_id", "version", "parent_version_id", "source_json", "content_hash", "byte_size", "storage_key", "produced_by_conversation_id", "produced_by_run_id", "toolchain", "limitations_json", "created_at"],
+  artifacts: ["id", "workspace_id", "title", "format", "source_relative_path", "current_version_id", "associated_conversation_id", "created_at", "updated_at"],
+  center_state: ["workspace_id", "state_json"],
   conversations: ["id", "workspace_id", "agent_id", "title", "status", "model_override", "execution_profile", "pi_session_file", "pi_session_id", "pi_version", "pi_session_version", "created_at", "updated_at"],
   dispatches: ["id", "workspace_id", "metadata_json"],
   layout_state: ["workspace_id", "state_json"],
@@ -98,6 +110,9 @@ export class ScopeGuardStore {
       })),
       layouts: this.listWorkspaceLayouts(),
       dispatches: this.listDispatches(),
+      artifacts: this.listArtifacts(),
+      artifactVersions: this.listArtifactVersions(),
+      centerStates: this.listWorkspaceCenterStates(),
     };
   }
 
@@ -247,6 +262,204 @@ export class ScopeGuardStore {
       locator.sessionFile, locator.sessionId, locator.piVersion, locator.sessionVersion, nowIso(), id,
     );
     return this.requireConversation(id);
+  }
+
+  listArtifacts(workspaceId?: Id): Artifact[] {
+    const rows = workspaceId
+      ? this.#all("SELECT * FROM artifacts WHERE workspace_id = ? ORDER BY updated_at DESC", workspaceId)
+      : this.#all("SELECT * FROM artifacts ORDER BY updated_at DESC");
+    return rows.map(mapArtifact);
+  }
+
+  getArtifact(id: Id): Artifact | null {
+    return mapNullable(this.#get("SELECT * FROM artifacts WHERE id = ?", id), mapArtifact);
+  }
+
+  createArtifact(input: CreateArtifactInput): Artifact {
+    const workspace = this.getWorkspace(input.workspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${input.workspaceId}`);
+    const title = input.title.trim();
+    const now = nowIso();
+    const artifact = parseArtifact({
+      id: randomUUID(),
+      workspaceId: workspace.id,
+      title,
+      format: parseArtifactFormat(input.format),
+      sourceRelativePath: input.sourceRelativePath == null
+        ? null
+        : parseWorkspaceRelativePath(input.sourceRelativePath),
+      currentVersionId: null,
+      associatedConversationId: input.associatedConversationId ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (artifact.associatedConversationId) {
+      const conversation = this.requireConversation(artifact.associatedConversationId);
+      if (conversation.workspaceId !== workspace.id) {
+        throw new Error("Artifact-associated Conversation must belong to its Workspace.");
+      }
+    }
+    this.#run(
+      "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+      artifact.id,
+      artifact.workspaceId,
+      artifact.title,
+      artifact.format,
+      artifact.sourceRelativePath,
+      artifact.associatedConversationId,
+      artifact.createdAt,
+      artifact.updatedAt,
+    );
+    return artifact;
+  }
+
+  listArtifactVersions(artifactId?: Id): ArtifactVersion[] {
+    const rows = artifactId
+      ? this.#all("SELECT * FROM artifact_versions WHERE artifact_id = ? ORDER BY version", artifactId)
+      : this.#all("SELECT * FROM artifact_versions ORDER BY artifact_id, version");
+    return rows.map(mapArtifactVersion);
+  }
+
+  getArtifactVersion(id: Id): ArtifactVersion | null {
+    return mapNullable(
+      this.#get("SELECT * FROM artifact_versions WHERE id = ?", id),
+      mapArtifactVersion,
+    );
+  }
+
+  getArtifactVersionStorageKey(id: Id): string | null {
+    const row = this.#get("SELECT storage_key FROM artifact_versions WHERE id = ?", id);
+    return row ? asString(row.storage_key) : null;
+  }
+
+  createArtifactVersion(
+    input: CreateArtifactVersionInput,
+    storageKey: string,
+  ): ArtifactVersion {
+    const artifact = this.getArtifact(input.artifactId);
+    if (!artifact) throw new Error(`Artifact not found: ${input.artifactId}`);
+    if (!/^[a-f0-9]{2}\/[a-f0-9]{64}$/.test(storageKey)) {
+      throw new Error("Artifact storage key must be content-addressed.");
+    }
+    if (input.parentVersionId) {
+      const parent = this.getArtifactVersion(input.parentVersionId);
+      if (!parent || parent.artifactId !== artifact.id) {
+        throw new Error("Artifact Version parent must belong to the same Artifact.");
+      }
+    }
+    if (input.source?.workspaceId !== undefined && input.source.workspaceId !== artifact.workspaceId) {
+      throw new Error("Artifact Version source must belong to the Artifact Workspace.");
+    }
+    if (input.producedByConversationId) {
+      const conversation = this.requireConversation(input.producedByConversationId);
+      if (conversation.workspaceId !== artifact.workspaceId) {
+        throw new Error("Artifact Version producer must belong to the Artifact Workspace.");
+      }
+    }
+    if (input.producedByRunId) {
+      const run = this.requireRun(input.producedByRunId);
+      const conversation = this.requireConversation(run.conversationId);
+      if (
+        conversation.workspaceId !== artifact.workspaceId ||
+        (input.producedByConversationId && input.producedByConversationId !== conversation.id)
+      ) {
+        throw new Error("Artifact Version Run provenance must match its Workspace and Conversation.");
+      }
+    }
+    const next = this.#get(
+      "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM artifact_versions WHERE artifact_id = ?",
+      artifact.id,
+    );
+    const now = nowIso();
+    const version = parseArtifactVersion({
+      id: randomUUID(),
+      artifactId: artifact.id,
+      version: asNumber(next?.next_version),
+      parentVersionId: input.parentVersionId ?? null,
+      source: input.source ?? null,
+      contentHash: input.contentHash,
+      byteSize: input.byteSize,
+      producedByConversationId: input.producedByConversationId ?? null,
+      producedByRunId: input.producedByRunId ?? null,
+      toolchain: input.toolchain,
+      limitations: input.limitations ?? [],
+      createdAt: now,
+    });
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.#get(
+        "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM artifact_versions WHERE artifact_id = ?",
+        artifact.id,
+      );
+      if (asNumber(current?.next_version) !== version.version) {
+        throw new Error("Artifact Version changed while publication was being prepared.");
+      }
+      this.#run(
+        "INSERT INTO artifact_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        version.id,
+        version.artifactId,
+        version.version,
+        version.parentVersionId,
+        version.source ? JSON.stringify(version.source) : null,
+        version.contentHash,
+        version.byteSize,
+        storageKey,
+        version.producedByConversationId,
+        version.producedByRunId,
+        version.toolchain,
+        JSON.stringify(version.limitations),
+        version.createdAt,
+      );
+      this.#run(
+        "UPDATE artifacts SET current_version_id = ?, updated_at = ? WHERE id = ?",
+        version.id,
+        version.createdAt,
+        artifact.id,
+      );
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+    return version;
+  }
+
+  setArtifactCurrentVersion(artifactId: Id, versionId: Id): Artifact {
+    const artifact = this.getArtifact(artifactId);
+    const version = this.getArtifactVersion(versionId);
+    if (!artifact || !version || version.artifactId !== artifact.id) {
+      throw new Error("Current Artifact Version must belong to the Artifact.");
+    }
+    this.#run(
+      "UPDATE artifacts SET current_version_id = ?, updated_at = ? WHERE id = ?",
+      version.id,
+      nowIso(),
+      artifact.id,
+    );
+    return this.getArtifact(artifact.id)!;
+  }
+
+  getWorkspaceCenterState(workspaceId: Id): WorkspaceCenterState {
+    const row = this.#get("SELECT state_json FROM center_state WHERE workspace_id = ?", workspaceId);
+    return row
+      ? this.#mapWorkspaceCenterState(workspaceId, row.state_json)
+      : { workspaceId, mode: "workbench" };
+  }
+
+  listWorkspaceCenterStates(): WorkspaceCenterState[] {
+    return this.#all("SELECT * FROM center_state ORDER BY workspace_id")
+      .map((row) => this.#mapWorkspaceCenterState(asString(row.workspace_id), row.state_json));
+  }
+
+  saveWorkspaceCenterState(value: WorkspaceCenterState): WorkspaceCenterState {
+    const state = this.#validateWorkspaceCenterState(value);
+    this.#run(
+      `INSERT INTO center_state VALUES (?, ?)
+       ON CONFLICT(workspace_id) DO UPDATE SET state_json=excluded.state_json`,
+      state.workspaceId,
+      JSON.stringify(state),
+    );
+    return state;
   }
 
   getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null {
@@ -616,7 +829,37 @@ export class ScopeGuardStore {
         source_conversation_id TEXT, source_run_id TEXT, published_by TEXT NOT NULL,
         created_at TEXT NOT NULL, UNIQUE(workspace_id, version)
       ) STRICT;
-      CREATE TABLE artifacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), metadata_json TEXT NOT NULL) STRICT;
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        format TEXT NOT NULL,
+        source_relative_path TEXT,
+        current_version_id TEXT,
+        associated_conversation_id TEXT REFERENCES conversations(id),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE artifact_versions (
+        id TEXT PRIMARY KEY,
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        parent_version_id TEXT REFERENCES artifact_versions(id),
+        source_json TEXT,
+        content_hash TEXT NOT NULL,
+        byte_size INTEGER NOT NULL,
+        storage_key TEXT NOT NULL,
+        produced_by_conversation_id TEXT REFERENCES conversations(id),
+        produced_by_run_id TEXT REFERENCES runs(id),
+        toolchain TEXT NOT NULL,
+        limitations_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(artifact_id, version)
+      ) STRICT;
+      CREATE TABLE center_state (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+        state_json TEXT NOT NULL
+      ) STRICT;
       CREATE TABLE dispatches (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), metadata_json TEXT NOT NULL) STRICT;
       CREATE TABLE layout_state (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id), state_json TEXT NOT NULL) STRICT;
       COMMIT;
@@ -665,6 +908,41 @@ export class ScopeGuardStore {
       this.#all("SELECT * FROM conversations").forEach(mapConversation);
       this.#all("SELECT * FROM layout_state").forEach((row) => this.#mapWorkspaceLayout(row));
       this.#all("SELECT * FROM dispatches").forEach((row) => this.#mapDispatch(row));
+      const artifacts = this.#all("SELECT * FROM artifacts").map(mapArtifact);
+      const artifactVersions = this.#all("SELECT * FROM artifact_versions");
+      artifactVersions.forEach((row) => {
+        const version = mapArtifactVersion(row);
+        const artifact = artifacts.find(({ id }) => id === version.artifactId);
+        if (!artifact || !/^[a-f0-9]{2}\/[a-f0-9]{64}$/.test(asString(row.storage_key))) {
+          throw new Error("Artifact Version has invalid ownership or storage identity.");
+        }
+        if (version.source && version.source.workspaceId !== artifact.workspaceId) {
+          throw new Error("Artifact Version source belongs to a different Workspace.");
+        }
+        if (version.parentVersionId) {
+          const parent = this.getArtifactVersion(version.parentVersionId);
+          if (!parent || parent.artifactId !== artifact.id) {
+            throw new Error("Artifact Version parent belongs to a different Artifact.");
+          }
+        }
+      });
+      for (const artifact of artifacts) {
+        if (artifact.associatedConversationId) {
+          const conversation = this.requireConversation(artifact.associatedConversationId);
+          if (conversation.workspaceId !== artifact.workspaceId) {
+            throw new Error("Artifact-associated Conversation belongs to a different Workspace.");
+          }
+        }
+        if (artifact.currentVersionId) {
+          const current = this.getArtifactVersion(artifact.currentVersionId);
+          if (!current || current.artifactId !== artifact.id) {
+            throw new Error("Artifact current Version belongs to a different Artifact.");
+          }
+        }
+      }
+      this.#all("SELECT * FROM center_state").forEach((row) => {
+        this.#mapWorkspaceCenterState(asString(row.workspace_id), row.state_json);
+      });
     } catch {
       throw incompatibleSchema();
     }
@@ -723,6 +1001,48 @@ export class ScopeGuardStore {
     return dispatch;
   }
 
+  #mapWorkspaceCenterState(workspaceId: Id, value: unknown): WorkspaceCenterState {
+    const state = parseWorkspaceCenterState(parseObject(value));
+    if (state.workspaceId !== workspaceId) {
+      throw new Error("Workspace center state does not match its database owner.");
+    }
+    return this.#validateWorkspaceCenterState(state);
+  }
+
+  #validateWorkspaceCenterState(value: WorkspaceCenterState): WorkspaceCenterState {
+    const state = parseWorkspaceCenterState(value);
+    if (!this.getWorkspace(state.workspaceId)) {
+      throw new Error(`Workspace not found: ${state.workspaceId}`);
+    }
+    if (state.mode === "workbench") return state;
+    const artifact = this.getArtifact(state.artifactId);
+    const version = this.getArtifactVersion(state.versionId);
+    if (
+      !artifact ||
+      artifact.workspaceId !== state.workspaceId ||
+      !version ||
+      version.artifactId !== artifact.id
+    ) {
+      throw new Error("Artifact Review selection must belong to its Workspace and Artifact.");
+    }
+    if (state.comparisonVersionId) {
+      const comparison = this.getArtifactVersion(state.comparisonVersionId);
+      if (!comparison || comparison.artifactId !== artifact.id) {
+        throw new Error("Artifact Review comparison Version must belong to its Artifact.");
+      }
+      if (comparison.id === version.id) {
+        throw new Error("Artifact Review comparison Version must differ from the selected Version.");
+      }
+    }
+    if (state.associatedConversationId) {
+      const conversation = this.requireConversation(state.associatedConversationId);
+      if (conversation.workspaceId !== state.workspaceId) {
+        throw new Error("Artifact Review Conversation must belong to its Workspace.");
+      }
+    }
+    return state;
+  }
+
   #secureFiles(): void {
     if (!this.#databasePath || process.platform === "win32") return;
     for (const suffix of ["", "-wal", "-shm"]) {
@@ -779,6 +1099,38 @@ function mapConversation(row: Row): Conversation {
   };
 }
 
+function mapArtifact(row: Row): Artifact {
+  return parseArtifact({
+    id: row.id,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    format: row.format,
+    sourceRelativePath: row.source_relative_path ?? null,
+    currentVersionId: row.current_version_id ?? null,
+    associatedConversationId: row.associated_conversation_id ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+function mapArtifactVersion(row: Row): ArtifactVersion {
+  const limitations = parseJsonValue(row.limitations_json);
+  return parseArtifactVersion({
+    id: row.id,
+    artifactId: row.artifact_id,
+    version: row.version,
+    parentVersionId: row.parent_version_id ?? null,
+    source: row.source_json == null ? null : parseObject(row.source_json),
+    contentHash: row.content_hash,
+    byteSize: row.byte_size,
+    producedByConversationId: row.produced_by_conversation_id ?? null,
+    producedByRunId: row.produced_by_run_id ?? null,
+    toolchain: row.toolchain,
+    limitations,
+    createdAt: row.created_at,
+  });
+}
+
 function mapRun(row: Row): AgentRun {
   return {
     id: asString(row.id), conversationId: asString(row.conversation_id),
@@ -827,6 +1179,10 @@ function parseObject(value: unknown): Record<string, unknown> {
   const parsed = JSON.parse(value) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Expected JSON object in ScopeGuard database.");
   return parsed as Record<string, unknown>;
+}
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") throw new Error("Expected JSON text in ScopeGuard database.");
+  return JSON.parse(value) as unknown;
 }
 function asString(value: unknown): string { if (typeof value !== "string") throw new Error("Expected database string."); return value; }
 function asNullableString(value: unknown): string | null { return value === null || value === undefined ? null : asString(value); }
