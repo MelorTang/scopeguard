@@ -16,6 +16,7 @@ import {
   runPhase3DesktopPilotPhase,
   type Phase3DesktopRendererEvidence,
 } from "./phase3-desktop-pilot.js";
+import type { LateWorkspaceLayoutStageReceipt } from "./phase3-late-layout-observation.js";
 
 type PilotState = {
   schemaVersion: 1;
@@ -33,15 +34,14 @@ type PilotState = {
 export async function runDesktopPilotPhase(
   host: AgentHostClient,
   phase3Renderer?: Phase3DesktopRendererEvidence,
-): Promise<void> {
+): Promise<LateWorkspaceLayoutStageReceipt | null> {
   const phase = parsePhase(process.env.SCOPEGUARD_DESKTOP_PILOT_PHASE);
   const statePath = requiredEnvironment("SCOPEGUARD_DESKTOP_PILOT_STATE");
   if (process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3") {
     if (!phase3Renderer) {
       throw new Error("Phase 3 Desktop Pilot requires a production BrowserWindow Renderer.");
     }
-    await runPhase3DesktopPilotPhase(host, phase3Renderer, phase, statePath);
-    return;
+    return runPhase3DesktopPilotPhase(host, phase3Renderer, phase, statePath);
   }
   const hostPid = host.processId;
   assert.ok(hostPid, "Production AgentHostClient did not expose a running utility process.");
@@ -91,7 +91,7 @@ export async function runDesktopPilotPhase(
       messageCount: messages.length,
     });
     console.log("ScopeGuard Desktop Pilot phase 1 complete");
-    return;
+    return null;
   }
 
   const previous = parseState(await readFile(statePath, "utf8"));
@@ -118,6 +118,7 @@ export async function runDesktopPilotPhase(
     messageCount: messages.length,
   });
   console.log("ScopeGuard Desktop Pilot phase 2 complete");
+  return null;
 }
 
 async function waitForRun(

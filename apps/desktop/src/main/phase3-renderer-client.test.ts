@@ -36,9 +36,13 @@ test("Phase 3 Pilot arms a delayed layout revision through production preload IP
   const client = new Phase3RendererClient({
     async executeJavaScript(source) {
       scripts.push(source);
+      return {
+        armedAtUnixMs: 1_000,
+        dueAtUnixMs: 1_250,
+      };
     },
   });
-  await client.armLateWorkspaceLayoutStage({
+  const receipt = await client.armLateWorkspaceLayoutStage({
     workspaceId: "workspace",
     openConversationIds: ["conversation"],
     paneConversationIds: ["conversation"],
@@ -47,6 +51,10 @@ test("Phase 3 Pilot arms a delayed layout revision through production preload IP
     requestedPaneCount: 1,
   }, 250);
 
+  assert.deepEqual(receipt, {
+    armedAtUnixMs: 1_000,
+    dueAtUnixMs: 1_250,
+  });
   assert.equal(scripts.length, 1);
   assert.match(scripts[0]!, /window\.scopeguardDesktop/);
   assert.match(scripts[0]!, /setTimeout/);

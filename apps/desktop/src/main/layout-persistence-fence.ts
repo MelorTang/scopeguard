@@ -8,10 +8,15 @@ export type LayoutPersistenceFenceOptions = {
   reportError(message: string): void;
 };
 
-export type DestructiveLifecycleCommit = () => void | Promise<void>;
+export type DestructiveLifecycleCommit = () => undefined;
 export type DestructiveLifecycleAction = (
   signal: AbortSignal,
 ) => DestructiveLifecycleCommit | Promise<DestructiveLifecycleCommit>;
+export type TerminalLifecycleCommit = () => void | Promise<void>;
+
+type PreparedLifecycleAction = (
+  signal: AbortSignal,
+) => TerminalLifecycleCommit | Promise<TerminalLifecycleCommit>;
 
 export class LayoutPersistenceFence {
   readonly #options: LayoutPersistenceFenceOptions;
@@ -46,7 +51,7 @@ export class LayoutPersistenceFence {
   runShutdown(
     reason: string,
     prepareTerminalShutdown: (signal: AbortSignal) => void | Promise<void>,
-    commitTerminalShutdown: DestructiveLifecycleCommit,
+    commitTerminalShutdown: TerminalLifecycleCommit,
   ): Promise<void> {
     if (this.#shutdown) {
       return this.#shutdown;
@@ -85,12 +90,13 @@ export class LayoutPersistenceFence {
 
   async #runQuiesced(
     reason: string,
-    action: DestructiveLifecycleAction,
+    action: PreparedLifecycleAction,
     resumeAfter: boolean,
     drainRenderer = false,
   ): Promise<void> {
     let mainSuspended = false;
     let completed = false;
+    let commitStarted = false;
     let operationError: unknown = null;
     try {
       if (drainRenderer) {
@@ -99,13 +105,15 @@ export class LayoutPersistenceFence {
       this.#options.suspend();
       mainSuspended = true;
       await this.#flush(reason);
-      await this.#runAction(reason, action);
+      await this.#runAction(reason, action, () => {
+        commitStarted = true;
+      });
       completed = true;
     } catch (error) {
       operationError = error;
       throw error;
     } finally {
-      if (resumeAfter || !completed) {
+      if (resumeAfter || (!completed && !commitStarted)) {
         await this.#recoverScheduling({
           mainSuspended,
           rendererMustResume: drainRenderer && !completed,
@@ -177,7 +185,8 @@ export class LayoutPersistenceFence {
 
   async #runAction(
     reason: string,
-    action: DestructiveLifecycleAction,
+    action: PreparedLifecycleAction,
+    onCommitStart: () => void,
   ): Promise<void> {
     const controller = new AbortController();
     try {
@@ -196,6 +205,7 @@ export class LayoutPersistenceFence {
       // Preparation is the only phase subject to the outer timeout. Once the
       // permit is returned, the commit owns its own bounded completion and is
       // never raced against a timer that could restore scheduling underneath it.
+      onCommitStart();
       await commit();
     } catch (cause) {
       const error = asError(cause);

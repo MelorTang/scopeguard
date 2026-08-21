@@ -92,7 +92,9 @@ Exit gate:
   a timeout aborts preparation and permanently discards any late commit. App
   quit keeps the Renderer alive throughout every recoverable preparation;
   after preparation returns its terminal commit, it synchronously destroys the
-  Renderer before the independently bounded Agent Host stop. A failed or timed-out Renderer
+  Renderer before the independently bounded Agent Host stop. A Host stop failure
+  propagates and cannot emit `host-stop-complete` or persist successful shutdown
+  evidence. A failed or timed-out Renderer
   drain acknowledgement, Main flush, or recoverable action preparation resumes
   layout acceptance on both sides, blocks the lifecycle action, and reports the
   failing lifecycle context.
@@ -122,7 +124,10 @@ Exit gate:
   shutdown sequence remains
   `renderer-layout-drained -> layout-suspended -> layout-flushed ->
   renderer-destroyed -> host-stop-started -> host-stop-complete`; a separate
-  delayed Renderer revision must never cross IPC after destruction.
+  delayed Renderer revision must never cross IPC after destruction. The Pilot
+  records its arm and due timestamps, proves Renderer destruction precedes the
+  due time, keeps Main alive through a post-destroy observation window extending
+  beyond that deadline, and accepts only zero late IPC attempts.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
   remains optional engineering evidence and is not a product-support gate.

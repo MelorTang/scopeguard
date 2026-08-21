@@ -41,7 +41,7 @@ import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
 import {
   LayoutPersistenceFence,
   type DestructiveLifecycleAction,
-  type DestructiveLifecycleCommit,
+  type TerminalLifecycleCommit,
 } from "./main/layout-persistence-fence.js";
 import { persistPilotLifecycleMetadata } from "./main/pilot-desktop-process.js";
 import {
@@ -52,6 +52,11 @@ import {
 } from "./main/pilot-safe-storage.js";
 import { preparePrivateDataDirectory } from "./main/private-data-directory.js";
 import { Phase3LayoutDrainEvidence } from "./main/phase3-layout-drain-evidence.js";
+import {
+  assertPhase3LateLayoutObservation,
+  type LateWorkspaceLayoutStageReceipt,
+  type Phase3LateLayoutObservation,
+} from "./main/phase3-late-layout-observation.js";
 import { Phase3RendererClient } from "./main/phase3-renderer-client.js";
 import { RendererLayoutLifecycleClient } from "./main/renderer-layout-lifecycle-client.js";
 import {
@@ -63,6 +68,7 @@ import {
   resolveDevelopmentRendererUrl,
 } from "./main/renderer-security.js";
 import { configureDenyAllSessionPermissions } from "./main/session-security.js";
+import { stopAgentHostForTerminalShutdown } from "./main/terminal-agent-host-shutdown.js";
 import { validateWorkspaceFileSelection } from "./main/workspace-file-selection.js";
 import { stageWorkspaceLayoutRequest } from "./main/workspace-layout-stage-handler.js";
 
@@ -91,6 +97,9 @@ let shutdownComplete = false;
 const phase3ShutdownEvents: string[] = [];
 let phase3LateLayoutStageAttempts = 0;
 let phase3RendererDestroyedForShutdown = false;
+let phase3RendererDestroyedAtUnixMs: number | null = null;
+let phase3LateLayoutStageReceipt: LateWorkspaceLayoutStageReceipt | null = null;
+let phase3LateLayoutObservation: Phase3LateLayoutObservation | null = null;
 let phase3QuiescedLayoutStageAttempts = 0;
 let phase3LayoutDrainEvidence: Phase3LayoutDrainEvidence | null = null;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
@@ -152,25 +161,13 @@ process.once("SIGTERM", () => {
 
 async function stopAgentHostAndQuit(): Promise<void> {
   try {
-    await runLayoutShutdown("app quit", async (signal) => {
-      if (isPhase3DesktopPilot()) {
-        await wait(requiredPositiveIntegerEnvironment(
-          "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
-        ), signal);
-      }
-    }, async () => {
+    await runLayoutShutdown("app quit", () => undefined, async () => {
       destroyRendererForShutdown();
-      recordPhase3ShutdownEvent("host-stop-started");
-      try {
-        await host?.stop();
-      } catch (error) {
-        console.error(
-          `[scopeguard] Agent host shutdown failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-      recordPhase3ShutdownEvent("host-stop-complete");
+      await completePhase3LateLayoutObservation();
+      await stopAgentHostForTerminalShutdown({
+        stop: () => host?.stop() ?? Promise.resolve(),
+        recordEvent: recordPhase3ShutdownEvent,
+      });
     });
     await persistPhase3ShutdownEvidence();
   } catch (error) {
@@ -195,7 +192,25 @@ function destroyRendererForShutdown(): void {
     throw new Error("Renderer could not be destroyed before Agent Host shutdown.");
   }
   phase3RendererDestroyedForShutdown = true;
+  phase3RendererDestroyedAtUnixMs = Date.now();
   recordPhase3ShutdownEvent("renderer-destroyed");
+}
+
+async function completePhase3LateLayoutObservation(): Promise<void> {
+  if (!isPhase3DesktopPilot()) return;
+  if (!phase3LateLayoutStageReceipt || !phase3RendererDestroyedAtUnixMs) {
+    throw new Error("Phase 3 late-layout observation was not armed before shutdown.");
+  }
+  await wait(requiredPositiveIntegerEnvironment(
+    "SCOPEGUARD_PHASE3_PILOT_POST_DESTROY_OBSERVATION_MS",
+  ));
+  phase3LateLayoutObservation = {
+    ...phase3LateLayoutStageReceipt,
+    rendererDestroyedAtUnixMs: phase3RendererDestroyedAtUnixMs,
+    observationCompletedAtUnixMs: Date.now(),
+    lateLayoutStageAttempts: phase3LateLayoutStageAttempts,
+  };
+  assertPhase3LateLayoutObservation(phase3LateLayoutObservation);
 }
 
 async function startApplication(): Promise<void> {
@@ -307,7 +322,7 @@ async function startApplication(): Promise<void> {
     const phase3Renderer = process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3"
       ? await createPhase3RendererEvidence()
       : undefined;
-    await runDesktopPilotPhase(host, phase3Renderer);
+    phase3LateLayoutStageReceipt = await runDesktopPilotPhase(host, phase3Renderer);
     app.quit();
     return;
   }
@@ -380,6 +395,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
     void runLayoutTransient("BrowserWindow close", () => () => {
       closeAllowed = true;
       closeBrowserWindow(window);
+      return undefined;
     }).catch((error: unknown) => {
       closeAllowed = false;
       closePending = false;
@@ -420,7 +436,10 @@ async function createPhase3RendererEvidence() {
     readClipboardText: () => clipboard.readText(),
     reloadRenderer: () => runLayoutTransient(
       "Phase 3 terminal drain preparation reload",
-      () => () => reloadBrowserWindow(window),
+      () => () => {
+        reloadBrowserWindow(window);
+        return undefined;
+      },
     ),
     armTerminalLayoutDrainRace: async (
       expectedBefore: WorkspaceLayout,
@@ -692,6 +711,7 @@ async function refreshRendererAfterHostReady(): Promise<void> {
   }
   await runLayoutTransient("Agent Host ready Renderer reload", () => () => {
     if (!window.isDestroyed()) reloadBrowserWindow(window);
+    return undefined;
   });
 }
 
@@ -739,7 +759,7 @@ function runLayoutTransient(
 function runLayoutShutdown(
   reason: string,
   prepareTerminalShutdown: (signal: AbortSignal) => void | Promise<void>,
-  commitTerminalShutdown: DestructiveLifecycleCommit,
+  commitTerminalShutdown: TerminalLifecycleCommit,
 ): Promise<void> {
   if (layoutFence) {
     return layoutFence.runShutdown(
@@ -795,17 +815,18 @@ async function persistPhase3ShutdownEvidence(): Promise<void> {
     "host-stop-complete",
   ];
   const evidence = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     phase: desktopPilotPhase === "1" ? 1 : 2,
     events: phase3ShutdownEvents,
     rendererDestroyedBeforeHostStop:
       phase3ShutdownEvents.indexOf("renderer-destroyed") >= 0 &&
       phase3ShutdownEvents.indexOf("renderer-destroyed") <
         phase3ShutdownEvents.indexOf("host-stop-started"),
-    hostStopDelayMs: requiredPositiveIntegerEnvironment(
-      "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
+    postDestroyObservationMs: requiredPositiveIntegerEnvironment(
+      "SCOPEGUARD_PHASE3_PILOT_POST_DESTROY_OBSERVATION_MS",
     ),
     lateLayoutStageAttempts: phase3LateLayoutStageAttempts,
+    lateLayoutObservation: phase3LateLayoutObservation,
     quiescedLayoutStageAttempts: phase3QuiescedLayoutStageAttempts,
     targetLayoutDrain: phase3LayoutDrainEvidence?.snapshot() ?? null,
     rendererDrainAcknowledgedBeforeMainSuspend:
@@ -826,6 +847,10 @@ async function persistPhase3ShutdownEvidence(): Promise<void> {
   if (phase3LateLayoutStageAttempts !== 0) {
     throw new Error("A late Renderer layout revision crossed the shutdown boundary.");
   }
+  if (!phase3LateLayoutObservation) {
+    throw new Error("Phase 3 late-layout observation evidence is missing.");
+  }
+  assertPhase3LateLayoutObservation(phase3LateLayoutObservation);
 }
 
 async function waitForPhase3TargetLayoutRejection(): Promise<void> {

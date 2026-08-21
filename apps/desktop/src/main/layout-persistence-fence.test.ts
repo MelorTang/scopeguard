@@ -5,7 +5,18 @@ import { WorkbenchLayoutPersistence } from "@scopeguard/application/workbench-la
 import { WorkbenchLayoutStageCoordinator } from "@scopeguard/application/workbench-layout-stage-coordinator";
 import type { WorkspaceLayout } from "@scopeguard/domain";
 
-import { LayoutPersistenceFence } from "./layout-persistence-fence.js";
+import {
+  LayoutPersistenceFence,
+  type DestructiveLifecycleAction,
+  type DestructiveLifecycleCommit,
+} from "./layout-persistence-fence.js";
+
+const expectSynchronousTransientCommit = (
+  _action: DestructiveLifecycleAction,
+): void => undefined;
+
+// @ts-expect-error Transient lifecycle commits must complete synchronously.
+expectSynchronousTransientCommit(() => async () => undefined);
 
 const NOOP_RENDERER_LIFECYCLE = {
   drainRenderer: async () => undefined,
@@ -240,7 +251,7 @@ test("destructive transient action timeout restores Main and Renderer scheduling
     () => withTestTimeout(
       fence.runTransient(
         "BrowserWindow close",
-        () => new Promise<() => void>(() => {
+        () => new Promise<DestructiveLifecycleCommit>(() => {
           events.push("close-started");
         }),
       ),
@@ -279,18 +290,20 @@ test("a destructive commit that becomes ready after timeout can never take effec
 
   await assert.rejects(
     () => fence.runTransient("BrowserWindow close", (signal) =>
-      new Promise<() => void>((resolve) => {
+      new Promise<DestructiveLifecycleCommit>((resolve) => {
         const onAbort = (): void => {
           if (actionTimer) clearTimeout(actionTimer);
           signal.removeEventListener("abort", onAbort);
           abortListenerRemoved = true;
           setTimeout(() => resolve(() => {
             destructiveEffect = true;
+            return undefined;
           }), 20);
         };
         signal.addEventListener("abort", onAbort);
         actionTimer = setTimeout(() => resolve(() => {
           destructiveEffect = true;
+          return undefined;
         }), 40);
       })),
     /Destructive lifecycle action timed out after 20ms/,
@@ -631,7 +644,7 @@ test("shutdown recovery attempts Renderer resume even when Main resume fails", a
   assert.match(diagnostics.at(-1) ?? "", /Layout scheduling recovery failed/);
 });
 
-test("app quit rejects a layout revision staged while Agent Host stop is delayed", async () => {
+test("app quit rejects a layout revision after Renderer destruction while Agent Host stop is delayed", async () => {
   const savedWidths: number[] = [];
   const persistence = new WorkbenchLayoutPersistence({
     delayMs: 80,
@@ -659,15 +672,14 @@ test("app quit rejects a layout revision staged while Agent Host stop is delayed
   });
 
   persistence.schedule(layout(440));
-  const shutdown = fence.runShutdown("app quit", async () => {
+  const shutdown = fence.runShutdown("app quit", () => undefined, async () => {
+    events.push("renderer-destroyed");
     hostStopStarted?.();
     events.push("host-stop-started");
     await new Promise<void>((resolve) => {
       releaseHostStop = resolve;
     });
     events.push("host-stop-complete");
-  }, () => {
-    events.push("renderer-destroyed");
   });
   await stopping;
 
@@ -678,9 +690,44 @@ test("app quit rejects a layout revision staged while Agent Host stop is delayed
   await shutdown;
   assert.deepEqual(events, [
     "suspended",
+    "renderer-destroyed",
     "host-stop-started",
     "host-stop-complete",
+  ]);
+});
+
+test("terminal commit failure stays beyond the point of no return without false recovery", async () => {
+  const events: string[] = [];
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 100,
+    drainRenderer: async () => {
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => {
+      events.push("renderer-resumed");
+    },
+    suspend: () => events.push("main-suspended"),
+    resume: () => events.push("main-resumed"),
+    flushAll: async () => {
+      events.push("sqlite-flushed");
+    },
+    reportError: (message) => events.push(message),
+  });
+
+  await assert.rejects(
+    () => fence.runShutdown("app quit", () => undefined, async () => {
+      events.push("renderer-destroyed");
+      throw new Error("Agent Host stop failed");
+    }),
+    /Agent Host stop failed/,
+  );
+
+  assert.deepEqual(events, [
+    "renderer-drained",
+    "main-suspended",
+    "sqlite-flushed",
     "renderer-destroyed",
+    "app quit blocked because the destructive lifecycle action failed: Agent Host stop failed",
   ]);
 });
 
@@ -905,8 +952,11 @@ function layout(width: number): WorkspaceLayout {
   };
 }
 
-function commitAction(commit: () => void): () => () => void {
-  return () => commit;
+function commitAction(commit: () => void): DestructiveLifecycleAction {
+  return () => () => {
+    commit();
+    return undefined;
+  };
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

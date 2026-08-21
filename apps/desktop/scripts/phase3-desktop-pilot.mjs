@@ -48,7 +48,7 @@ try {
   assert.equal(first.layoutMutationFlushedOnQuit, true);
   assert.equal(first.lateLayoutMutationArmed, true);
   assert.equal(first.terminalLayoutDrainRaceArmed, true);
-  assertShutdownEvidence(firstShutdown, 1);
+  assertShutdownEvidence(firstShutdown, 1, first.lateLayoutStageReceipt);
   assertTargetLayoutDrainEvidence(firstShutdown.targetLayoutDrain, first.layout);
   assert.ok(firstShutdown.quiescedLayoutStageAttempts >= 1);
   assert.equal(first.rendererApi, "production-preload-ipc");
@@ -79,7 +79,7 @@ try {
   assert.equal(second.layoutMutationFlushedOnQuit, true);
   assert.equal(second.lateLayoutMutationArmed, true);
   assert.equal(second.terminalLayoutDrainRaceArmed, true);
-  assertShutdownEvidence(secondShutdown, 2);
+  assertShutdownEvidence(secondShutdown, 2, second.lateLayoutStageReceipt);
   assert.equal(secondShutdown.targetLayoutDrain, null);
 
   const finalRequest = provider.requests.at(-1);
@@ -90,7 +90,7 @@ try {
   assert.equal(provider.requests.every((request) => request.authorized), true);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
   console.log(JSON.stringify({
-    checks: 53,
+    checks: 57,
     mode: stageRoot ? "staged" : "development",
     electronVersion: "42.0.1",
     piVersion: Object.values(second.locators)[0]?.piVersion,
@@ -112,7 +112,8 @@ try {
     layoutMutationFlushedOnQuit: second.layoutMutationFlushedOnQuit,
     rendererDestroyedBeforeHostStop: secondShutdown.rendererDestroyedBeforeHostStop,
     shutdownEvents: secondShutdown.events,
-    hostStopDelayMs: secondShutdown.hostStopDelayMs,
+    postDestroyObservationMs: secondShutdown.postDestroyObservationMs,
+    lateLayoutObservation: secondShutdown.lateLayoutObservation,
     lateLayoutStageAttempts: secondShutdown.lateLayoutStageAttempts,
     rendererDrainAcknowledgedBeforeMainSuspend:
       secondShutdown.rendererDrainAcknowledgedBeforeMainSuspend,
@@ -162,7 +163,7 @@ async function launchDesktop(phase, extraEnvironment = {}) {
       root,
       `phase3-shutdown-${phase}.json`,
     ),
-    SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS: "1200",
+    SCOPEGUARD_PHASE3_PILOT_POST_DESTROY_OBSERVATION_MS: "1200",
     SCOPEGUARD_DESKTOP_PILOT_USER_DATA: userDataRoot,
     SCOPEGUARD_DESKTOP_PILOT_WORKSPACE: workspaceRoot,
     SCOPEGUARD_DESKTOP_PILOT_PROVIDER_URL: provider.baseUrl,
@@ -194,8 +195,8 @@ async function readShutdownEvidence(phase) {
   return JSON.parse(await readFile(join(root, `phase3-shutdown-${phase}.json`), "utf8"));
 }
 
-function assertShutdownEvidence(evidence, phase) {
-  assert.equal(evidence.schemaVersion, 2);
+function assertShutdownEvidence(evidence, phase, armReceipt) {
+  assert.equal(evidence.schemaVersion, 3);
   assert.equal(evidence.phase, phase);
   assert.deepEqual(evidence.events, [
     "renderer-layout-drained",
@@ -206,8 +207,21 @@ function assertShutdownEvidence(evidence, phase) {
     "host-stop-complete",
   ]);
   assert.equal(evidence.rendererDestroyedBeforeHostStop, true);
-  assert.equal(evidence.hostStopDelayMs, 1200);
+  assert.equal(evidence.postDestroyObservationMs, 1200);
   assert.equal(evidence.lateLayoutStageAttempts, 0);
+  assert.deepEqual({
+    armedAtUnixMs: evidence.lateLayoutObservation.armedAtUnixMs,
+    dueAtUnixMs: evidence.lateLayoutObservation.dueAtUnixMs,
+  }, armReceipt);
+  assert.ok(
+    evidence.lateLayoutObservation.rendererDestroyedAtUnixMs
+      < evidence.lateLayoutObservation.dueAtUnixMs,
+  );
+  assert.ok(
+    evidence.lateLayoutObservation.observationCompletedAtUnixMs
+      >= evidence.lateLayoutObservation.dueAtUnixMs,
+  );
+  assert.equal(evidence.lateLayoutObservation.lateLayoutStageAttempts, 0);
   assert.equal(evidence.rendererDrainAcknowledgedBeforeMainSuspend, true);
 }
 

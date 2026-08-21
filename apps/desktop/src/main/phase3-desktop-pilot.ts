@@ -17,6 +17,12 @@ import { resizeWorkspacePanePair } from "@scopeguard/domain";
 
 import type { AgentHostClient } from "./agent-host-client.js";
 import type { Phase3RendererClient } from "./phase3-renderer-client.js";
+import {
+  parseLateWorkspaceLayoutStageReceipt,
+  type LateWorkspaceLayoutStageReceipt,
+} from "./phase3-late-layout-observation.js";
+
+const LATE_LAYOUT_STAGE_DELAY_MS = 1_000;
 
 export type Phase3DesktopRendererEvidence = {
   client: Phase3RendererClient;
@@ -48,6 +54,7 @@ type Phase3PilotState = {
   layout: WorkspaceLayout;
   layoutMutationFlushedOnQuit: true;
   lateLayoutMutationArmed: true;
+  lateLayoutStageReceipt: LateWorkspaceLayoutStageReceipt;
   terminalLayoutDrainRaceArmed: true;
   completedDispatchId: string;
   failedDispatchId: string;
@@ -59,13 +66,13 @@ export async function runPhase3DesktopPilotPhase(
   renderer: Phase3DesktopRendererEvidence,
   phase: 1 | 2,
   statePath: string,
-): Promise<void> {
+): Promise<LateWorkspaceLayoutStageReceipt> {
   const hostPid = host.processId;
   assert.ok(hostPid, "Production AgentHostClient did not expose a running utility process.");
   if (phase === 1) {
-    await runFirstProcess(host, renderer, hostPid, statePath);
+    return runFirstProcess(host, renderer, hostPid, statePath);
   } else {
-    await runSecondProcess(renderer, hostPid, statePath);
+    return runSecondProcess(renderer, hostPid, statePath);
   }
 }
 
@@ -74,7 +81,7 @@ async function runFirstProcess(
   renderer: Phase3DesktopRendererEvidence,
   hostPid: number,
   statePath: string,
-): Promise<void> {
+): Promise<LateWorkspaceLayoutStageReceipt> {
   const workspace = await host.request<Workspace>("createWorkspace", {
     name: "Phase 3 Workbench Pilot",
     localRootPath: requiredEnvironment("SCOPEGUARD_DESKTOP_PILOT_WORKSPACE"),
@@ -196,9 +203,9 @@ async function runFirstProcess(
   );
   await renderer.reloadRenderer();
   const terminalLayout = resizeWorkspacePanePair(noWaitLayout, 0, 24);
-  await renderer.client.armLateWorkspaceLayoutStage(
+  const lateLayoutStageReceipt = await renderer.client.armLateWorkspaceLayoutStage(
     withFirstPaneWidth(noWaitLayout, 640),
-    1_000,
+    LATE_LAYOUT_STAGE_DELAY_MS,
   );
   await persistState(statePath, {
     schemaVersion: 1,
@@ -218,6 +225,7 @@ async function runFirstProcess(
     layout: terminalLayout,
     layoutMutationFlushedOnQuit: true,
     lateLayoutMutationArmed: true,
+    lateLayoutStageReceipt,
     terminalLayoutDrainRaceArmed: true,
     completedDispatchId: created.id,
     failedDispatchId: blocked.id,
@@ -225,13 +233,14 @@ async function runFirstProcess(
   });
   await renderer.armTerminalLayoutDrainRace(noWaitLayout, terminalLayout);
   console.log("ScopeGuard Phase 3 Desktop Pilot phase 1 complete");
+  return lateLayoutStageReceipt;
 }
 
 async function runSecondProcess(
   renderer: Phase3DesktopRendererEvidence,
   hostPid: number,
   statePath: string,
-): Promise<void> {
+): Promise<LateWorkspaceLayoutStageReceipt> {
   const previous = parseState(await readFile(statePath, "utf8"));
   assert.equal(previous.phase, 1);
   const snapshot = await renderer.client.invoke<WorkspaceSnapshot>("getWorkspaceSnapshot");
@@ -264,9 +273,9 @@ async function runSecondProcess(
     resumedConversationId,
   );
   assert.equal(messages.length, 4);
-  await renderer.client.armLateWorkspaceLayoutStage(
+  const lateLayoutStageReceipt = await renderer.client.armLateWorkspaceLayoutStage(
     withFirstPaneWidth(previous.layout, 680),
-    1_000,
+    LATE_LAYOUT_STAGE_DELAY_MS,
   );
   await persistState(statePath, {
     ...previous,
@@ -275,9 +284,11 @@ async function runSecondProcess(
     agentHostPid: hostPid,
     browserWindowId: renderer.browserWindowId,
     rendererProcessId: renderer.rendererProcessId,
+    lateLayoutStageReceipt,
     resumedMessageCount: messages.length,
   });
   console.log("ScopeGuard Phase 3 Desktop Pilot phase 2 complete");
+  return lateLayoutStageReceipt;
 }
 
 async function waitForRun(
@@ -331,6 +342,10 @@ function parseState(value: string): Phase3PilotState {
   ) {
     throw new Error("Phase 3 Desktop Pilot state is incompatible.");
   }
+  state.lateLayoutStageReceipt = parseLateWorkspaceLayoutStageReceipt(
+    state.lateLayoutStageReceipt,
+    LATE_LAYOUT_STAGE_DELAY_MS,
+  );
   return state;
 }
 

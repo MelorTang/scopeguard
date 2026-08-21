@@ -1,5 +1,10 @@
 import type { WorkspaceLayout } from "@scopeguard/domain";
 
+import {
+  parseLateWorkspaceLayoutStageReceipt,
+  type LateWorkspaceLayoutStageReceipt,
+} from "./phase3-late-layout-observation.js";
+
 const PHASE3_RENDERER_METHOD_NAMES = [
   "cancelRun",
   "copyHandoffPrompt",
@@ -49,8 +54,8 @@ export class Phase3RendererClient {
   async armLateWorkspaceLayoutStage(
     layout: WorkspaceLayout,
     delayMs: number,
-  ): Promise<void> {
-    if (!Number.isInteger(delayMs) || delayMs <= 0) {
+  ): Promise<LateWorkspaceLayoutStageReceipt> {
+    if (!Number.isSafeInteger(delayMs) || delayMs <= 0) {
       throw new Error("Late Workspace layout delay must be a positive integer.");
     }
     const invocation = JSON.stringify(JSON.stringify({ layout, delayMs }));
@@ -58,11 +63,19 @@ export class Phase3RendererClient {
       const invocation = JSON.parse(${invocation});
       const api = window.scopeguardDesktop;
       if (!api) throw new Error("Production ScopeGuard preload API is unavailable.");
+      const armedAtUnixMs = Date.now();
       window.setTimeout(() => {
         void api.stageWorkspaceLayout(invocation.layout).catch(() => undefined);
       }, invocation.delayMs);
+      return {
+        armedAtUnixMs,
+        dueAtUnixMs: armedAtUnixMs + invocation.delayMs,
+      };
     })()`;
-    await this.#webContents.executeJavaScript(source);
+    return parseLateWorkspaceLayoutStageReceipt(
+      await this.#webContents.executeJavaScript(source),
+      delayMs,
+    );
   }
 
   async resizeFirstPaneThroughWorkbench(
