@@ -90,8 +90,9 @@ Exit gate:
   Agent Host and SQLite before preparing the destructive action. Reload and
   close use an abortable preparation that can only return a synchronous commit;
   a timeout aborts preparation and permanently discards any late commit. App
-  quit keeps the Renderer alive until the bounded Agent Host stop completes,
-  then synchronously destroys the Renderer. A failed or timed-out Renderer
+  quit keeps the Renderer alive throughout every recoverable preparation;
+  after preparation returns its terminal commit, it synchronously destroys the
+  Renderer before the independently bounded Agent Host stop. A failed or timed-out Renderer
   drain acknowledgement, Main flush, or recoverable action preparation resumes
   layout acceptance on both sides, blocks the lifecycle action, and reports the
   failing lifecycle context.
@@ -114,13 +115,13 @@ Exit gate:
   rejected while Main is quiescing. The real Renderer coordinator must then
   return a drain-generation receipt naming the exact Workspace, revision, and
   layout that its drain started and Main accepted, followed by Main suspension,
-  SQLite flush, bounded Agent Host stop, and synchronous Renderer destruction.
+  SQLite flush, synchronous Renderer destruction, and bounded Agent Host stop.
   A normal retry that
   was already in flight when Main requested a drain is excluded from that
   generation; if it accepts the target first, the Pilot fails. The exact
   shutdown sequence remains
   `renderer-layout-drained -> layout-suspended -> layout-flushed ->
-  host-stop-started -> host-stop-complete -> renderer-destroyed`; a separate
+  renderer-destroyed -> host-stop-started -> host-stop-complete`; a separate
   delayed Renderer revision must never cross IPC after destruction.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux

@@ -110,7 +110,7 @@ try {
     activePaneConversationId: second.layout.activeConversationId,
     paneWidths: second.layout.paneWidths,
     layoutMutationFlushedOnQuit: second.layoutMutationFlushedOnQuit,
-    hostStoppedBeforeRendererDestroy: secondShutdown.hostStoppedBeforeRendererDestroy,
+    rendererDestroyedBeforeHostStop: secondShutdown.rendererDestroyedBeforeHostStop,
     shutdownEvents: secondShutdown.events,
     hostStopDelayMs: secondShutdown.hostStopDelayMs,
     lateLayoutStageAttempts: secondShutdown.lateLayoutStageAttempts,
@@ -201,11 +201,11 @@ function assertShutdownEvidence(evidence, phase) {
     "renderer-layout-drained",
     "layout-suspended",
     "layout-flushed",
+    "renderer-destroyed",
     "host-stop-started",
     "host-stop-complete",
-    "renderer-destroyed",
   ]);
-  assert.equal(evidence.hostStoppedBeforeRendererDestroy, true);
+  assert.equal(evidence.rendererDestroyedBeforeHostStop, true);
   assert.equal(evidence.hostStopDelayMs, 1200);
   assert.equal(evidence.lateLayoutStageAttempts, 0);
   assert.equal(evidence.rendererDrainAcknowledgedBeforeMainSuspend, true);

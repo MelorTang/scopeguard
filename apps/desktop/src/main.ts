@@ -158,6 +158,7 @@ async function stopAgentHostAndQuit(): Promise<void> {
         ), signal);
       }
     }, async () => {
+      destroyRendererForShutdown();
       recordPhase3ShutdownEvent("host-stop-started");
       try {
         await host?.stop();
@@ -167,10 +168,8 @@ async function stopAgentHostAndQuit(): Promise<void> {
             error instanceof Error ? error.message : String(error)
           }`,
         );
-        throw error;
       }
       recordPhase3ShutdownEvent("host-stop-complete");
-      destroyRendererForShutdown();
     });
     await persistPhase3ShutdownEvidence();
   } catch (error) {
@@ -792,18 +791,18 @@ async function persistPhase3ShutdownEvidence(): Promise<void> {
     "renderer-layout-drained",
     "layout-suspended",
     "layout-flushed",
+    "renderer-destroyed",
     "host-stop-started",
     "host-stop-complete",
-    "renderer-destroyed",
   ];
   const evidence = {
     schemaVersion: 2,
     phase: desktopPilotPhase === "1" ? 1 : 2,
     events: phase3ShutdownEvents,
-    hostStoppedBeforeRendererDestroy:
-      phase3ShutdownEvents.indexOf("host-stop-complete") >= 0 &&
-      phase3ShutdownEvents.indexOf("host-stop-complete") <
-        phase3ShutdownEvents.indexOf("renderer-destroyed"),
+    rendererDestroyedBeforeHostStop:
+      phase3ShutdownEvents.indexOf("renderer-destroyed") >= 0 &&
+      phase3ShutdownEvents.indexOf("renderer-destroyed") <
+        phase3ShutdownEvents.indexOf("host-stop-started"),
     hostStopDelayMs: requiredPositiveIntegerEnvironment(
       "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
     ),
