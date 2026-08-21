@@ -85,6 +85,11 @@ export type RendererLayoutLifecycleResponse =
   | (RendererLayoutLifecycleRequest & { action: "resume"; ok: true })
   | (RendererLayoutLifecycleRequest & { ok: false; error: string });
 
+const MAX_RENDERER_LAYOUT_RECEIPT_BYTES = 64 * 1024;
+const MAX_RENDERER_LAYOUT_ID_BYTES = 128;
+const MAX_RENDERER_LAYOUT_RECEIPT_REVISIONS = 64;
+const MAX_RENDERER_LAYOUT_OPEN_CONVERSATIONS = 256;
+
 export type AgentHostMethod =
   | "getWorkspaceSnapshot"
   | "createWorkspace"
@@ -421,6 +426,12 @@ function parseRendererLayoutDrainReceipt(
   value: unknown,
   requestId: string,
 ): RendererLayoutDrainReceipt {
+  if (utf8JsonBytes(value, "Renderer layout lifecycle response drainReceipt") >
+    MAX_RENDERER_LAYOUT_RECEIPT_BYTES) {
+    throw new Error(
+      "Renderer layout lifecycle response drainReceipt exceeds 64 KiB of UTF-8 JSON.",
+    );
+  }
   const record = requireExactRecord(
     value,
     "Renderer layout lifecycle response drainReceipt",
@@ -440,7 +451,7 @@ function parseRendererLayoutDrainReceipt(
       "Renderer layout lifecycle response drainReceipt acceptedRevisions must be an array.",
     );
   }
-  if (record.acceptedRevisions.length > 128) {
+  if (record.acceptedRevisions.length > MAX_RENDERER_LAYOUT_RECEIPT_REVISIONS) {
     throw new Error(
       "Renderer layout lifecycle response drainReceipt has too many accepted revisions.",
     );
@@ -456,12 +467,17 @@ function parseRendererLayoutDrainReceipt(
       revision.workspaceId,
       `Renderer layout lifecycle response drainReceipt revision ${index} workspaceId`,
     );
-    if (!Number.isInteger(revision.revision) || Number(revision.revision) <= 0) {
+    requireBoundedRendererLayoutId(
+      workspaceId,
+      `Renderer layout lifecycle response drainReceipt revision ${index} workspaceId`,
+    );
+    if (!Number.isSafeInteger(revision.revision) || Number(revision.revision) <= 0) {
       throw new Error(
-        `Renderer layout lifecycle response drainReceipt revision ${index} must be positive.`,
+        `Renderer layout lifecycle response drainReceipt revision ${index} must be a positive safe integer.`,
       );
     }
     const layout = parseWorkspaceLayoutRequest(revision.layout);
+    validateRendererReceiptLayout(layout, index);
     if (layout.workspaceId !== workspaceId) {
       throw new Error(
         `Renderer layout lifecycle response drainReceipt revision ${index} Workspace mismatch.`,
@@ -481,6 +497,55 @@ function parseRendererLayoutDrainReceipt(
     };
   });
   return { generation, acceptedRevisions };
+}
+
+function validateRendererReceiptLayout(layout: WorkspaceLayout, index: number): void {
+  requireBoundedRendererLayoutId(
+    layout.workspaceId,
+    `Renderer layout lifecycle response drainReceipt revision ${index} layout workspaceId`,
+  );
+  if (layout.openConversationIds.length > MAX_RENDERER_LAYOUT_OPEN_CONVERSATIONS) {
+    throw new Error(
+      `Renderer layout lifecycle response drainReceipt revision ${index} has too many open Conversations.`,
+    );
+  }
+  for (const [conversationIndex, id] of layout.openConversationIds.entries()) {
+    requireBoundedRendererLayoutId(
+      id,
+      `Renderer layout lifecycle response drainReceipt revision ${index} open Conversation ${conversationIndex}`,
+    );
+  }
+  for (const [paneIndex, id] of layout.paneConversationIds.entries()) {
+    requireBoundedRendererLayoutId(
+      id,
+      `Renderer layout lifecycle response drainReceipt revision ${index} pane Conversation ${paneIndex}`,
+    );
+  }
+  if (layout.activeConversationId) {
+    requireBoundedRendererLayoutId(
+      layout.activeConversationId,
+      `Renderer layout lifecycle response drainReceipt revision ${index} active Conversation`,
+    );
+  }
+}
+
+function requireBoundedRendererLayoutId(value: string, field: string): void {
+  if (new TextEncoder().encode(value).byteLength > MAX_RENDERER_LAYOUT_ID_BYTES) {
+    throw new Error(`${field} exceeds 128 bytes of UTF-8 text.`);
+  }
+}
+
+function utf8JsonBytes(value: unknown, field: string): number {
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch (error) {
+    throw new Error(`${field} must be serializable JSON.`, { cause: error });
+  }
+  if (json === undefined) {
+    throw new Error(`${field} must be serializable JSON.`);
+  }
+  return new TextEncoder().encode(json).byteLength;
 }
 
 export function parseCreateDispatchRequest(value: unknown): CreateDispatchInput {

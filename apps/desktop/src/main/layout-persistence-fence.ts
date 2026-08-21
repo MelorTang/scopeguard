@@ -8,6 +8,11 @@ export type LayoutPersistenceFenceOptions = {
   reportError(message: string): void;
 };
 
+export type DestructiveLifecycleCommit = () => void | Promise<void>;
+export type DestructiveLifecycleAction = (
+  signal: AbortSignal,
+) => DestructiveLifecycleCommit | Promise<DestructiveLifecycleCommit>;
+
 export class LayoutPersistenceFence {
   readonly #options: LayoutPersistenceFenceOptions;
   #inFlight: Promise<void> = Promise.resolve();
@@ -31,7 +36,7 @@ export class LayoutPersistenceFence {
     });
   }
 
-  runTransient(reason: string, action: () => void | Promise<void>): Promise<void> {
+  runTransient(reason: string, action: DestructiveLifecycleAction): Promise<void> {
     if (this.#shutdown) {
       return Promise.reject(new Error("Layout persistence shutdown is already in progress."));
     }
@@ -40,8 +45,8 @@ export class LayoutPersistenceFence {
 
   runShutdown(
     reason: string,
-    destroyRenderer: () => void | Promise<void>,
-    stopAgentHost: () => void | Promise<void>,
+    prepareTerminalShutdown: (signal: AbortSignal) => void | Promise<void>,
+    commitTerminalShutdown: DestructiveLifecycleCommit,
   ): Promise<void> {
     if (this.#shutdown) {
       return this.#shutdown;
@@ -49,10 +54,15 @@ export class LayoutPersistenceFence {
     if (this.#shutdownComplete) {
       return Promise.resolve();
     }
-    const operation = this.#enqueue(() => this.#runQuiesced(reason, async () => {
-      await destroyRenderer();
-      await stopAgentHost();
-    }, false, true));
+    const operation = this.#enqueue(() => this.#runQuiesced(
+      reason,
+      async (signal) => {
+        await prepareTerminalShutdown(signal);
+        return commitTerminalShutdown;
+      },
+      false,
+      true,
+    ));
     this.#shutdown = operation;
     void operation.then(
       () => {
@@ -75,7 +85,7 @@ export class LayoutPersistenceFence {
 
   async #runQuiesced(
     reason: string,
-    action: () => void | Promise<void>,
+    action: DestructiveLifecycleAction,
     resumeAfter: boolean,
     drainRenderer = false,
   ): Promise<void> {
@@ -167,19 +177,33 @@ export class LayoutPersistenceFence {
 
   async #runAction(
     reason: string,
-    action: () => void | Promise<void>,
+    action: DestructiveLifecycleAction,
   ): Promise<void> {
+    const controller = new AbortController();
     try {
-      await withTimeout(
-        Promise.resolve().then(action),
+      const commit = await withTimeout(
+        Promise.resolve().then(() => action(controller.signal)),
         this.#options.timeoutMs,
         `Destructive lifecycle action timed out after ${this.#options.timeoutMs}ms.`,
+        () => controller.abort(),
       );
+      if (controller.signal.aborted) {
+        throw new Error("Destructive lifecycle action was cancelled before commit.");
+      }
+      if (typeof commit !== "function") {
+        throw new Error("Destructive lifecycle action did not return a commit function.");
+      }
+      // Preparation is the only phase subject to the outer timeout. Once the
+      // permit is returned, the commit owns its own bounded completion and is
+      // never raced against a timer that could restore scheduling underneath it.
+      await commit();
     } catch (cause) {
       const error = asError(cause);
       const message = `${reason} blocked because the destructive lifecycle action failed: ${error.message}`;
       this.#options.reportError(message);
       throw new Error(message, { cause: error });
+    } finally {
+      controller.abort();
     }
   }
 }
@@ -188,13 +212,17 @@ async function withTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
   message: string,
+  onTimeout?: () => void,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
     return await Promise.race([
       operation,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+        timer = setTimeout(() => {
+          reject(new Error(message));
+          onTimeout?.();
+        }, timeoutMs);
       }),
     ]);
   } finally {

@@ -80,6 +80,7 @@ test("accepts only exact Renderer layout lifecycle requests and responses", () =
 
   for (const invalid of [
     undefined,
+    { requestId: "汉".repeat(43), action: "drain" },
     { requestId: "request-1", action: "quit" },
     { requestId: "request-1", action: "drain", extra: true },
   ]) {
@@ -115,6 +116,96 @@ test("accepts only exact Renderer layout lifecycle requests and responses", () =
     assert.throws(() => parseRendererLayoutLifecycleResponse(invalid), /lifecycle response/i);
   }
 });
+
+test("bounds Renderer drain receipt revisions, identifiers, arrays, and total UTF-8 payload", () => {
+  const invalidReceipts: Array<[unknown, RegExp]> = [
+    [drainResponse({
+      acceptedRevisions: [{
+        workspaceId: "workspace",
+        revision: Number.MAX_SAFE_INTEGER + 1,
+        layout: layout(560),
+      }],
+    }), /positive safe integer/i],
+    [drainResponse({
+      acceptedRevisions: [{
+        workspaceId: "汉".repeat(43),
+        revision: 1,
+        layout: { ...layout(560), workspaceId: "汉".repeat(43) },
+      }],
+    }), /workspaceId exceeds 128 bytes/i],
+    [drainResponse({
+      acceptedRevisions: [{
+        workspaceId: "workspace",
+        revision: 1,
+        layout: {
+          ...layout(560),
+          openConversationIds: ["汉".repeat(43)],
+          paneConversationIds: ["汉".repeat(43)],
+          activeConversationId: "汉".repeat(43),
+        },
+      }],
+    }), /Conversation 0 exceeds 128 bytes/i],
+    [drainResponse({
+      acceptedRevisions: [{
+        workspaceId: "workspace",
+        revision: 1,
+        layout: {
+          ...layout(560),
+          openConversationIds: [
+            "conversation",
+            ...Array.from({ length: 256 }, (_, index) => `c-${index}`),
+          ],
+        },
+      }],
+    }), /too many open Conversations/i],
+    [drainResponse({
+      acceptedRevisions: Array.from({ length: 65 }, (_, index) => ({
+        workspaceId: `workspace-${index}`,
+        revision: 1,
+        layout: { ...layout(560), workspaceId: `workspace-${index}` },
+      })),
+    }), /too many accepted revisions/i],
+    [drainResponse({
+      acceptedRevisions: [0, 1].map((revisionIndex) => {
+        const workspaceId = `workspace-${revisionIndex}-${"w".repeat(100)}`;
+        const conversationIds = Array.from(
+          { length: 256 },
+          (_, index) => `conversation-${revisionIndex}-${index}-${"c".repeat(108)}`,
+        );
+        return {
+          workspaceId,
+          revision: 1,
+          layout: {
+            ...layout(560),
+            workspaceId,
+            openConversationIds: conversationIds,
+            paneConversationIds: [conversationIds[0]],
+            activeConversationId: conversationIds[0],
+          },
+        };
+      }),
+    }), /exceeds 64 KiB/i],
+  ];
+
+  for (const [invalid, expected] of invalidReceipts) {
+    assert.throws(() => parseRendererLayoutLifecycleResponse(invalid), expected);
+  }
+});
+
+function drainResponse(drainReceipt: {
+  generation?: string;
+  acceptedRevisions: unknown[];
+}) {
+  return {
+    requestId: "request-1",
+    action: "drain",
+    ok: true,
+    drainReceipt: {
+      generation: "request-1",
+      ...drainReceipt,
+    },
+  };
+}
 
 function layout(width: number) {
   return {

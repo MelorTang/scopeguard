@@ -38,7 +38,11 @@ import { AgentHostClient } from "./main/agent-host-client.js";
 import { writeControlledClipboard } from "./main/controlled-clipboard.js";
 import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
-import { LayoutPersistenceFence } from "./main/layout-persistence-fence.js";
+import {
+  LayoutPersistenceFence,
+  type DestructiveLifecycleAction,
+  type DestructiveLifecycleCommit,
+} from "./main/layout-persistence-fence.js";
 import { persistPilotLifecycleMetadata } from "./main/pilot-desktop-process.js";
 import {
   assertDesktopPilotCredentialStoreIsolation,
@@ -147,13 +151,14 @@ process.once("SIGTERM", () => {
 
 async function stopAgentHostAndQuit(): Promise<void> {
   try {
-    await runLayoutShutdown("app quit", destroyRendererForShutdown, async () => {
-      recordPhase3ShutdownEvent("host-stop-started");
+    await runLayoutShutdown("app quit", async (signal) => {
       if (isPhase3DesktopPilot()) {
         await wait(requiredPositiveIntegerEnvironment(
           "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
-        ));
+        ), signal);
       }
+    }, async () => {
+      recordPhase3ShutdownEvent("host-stop-started");
       try {
         await host?.stop();
       } catch (error) {
@@ -162,11 +167,12 @@ async function stopAgentHostAndQuit(): Promise<void> {
             error instanceof Error ? error.message : String(error)
           }`,
         );
-        if (isPhase3DesktopPilot()) throw error;
+        throw error;
       }
       recordPhase3ShutdownEvent("host-stop-complete");
-      await persistPhase3ShutdownEvidence();
+      destroyRendererForShutdown();
     });
+    await persistPhase3ShutdownEvidence();
   } catch (error) {
     shutdownStarted = false;
     console.error(error);
@@ -255,7 +261,7 @@ async function startApplication(): Promise<void> {
     },
   });
   layoutFence = new LayoutPersistenceFence({
-    timeoutMs: 5_000,
+    timeoutMs: 10_000,
     drainRenderer: async () => {
       const receipt = await drainRendererLayouts();
       if (shutdownStarted && receipt) {
@@ -372,9 +378,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
       return;
     }
     closePending = true;
-    void runLayoutTransient("BrowserWindow close", async () => {
+    void runLayoutTransient("BrowserWindow close", () => () => {
       closeAllowed = true;
-      await closeBrowserWindow(window);
+      closeBrowserWindow(window);
     }).catch((error: unknown) => {
       closeAllowed = false;
       closePending = false;
@@ -415,7 +421,7 @@ async function createPhase3RendererEvidence() {
     readClipboardText: () => clipboard.readText(),
     reloadRenderer: () => runLayoutTransient(
       "Phase 3 terminal drain preparation reload",
-      () => reloadBrowserWindow(window),
+      () => () => reloadBrowserWindow(window),
     ),
     armTerminalLayoutDrainRace: async (
       expectedBefore: WorkspaceLayout,
@@ -686,10 +692,8 @@ async function refreshRendererAfterHostReady(): Promise<void> {
   if (shutdownStarted) {
     return;
   }
-  await runLayoutTransient("Agent Host ready Renderer reload", async () => {
-    if (!window.isDestroyed()) {
-      await reloadBrowserWindow(window);
-    }
+  await runLayoutTransient("Agent Host ready Renderer reload", () => () => {
+    if (!window.isDestroyed()) reloadBrowserWindow(window);
   });
 }
 
@@ -725,64 +729,43 @@ function runLayoutFence(
 
 function runLayoutTransient(
   reason: string,
-  action: () => void | Promise<void>,
+  action: DestructiveLifecycleAction,
 ): Promise<void> {
-  return layoutFence
-    ? layoutFence.runTransient(reason, action)
-    : Promise.resolve().then(action);
+  if (layoutFence) return layoutFence.runTransient(reason, action);
+  const controller = new AbortController();
+  return Promise.resolve(action(controller.signal))
+    .then((commit) => commit())
+    .finally(() => controller.abort());
 }
 
 function runLayoutShutdown(
   reason: string,
-  destroyRenderer: () => void | Promise<void>,
-  stopAgentHost: () => void | Promise<void>,
+  prepareTerminalShutdown: (signal: AbortSignal) => void | Promise<void>,
+  commitTerminalShutdown: DestructiveLifecycleCommit,
 ): Promise<void> {
-  return layoutFence
-    ? layoutFence.runShutdown(reason, destroyRenderer, stopAgentHost)
-    : Promise.resolve().then(destroyRenderer).then(stopAgentHost);
+  if (layoutFence) {
+    return layoutFence.runShutdown(
+      reason,
+      prepareTerminalShutdown,
+      commitTerminalShutdown,
+    );
+  }
+  const controller = new AbortController();
+  return Promise.resolve(prepareTerminalShutdown(controller.signal))
+    .then(commitTerminalShutdown)
+    .finally(() => controller.abort());
 }
 
-function closeBrowserWindow(window: BrowserWindow): Promise<void> {
-  if (window.isDestroyed()) {
-    return Promise.resolve();
+function closeBrowserWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  window.destroy();
+  if (!window.isDestroyed()) {
+    throw new Error("BrowserWindow close did not synchronously destroy the Renderer.");
   }
-  return new Promise<void>((resolveClose, rejectClose) => {
-    const onClosed = (): void => resolveClose();
-    window.once("closed", onClosed);
-    try {
-      window.close();
-    } catch (error) {
-      window.removeListener("closed", onClosed);
-      rejectClose(error);
-    }
-  });
 }
 
-function reloadBrowserWindow(window: BrowserWindow): Promise<void> {
-  if (window.isDestroyed()) {
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolveReload, rejectReload) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      rejectReload(new Error("Renderer reload timed out after 15 seconds."));
-    }, 15_000);
-    const onFinished = (): void => {
-      cleanup();
-      resolveReload();
-    };
-    const cleanup = (): void => {
-      clearTimeout(timeout);
-      window.webContents.removeListener("did-finish-load", onFinished);
-    };
-    window.webContents.once("did-finish-load", onFinished);
-    try {
-      window.webContents.reload();
-    } catch (error) {
-      cleanup();
-      rejectReload(error);
-    }
-  });
+function reloadBrowserWindow(window: BrowserWindow): void {
+  if (!window.isDestroyed()) window.webContents.reload();
 }
 
 function reportLayoutPersistenceError(message: string): void {
@@ -809,18 +792,18 @@ async function persistPhase3ShutdownEvidence(): Promise<void> {
     "renderer-layout-drained",
     "layout-suspended",
     "layout-flushed",
-    "renderer-destroyed",
     "host-stop-started",
     "host-stop-complete",
+    "renderer-destroyed",
   ];
   const evidence = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     phase: desktopPilotPhase === "1" ? 1 : 2,
     events: phase3ShutdownEvents,
-    rendererDestroyedBeforeHostStop:
-      phase3ShutdownEvents.indexOf("renderer-destroyed") >= 0 &&
-      phase3ShutdownEvents.indexOf("renderer-destroyed") <
-        phase3ShutdownEvents.indexOf("host-stop-started"),
+    hostStoppedBeforeRendererDestroy:
+      phase3ShutdownEvents.indexOf("host-stop-complete") >= 0 &&
+      phase3ShutdownEvents.indexOf("host-stop-complete") <
+        phase3ShutdownEvents.indexOf("renderer-destroyed"),
     hostStopDelayMs: requiredPositiveIntegerEnvironment(
       "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
     ),
@@ -865,6 +848,20 @@ function requiredPositiveIntegerEnvironment(name: string): number {
   return value;
 }
 
-function wait(delayMs: number): Promise<void> {
-  return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
+function wait(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new Error("Lifecycle wait was cancelled."));
+  }
+  return new Promise((resolveWait, rejectWait) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      rejectWait(new Error("Lifecycle wait was cancelled."));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolveWait();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
