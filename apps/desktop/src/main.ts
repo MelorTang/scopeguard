@@ -90,6 +90,7 @@ let shutdownStarted = false;
 let shutdownComplete = false;
 const phase3ShutdownEvents: string[] = [];
 let phase3LateLayoutStageAttempts = 0;
+let phase3RendererDestroyedForShutdown = false;
 let phase3QuiescedLayoutStageAttempts = 0;
 let phase3LayoutDrainEvidence: Phase3LayoutDrainEvidence | null = null;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
@@ -188,13 +189,12 @@ async function stopAgentHostAndQuit(): Promise<void> {
 
 function destroyRendererForShutdown(): void {
   const window = mainWindow;
-  if (!window || window.isDestroyed()) {
-    return;
-  }
-  window.destroy();
+  if (!window) return;
+  if (!window.isDestroyed()) window.destroy();
   if (!window.isDestroyed()) {
     throw new Error("Renderer could not be destroyed before Agent Host shutdown.");
   }
+  phase3RendererDestroyedForShutdown = true;
   recordPhase3ShutdownEvent("renderer-destroyed");
 }
 
@@ -581,8 +581,7 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
     }
     if (
       isPhase3DesktopPilot() &&
-      shutdownStarted &&
-      !result.accepted
+      phase3RendererDestroyedForShutdown
     ) {
       phase3LateLayoutStageAttempts += 1;
     }
