@@ -49,6 +49,7 @@ try {
   assert.equal(first.lateLayoutMutationArmed, true);
   assert.equal(first.terminalLayoutDrainRaceArmed, true);
   assertShutdownEvidence(firstShutdown, 1);
+  assertTargetLayoutDrainEvidence(firstShutdown.targetLayoutDrain);
   assert.ok(firstShutdown.quiescedLayoutStageAttempts >= 1);
   assert.equal(first.rendererApi, "production-preload-ipc");
   assert.equal(first.clipboardVerified, true);
@@ -79,6 +80,7 @@ try {
   assert.equal(second.lateLayoutMutationArmed, true);
   assert.equal(second.terminalLayoutDrainRaceArmed, true);
   assertShutdownEvidence(secondShutdown, 2);
+  assert.equal(secondShutdown.targetLayoutDrain, null);
 
   const finalRequest = provider.requests.at(-1);
   assert.deepEqual(finalRequest?.userTexts, [
@@ -88,7 +90,7 @@ try {
   assert.equal(provider.requests.every((request) => request.authorized), true);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
   console.log(JSON.stringify({
-    checks: 47,
+    checks: 53,
     mode: stageRoot ? "staged" : "development",
     electronVersion: "42.0.1",
     piVersion: Object.values(second.locators)[0]?.piVersion,
@@ -116,6 +118,7 @@ try {
       secondShutdown.rendererDrainAcknowledgedBeforeMainSuspend,
     firstProcessQuiescedLayoutStageAttempts:
       firstShutdown.quiescedLayoutStageAttempts,
+    targetLayoutDrain: firstShutdown.targetLayoutDrain,
     completedDispatchId: second.completedDispatchId,
     failedDispatchId: second.failedDispatchId,
     providerObservedHistory: finalRequest.userTexts,
@@ -206,6 +209,21 @@ function assertShutdownEvidence(evidence, phase) {
   assert.equal(evidence.hostStopDelayMs, 1200);
   assert.equal(evidence.lateLayoutStageAttempts, 0);
   assert.equal(evidence.rendererDrainAcknowledgedBeforeMainSuspend, true);
+}
+
+function assertTargetLayoutDrainEvidence(evidence) {
+  assert.ok(evidence);
+  assert.equal(evidence.targetRevisionRejectedWhileQuiescing, true);
+  assert.equal(evidence.targetRevisionAcceptedDuringRendererDrain, true);
+  assert.equal(evidence.targetRevisionAcceptedOutsideRendererDrain, false);
+  assert.deepEqual(evidence.events, [
+    "target-revision-rejected-quiescing",
+    "renderer-drain-started",
+    "target-revision-accepted-during-renderer-drain",
+    "renderer-drain-acknowledged",
+    "main-suspended",
+    "sqlite-flushed",
+  ]);
 }
 
 async function assertTreeDoesNotContain(directory, secrets) {

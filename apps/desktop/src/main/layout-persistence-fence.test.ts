@@ -48,14 +48,105 @@ test("Agent Host ready reload waits for pending layouts to reach SQLite", async 
   ]);
 });
 
+for (const reason of [
+  "Agent Host ready Renderer reload",
+  "BrowserWindow close",
+] as const) {
+  test(`successful ${reason} drains the latest Renderer revision before destruction`, () =>
+    assertSuccessfulTransientDrainsLatestLayout(reason));
+}
+
+async function assertSuccessfulTransientDrainsLatestLayout(
+  reason: string,
+): Promise<void> {
+  const savedWidths: number[] = [];
+  const events: string[] = [];
+  const persistence = new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    async save(value) {
+      savedWidths.push(value.paneWidths[0]!);
+      return value;
+    },
+  });
+  const stageAttempts: number[] = [];
+  const stage = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 1_000,
+    async stage(value) {
+      stageAttempts.push(value.paneWidths[0]!);
+      if (persistence.isSchedulingSuspended) {
+        return { accepted: false, reason: "quiescing" };
+      }
+      persistence.schedule(value);
+      events.push(`main-accepted-${value.paneWidths[0]}`);
+      return { accepted: true };
+    },
+  });
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 100,
+    drainRenderer: async () => {
+      events.push("renderer-drain-started");
+      await stage.quiesceAndDrain();
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => stage.resumeSubmissions(),
+    suspend: () => {
+      persistence.suspendScheduling();
+      events.push("main-suspended");
+    },
+    resume: () => {
+      persistence.resumeScheduling();
+      events.push("main-resumed");
+    },
+    flushAll: async () => {
+      await persistence.flushAll();
+      events.push("sqlite-flushed");
+    },
+    reportError: () => assert.fail("successful lifecycle must not report an error"),
+  });
+
+  persistence.schedule(layout(440));
+  persistence.suspendScheduling();
+  const latestVisible = stage.submit(layout(560));
+  await waitFor(() => stageAttempts.length === 1);
+  persistence.resumeScheduling();
+
+  await fence.runTransient(reason, () => {
+    events.push("renderer-destroyed");
+    stage.dispose();
+  });
+  await latestVisible;
+
+  assert.deepEqual(savedWidths, [560]);
+  assert.deepEqual(events, [
+    "renderer-drain-started",
+    "main-accepted-560",
+    "renderer-drained",
+    "main-suspended",
+    "sqlite-flushed",
+    "renderer-destroyed",
+    "main-resumed",
+  ]);
+}
+
 test("layout save failure blocks BrowserWindow close and remains diagnosable", async () => {
   const diagnostics: string[] = [];
   let closed = false;
+  let mainSuspended = false;
+  let rendererAccepting = true;
   const fence = new LayoutPersistenceFence({
-    ...NOOP_RENDERER_LIFECYCLE,
     timeoutMs: 100,
-    suspend: () => undefined,
-    resume: () => undefined,
+    drainRenderer: async () => {
+      rendererAccepting = false;
+    },
+    resumeRenderer: async () => {
+      rendererAccepting = true;
+    },
+    suspend: () => {
+      mainSuspended = true;
+    },
+    resume: () => {
+      mainSuspended = false;
+    },
     flushAll: async () => {
       throw new Error("SQLite disk unavailable");
     },
@@ -69,8 +160,76 @@ test("layout save failure blocks BrowserWindow close and remains diagnosable", a
     /BrowserWindow close.*SQLite disk unavailable/,
   );
   assert.equal(closed, false);
+  assert.equal(mainSuspended, false);
+  assert.equal(rendererAccepting, true);
   assert.deepEqual(diagnostics, [
     "BrowserWindow close blocked because the latest Workspace layout could not be saved: SQLite disk unavailable",
+  ]);
+});
+
+test("destructive transient action failure restores Main and Renderer scheduling", async () => {
+  const events: string[] = [];
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 100,
+    drainRenderer: async () => {
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => {
+      events.push("renderer-resumed");
+    },
+    suspend: () => events.push("main-suspended"),
+    resume: () => events.push("main-resumed"),
+    flushAll: async () => {
+      events.push("sqlite-flushed");
+    },
+    reportError: () => undefined,
+  });
+
+  await assert.rejects(
+    () => fence.runTransient("Agent Host ready Renderer reload", () => {
+      events.push("reload-started");
+      throw new Error("reload failed");
+    }),
+    /reload failed/,
+  );
+  assert.deepEqual(events, [
+    "renderer-drained",
+    "main-suspended",
+    "sqlite-flushed",
+    "reload-started",
+    "main-resumed",
+    "renderer-resumed",
+  ]);
+});
+
+test("Renderer drain acknowledgement timeout blocks destructive transient", async () => {
+  const events: string[] = [];
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 20,
+    drainRenderer: async () => {
+      events.push("renderer-drain-started");
+      await new Promise<void>(() => undefined);
+    },
+    resumeRenderer: async () => {
+      events.push("renderer-resumed");
+    },
+    suspend: () => assert.fail("Main must not suspend without a Renderer drain ack"),
+    resume: () => assert.fail("Main was never suspended"),
+    flushAll: async () => assert.fail("SQLite must not flush without a Renderer drain ack"),
+    reportError: (message) => events.push(message),
+  });
+
+  await assert.rejects(
+    () => fence.runTransient(
+      "BrowserWindow close",
+      () => assert.fail("close must not run without a Renderer drain ack"),
+    ),
+    /Renderer layout drain timed out after 20ms/,
+  );
+  assert.deepEqual(events, [
+    "renderer-drain-started",
+    "BrowserWindow close blocked because the latest Renderer layout could not be staged: Renderer layout drain timed out after 20ms.",
+    "renderer-resumed",
   ]);
 });
 
@@ -448,14 +607,15 @@ test("app quit drains a Renderer revision rejected during transient quiesce befo
   const fence = new LayoutPersistenceFence(fenceOptions);
 
   persistence.schedule(layout(440));
-  const transient = fence.runTransient("BrowserWindow close", () => {
-    assert.fail("failed transient flush must keep the Renderer open");
-  });
+  persistence.suspendScheduling();
+  events.push("main-suspended");
+  const transient = persistence.flushAll();
   await firstSaveInFlight;
 
   const latestVisible = stage.submit(layout(560));
   rejectFirstSave?.(new Error("SQLite busy"));
   await assert.rejects(() => transient, /SQLite busy/);
+  persistence.resumeScheduling();
 
   await fence.runShutdown(
     "app quit",
@@ -538,8 +698,9 @@ test("concurrent reload close and quit serialize without duplicate terminal shut
 
   assert.equal(events.filter((event) => event === "quit-complete").length, 1);
   assert.deepEqual(events, [
-    "suspended", "flushed", "reload-started", "reload-complete", "resumed",
-    "suspended", "flushed", "close-complete", "resumed",
+    "renderer-drained", "suspended", "flushed", "reload-started", "reload-complete",
+    "resumed",
+    "renderer-drained", "suspended", "flushed", "close-complete", "resumed",
     "renderer-drained", "suspended", "flushed", "quit-renderer-destroyed", "quit-complete",
   ]);
 });
@@ -553,4 +714,12 @@ function layout(width: number): WorkspaceLayout {
     activeConversationId: "conversation",
     requestedPaneCount: 1,
   };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Layout fence test timed out.");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 }

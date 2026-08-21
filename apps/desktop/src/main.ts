@@ -46,6 +46,7 @@ import {
   parseDesktopPilotPhase,
 } from "./main/pilot-safe-storage.js";
 import { preparePrivateDataDirectory } from "./main/private-data-directory.js";
+import { Phase3LayoutDrainEvidence } from "./main/phase3-layout-drain-evidence.js";
 import { Phase3RendererClient } from "./main/phase3-renderer-client.js";
 import { RendererLayoutLifecycleClient } from "./main/renderer-layout-lifecycle-client.js";
 import {
@@ -85,6 +86,8 @@ let shutdownComplete = false;
 const phase3ShutdownEvents: string[] = [];
 let phase3LateLayoutStageAttempts = 0;
 let phase3QuiescedLayoutStageAttempts = 0;
+let phase3RendererDrainActive = false;
+let phase3LayoutDrainEvidence: Phase3LayoutDrainEvidence | null = null;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
 
 if (!app.requestSingleInstanceLock()) {
@@ -254,20 +257,38 @@ async function startApplication(): Promise<void> {
   layoutFence = new LayoutPersistenceFence({
     timeoutMs: 5_000,
     drainRenderer: async () => {
-      const acknowledged = await drainRendererLayouts();
-      if (shutdownStarted && acknowledged) {
-        recordPhase3ShutdownEvent("renderer-layout-drained");
+      const recordsTargetRevision = Boolean(
+        isPhase3DesktopPilot() && shutdownStarted && phase3LayoutDrainEvidence,
+      );
+      if (recordsTargetRevision) {
+        phase3RendererDrainActive = true;
+        phase3LayoutDrainEvidence?.recordRendererDrainStarted();
+      }
+      try {
+        const acknowledged = await drainRendererLayouts();
+        if (shutdownStarted && acknowledged) {
+          phase3LayoutDrainEvidence?.recordRendererDrainAcknowledged();
+          recordPhase3ShutdownEvent("renderer-layout-drained");
+        }
+      } finally {
+        phase3RendererDrainActive = false;
       }
     },
     resumeRenderer: () => resumeRendererLayouts(),
     suspend: () => {
       requireLayoutPersistence().suspendScheduling();
-      if (shutdownStarted) recordPhase3ShutdownEvent("layout-suspended");
+      if (shutdownStarted) {
+        phase3LayoutDrainEvidence?.recordMainSuspended();
+        recordPhase3ShutdownEvent("layout-suspended");
+      }
     },
     resume: () => requireLayoutPersistence().resumeScheduling(),
     flushAll: async () => {
       await requireLayoutPersistence().flushAll();
-      if (shutdownStarted) recordPhase3ShutdownEvent("layout-flushed");
+      if (shutdownStarted) {
+        phase3LayoutDrainEvidence?.recordSqliteFlushed();
+        recordPhase3ShutdownEvent("layout-flushed");
+      }
     },
     reportError: reportLayoutPersistenceError,
   });
@@ -407,7 +428,7 @@ async function createPhase3RendererEvidence() {
       expectedAfter: WorkspaceLayout,
     ) => {
       const persistence = requireLayoutPersistence();
-      const attemptBaseline = phase3QuiescedLayoutStageAttempts;
+      phase3LayoutDrainEvidence = new Phase3LayoutDrainEvidence(expectedAfter);
       persistence.suspendScheduling();
       try {
         const widths = await client.resizeFirstPaneThroughWorkbench(
@@ -418,10 +439,11 @@ async function createPhase3RendererEvidence() {
             `Phase 3 Renderer resize mismatch: ${JSON.stringify(widths)}.`,
           );
         }
-        await waitForPhase3QuiescedLayoutStage(attemptBaseline);
+        await waitForPhase3TargetLayoutRejection();
       } finally {
         persistence.resumeScheduling();
       }
+      app.quit();
     },
   };
 }
@@ -552,20 +574,25 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
   });
   ipcMain.handle(IPC_CHANNELS.stageWorkspaceLayout, (event, value: unknown) => {
     assertTrustedSender(event);
-    if (
-      isPhase3DesktopPilot() &&
-      requireLayoutPersistence().isSchedulingSuspended
-    ) {
+    const layout = parseWorkspaceLayoutRequest(value);
+    const persistence = requireLayoutPersistence();
+    const result = stageWorkspaceLayoutRequest(layout, persistence);
+    if (isPhase3DesktopPilot() && !result.accepted) {
       phase3QuiescedLayoutStageAttempts += 1;
     }
     if (
       isPhase3DesktopPilot() &&
       shutdownStarted &&
-      requireLayoutPersistence().isSchedulingSuspended
+      !result.accepted
     ) {
       phase3LateLayoutStageAttempts += 1;
     }
-    return stageWorkspaceLayoutRequest(value, requireLayoutPersistence());
+    phase3LayoutDrainEvidence?.recordStage(
+      layout,
+      result,
+      phase3RendererDrainActive,
+    );
+    return result;
   });
   ipcMain.handle(IPC_CHANNELS.flushWorkspaceLayouts, async (event) => {
     assertTrustedSender(event);
@@ -810,6 +837,7 @@ async function persistPhase3ShutdownEvidence(): Promise<void> {
     ),
     lateLayoutStageAttempts: phase3LateLayoutStageAttempts,
     quiescedLayoutStageAttempts: phase3QuiescedLayoutStageAttempts,
+    targetLayoutDrain: phase3LayoutDrainEvidence?.snapshot() ?? null,
     rendererDrainAcknowledgedBeforeMainSuspend:
       phase3ShutdownEvents.indexOf("renderer-layout-drained") >= 0 &&
       phase3ShutdownEvents.indexOf("renderer-layout-drained") <
@@ -830,11 +858,11 @@ async function persistPhase3ShutdownEvidence(): Promise<void> {
   }
 }
 
-async function waitForPhase3QuiescedLayoutStage(baseline: number): Promise<void> {
+async function waitForPhase3TargetLayoutRejection(): Promise<void> {
   const deadline = Date.now() + 5_000;
-  while (phase3QuiescedLayoutStageAttempts <= baseline) {
+  while (!phase3LayoutDrainEvidence?.targetRevisionRejectedWhileQuiescing) {
     if (Date.now() >= deadline) {
-      throw new Error("Phase 3 Renderer mutation did not reach Main while quiescing.");
+      throw new Error("Phase 3 target layout revision was not rejected while Main quiesced.");
     }
     await new Promise<void>((resolveWait) => setImmediate(resolveWait));
   }

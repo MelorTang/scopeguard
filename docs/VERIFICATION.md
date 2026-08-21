@@ -83,18 +83,17 @@ Exit gate:
 - restart restores each Workspace's own pane IDs and widths, Conversations, and
   resumable sessions without cross-Workspace debounce or ID leakage;
 - every Renderer layout mutation is staged immediately in the Main-owned
-  coordinator. Before terminal app quit suspends Main staging, Main must receive
-  a bounded acknowledgement that the real Renderer coordinator has stopped new
-  layout mutations and drained every Workspace's latest pending revision. Main
-  then flushes through Agent Host and SQLite, destroys the Renderer, and only
-  then stops Agent Host. A failed or timed-out Renderer drain acknowledgement or
-  Main flush resumes layout acceptance on both sides, blocks the lifecycle
-  action, and reports a diagnostic. If a visible Renderer mutation was rejected
-  while the transient lifecycle fence was quiescing, the Renderer retains that
-  exact latest revision and retries it after acceptance resumes; it cannot
-  silently leave the UI ahead of the Main-owned persistence state. Pending revisions,
-  retry timers, and drains are isolated per Workspace, while the Renderer
-  accepts only the exact runtime-validated stage-result union;
+  coordinator. Before Agent Host ready reload, BrowserWindow close, or terminal
+  app quit suspends Main staging, Main must receive a bounded acknowledgement
+  that the real Renderer coordinator has stopped new layout mutations and
+  drained every Workspace's latest pending revision. Main then flushes through
+  Agent Host and SQLite before the destructive action; app quit additionally
+  destroys the Renderer before stopping Agent Host. A failed or timed-out
+  Renderer drain acknowledgement, Main flush, or destructive action resumes
+  layout acceptance on both sides when the Renderer remains alive, blocks the
+  lifecycle action, and reports a diagnostic. Pending revisions, retry timers,
+  and drains are isolated per Workspace, while the Renderer accepts only the
+  exact runtime-validated stage-result union;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on
@@ -105,12 +104,15 @@ Exit gate:
   write, successful and busy-target Dispatch, full Desktop restart,
   a no-debounce pane-close mutation flushed by app quit, SQLite
   layout/session/Dispatch recovery, disk Vault credential recovery, secret
-  absence, and complete process-tree cleanup. The Pilot also arms a delayed
-  layout revision in the real Renderer, delays Agent Host stop, and records the
-  exact shutdown sequence `renderer-layout-drained -> layout-suspended ->
-  layout-flushed -> renderer-destroyed -> host-stop-started ->
-  host-stop-complete`; the delayed
-  Renderer revision must never cross IPC after destruction.
+  absence, and complete process-tree cleanup. The Pilot also records a target
+  layout revision through the real Main/preload/Renderer path: it must first be
+  rejected while Main is quiescing, then be accepted only while Renderer drain
+  is active, followed by drain acknowledgement, Main suspension, SQLite flush,
+  Renderer destruction, and Agent Host stop. Acceptance by the ordinary retry
+  timer before drain fails the Pilot. The exact shutdown sequence remains
+  `renderer-layout-drained -> layout-suspended -> layout-flushed ->
+  renderer-destroyed -> host-stop-started -> host-stop-complete`; a separate
+  delayed Renderer revision must never cross IPC after destruction.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
   remains optional engineering evidence and is not a product-support gate.

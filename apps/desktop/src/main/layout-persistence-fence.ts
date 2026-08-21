@@ -35,7 +35,7 @@ export class LayoutPersistenceFence {
     if (this.#shutdown) {
       return Promise.reject(new Error("Layout persistence shutdown is already in progress."));
     }
-    return this.#enqueue(() => this.#runQuiesced(reason, action, true));
+    return this.#enqueue(() => this.#runQuiesced(reason, action, true, true));
   }
 
   runShutdown(
@@ -79,14 +79,12 @@ export class LayoutPersistenceFence {
     resumeAfter: boolean,
     drainRenderer = false,
   ): Promise<void> {
-    let rendererQuiesced = false;
     let mainSuspended = false;
     let completed = false;
     let operationError: unknown = null;
     try {
       if (drainRenderer) {
         await this.#drainRenderer(reason);
-        rendererQuiesced = true;
       }
       this.#options.suspend();
       mainSuspended = true;
@@ -100,7 +98,7 @@ export class LayoutPersistenceFence {
       if (resumeAfter || !completed) {
         await this.#recoverScheduling({
           mainSuspended,
-          rendererMustResume: drainRenderer && (rendererQuiesced || !completed),
+          rendererMustResume: drainRenderer && !completed,
           operationError,
         });
       }
