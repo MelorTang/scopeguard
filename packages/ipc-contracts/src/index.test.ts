@@ -9,6 +9,7 @@ import {
   parseHandoffPromptRequest,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
+  parseStageWorkspaceLayoutResult,
   parseUpdateConversationSettingsInput,
   parseWorkspaceLayoutRequest,
   toDesktopWorkspaceSnapshot,
@@ -18,6 +19,34 @@ import {
 test("exposes Main-owned layout staging and flush channels", () => {
   assert.equal(IPC_CHANNELS.stageWorkspaceLayout, "scopeguard:layout:stage");
   assert.equal(IPC_CHANNELS.flushWorkspaceLayouts, "scopeguard:layout:flush");
+});
+
+test("accepts only the exact Workspace layout stage result union", () => {
+  assert.deepEqual(parseStageWorkspaceLayoutResult({ accepted: true }), {
+    accepted: true,
+  });
+  assert.deepEqual(parseStageWorkspaceLayoutResult({
+    accepted: false,
+    reason: "quiescing",
+  }), {
+    accepted: false,
+    reason: "quiescing",
+  });
+  for (const invalid of [
+    undefined,
+    null,
+    true,
+    { accepted: false },
+    { accepted: false, reason: "busy" },
+    { accepted: true, reason: "quiescing" },
+    { accepted: true, extra: true },
+    { accepted: "true" },
+  ]) {
+    assert.throws(
+      () => parseStageWorkspaceLayoutResult(invalid),
+      /Workspace layout stage result/i,
+    );
+  }
 });
 
 test("removes secret references from Provider profiles returned to Renderer", () => {

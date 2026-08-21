@@ -56,6 +56,7 @@ import {
 } from "./main/renderer-security.js";
 import { configureDenyAllSessionPermissions } from "./main/session-security.js";
 import { validateWorkspaceFileSelection } from "./main/workspace-file-selection.js";
+import { stageWorkspaceLayoutRequest } from "./main/workspace-layout-stage-handler.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = resolve(moduleDir, "../dist-renderer");
@@ -490,12 +491,7 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
     if (isPhase3DesktopPilot() && shutdownStarted) {
       phase3LateLayoutStageAttempts += 1;
     }
-    const persistence = requireLayoutPersistence();
-    if (persistence.isSchedulingSuspended) {
-      return { accepted: false, reason: "quiescing" } as const;
-    }
-    persistence.schedule(parseWorkspaceLayoutRequest(value));
-    return { accepted: true } as const;
+    return stageWorkspaceLayoutRequest(value, requireLayoutPersistence());
   });
   ipcMain.handle(IPC_CHANNELS.flushWorkspaceLayouts, async (event) => {
     assertTrustedSender(event);

@@ -20,13 +20,18 @@ type IdleWaiter = {
   reject(error: unknown): void;
 };
 
+type WorkspaceStageState = {
+  revision: number;
+  pending: PendingLayout | null;
+  draining: boolean;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  failure: unknown | null;
+  waiters: Set<IdleWaiter>;
+};
+
 export class WorkbenchLayoutStageCoordinator {
   readonly #options: WorkbenchLayoutStageCoordinatorOptions;
-  readonly #waiters = new Set<IdleWaiter>();
-  #pending: PendingLayout | null = null;
-  #revision = 0;
-  #draining = false;
-  #retryTimer: ReturnType<typeof setTimeout> | null = null;
+  readonly #workspaces = new Map<string, WorkspaceStageState>();
   #disposed = false;
 
   constructor(options: WorkbenchLayoutStageCoordinatorOptions) {
@@ -40,81 +45,108 @@ export class WorkbenchLayoutStageCoordinator {
     if (this.#disposed) {
       return Promise.reject(new Error("Layout stage coordinator is disposed."));
     }
-    this.#revision += 1;
-    this.#pending = {
-      revision: this.#revision,
+    const state = this.#stateFor(layout.workspaceId);
+    state.failure = null;
+    state.revision += 1;
+    state.pending = {
+      revision: state.revision,
       layout: structuredClone(layout),
     };
-    const completion = this.whenIdle();
-    this.#startDrain();
+    const completion = this.#whenWorkspaceIdle(state);
+    this.#startDrain(state);
     return completion;
   }
 
   whenIdle(): Promise<void> {
-    if (!this.#pending && !this.#draining && !this.#retryTimer) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve, reject) => {
-      this.#waiters.add({ resolve, reject });
-    });
+    return Promise.all(
+      [...this.#workspaces.values()].map((state) => this.#whenWorkspaceIdle(state)),
+    ).then(() => undefined);
   }
 
   dispose(): void {
     this.#disposed = true;
-    this.#pending = null;
-    if (this.#retryTimer) {
-      clearTimeout(this.#retryTimer);
-      this.#retryTimer = null;
+    for (const state of this.#workspaces.values()) {
+      state.pending = null;
+      state.failure = null;
+      if (state.retryTimer) clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+      this.#resolveWaiters(state);
     }
-    this.#resolveWaiters();
+    this.#workspaces.clear();
   }
 
-  #startDrain(): void {
-    if (this.#draining || this.#retryTimer || this.#disposed) return;
-    this.#draining = true;
-    void this.#drain();
+  #stateFor(workspaceId: string): WorkspaceStageState {
+    const existing = this.#workspaces.get(workspaceId);
+    if (existing) return existing;
+    const created: WorkspaceStageState = {
+      revision: 0,
+      pending: null,
+      draining: false,
+      retryTimer: null,
+      failure: null,
+      waiters: new Set(),
+    };
+    this.#workspaces.set(workspaceId, created);
+    return created;
   }
 
-  async #drain(): Promise<void> {
+  #whenWorkspaceIdle(state: WorkspaceStageState): Promise<void> {
+    if (state.failure !== null) return Promise.reject(state.failure);
+    if (!state.pending && !state.draining && !state.retryTimer) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      state.waiters.add({ resolve, reject });
+    });
+  }
+
+  #startDrain(state: WorkspaceStageState): void {
+    if (state.draining || state.retryTimer || this.#disposed || state.failure !== null) {
+      return;
+    }
+    state.draining = true;
+    void this.#drain(state);
+  }
+
+  async #drain(state: WorkspaceStageState): Promise<void> {
     try {
-      while (this.#pending && !this.#disposed) {
-        const staged = this.#pending;
+      while (state.pending && !this.#disposed) {
+        const staged = state.pending;
         const result = await this.#options.stage(structuredClone(staged.layout));
         if (!result.accepted) {
-          this.#scheduleRetry();
+          this.#scheduleRetry(state);
           return;
         }
-        if (this.#pending.revision === staged.revision) {
-          this.#pending = null;
-        }
+        if (state.pending?.revision === staged.revision) state.pending = null;
       }
     } catch (error) {
-      this.#pending = null;
-      this.#options.onError?.(error);
-      this.#rejectWaiters(error);
+      const failure = error instanceof Error ? error : new Error(String(error));
+      state.failure = failure;
+      this.#options.onError?.(failure);
+      this.#rejectWaiters(state, failure);
       return;
     } finally {
-      this.#draining = false;
+      state.draining = false;
     }
-    if (!this.#pending) this.#resolveWaiters();
-    else this.#startDrain();
+    if (!state.pending) this.#resolveWaiters(state);
+    else this.#startDrain(state);
   }
 
-  #scheduleRetry(): void {
-    if (this.#retryTimer || this.#disposed) return;
-    this.#retryTimer = setTimeout(() => {
-      this.#retryTimer = null;
-      this.#startDrain();
+  #scheduleRetry(state: WorkspaceStageState): void {
+    if (state.retryTimer || this.#disposed) return;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      this.#startDrain(state);
     }, this.#options.retryDelayMs);
   }
 
-  #resolveWaiters(): void {
-    for (const waiter of this.#waiters) waiter.resolve();
-    this.#waiters.clear();
+  #resolveWaiters(state: WorkspaceStageState): void {
+    for (const waiter of state.waiters) waiter.resolve();
+    state.waiters.clear();
   }
 
-  #rejectWaiters(error: unknown): void {
-    for (const waiter of this.#waiters) waiter.reject(error);
-    this.#waiters.clear();
+  #rejectWaiters(state: WorkspaceStageState, error: unknown): void {
+    for (const waiter of state.waiters) waiter.reject(error);
+    state.waiters.clear();
   }
 }

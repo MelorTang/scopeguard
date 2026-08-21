@@ -90,7 +90,9 @@ Exit gate:
   and reports a diagnostic. If a visible Renderer mutation was rejected while
   the transient lifecycle fence was quiescing, the Renderer retains that exact
   latest revision and retries it after acceptance resumes; it cannot silently
-  leave the UI ahead of the Main-owned persistence state;
+  leave the UI ahead of the Main-owned persistence state. Pending revisions,
+  retry timers, and drains are isolated per Workspace, while the Renderer
+  accepts only the exact runtime-validated stage-result union;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on

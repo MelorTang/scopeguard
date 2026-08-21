@@ -293,6 +293,28 @@ export function parseWorkspaceLayoutRequest(value: unknown): WorkspaceLayout {
   return parseWorkspaceLayout(value);
 }
 
+export function parseStageWorkspaceLayoutResult(
+  value: unknown,
+): StageWorkspaceLayoutResult {
+  const record = requireRecord(value, "Workspace layout stage result");
+  if (record.accepted === true) {
+    requireExactRecord(value, "Workspace layout stage result", ["accepted"]);
+    return { accepted: true };
+  }
+  if (record.accepted === false) {
+    const rejected = requireExactRecord(
+      value,
+      "Workspace layout stage result",
+      ["accepted", "reason"],
+    );
+    if (rejected.reason !== "quiescing") {
+      throw new Error("Workspace layout stage result reason must be quiescing.");
+    }
+    return { accepted: false, reason: "quiescing" };
+  }
+  throw new Error("Workspace layout stage result accepted must be a boolean.");
+}
+
 export function parseCreateDispatchRequest(value: unknown): CreateDispatchInput {
   const record = requireExactRecord(value, "Dispatch input", [
     "prompt",

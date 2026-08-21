@@ -30,6 +30,7 @@ import type {
   SaveProviderProfileRequest,
   WorkspaceFileSelection,
 } from "@scopeguard/ipc-contracts";
+import { parseStageWorkspaceLayoutResult } from "@scopeguard/ipc-contracts";
 
 import { desktopApi } from "./bridge.js";
 
@@ -149,7 +150,9 @@ export function useWorkspace(): WorkspaceController {
   const layoutStageCoordinator = useMemo(
     () => new WorkbenchLayoutStageCoordinator({
       retryDelayMs: 50,
-      stage: (layout) => desktopApi.stageWorkspaceLayout(layout),
+      stage: async (layout) => parseStageWorkspaceLayoutResult(
+        await desktopApi.stageWorkspaceLayout(layout),
+      ),
     }),
     [],
   );
