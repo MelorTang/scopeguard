@@ -37,6 +37,29 @@ test("kills an Agent host that misses its ready deadline", async () => {
   await client.stop();
 });
 
+test("does not replace an unready Agent host whose forced termination is rejected", async () => {
+  const children: FakeUtilityProcess[] = [];
+  const first = new FakeUtilityProcess();
+  first.killResult = false;
+  const client = createClient(() => {
+    const child = children.length === 0 ? first : new FakeUtilityProcess();
+    children.push(child);
+    return child;
+  }, {
+    readyTimeoutMs: 10,
+    restartBaseDelayMs: 1_000,
+    restartMaxDelayMs: 1_000,
+  });
+
+  await assert.rejects(client.start(), /did not become ready/i);
+  await assert.rejects(client.start(), /termination was not confirmed/i);
+  assert.equal(children.length, 1);
+  assert.equal(client.processId, first.pid);
+
+  first.killResult = true;
+  await client.stop();
+});
+
 test("times out requests and ignores a late reply without poisoning the next request", async () => {
   const child = new FakeUtilityProcess();
   const client = createClient(() => child, { requestTimeoutMs: 20 });
@@ -122,6 +145,33 @@ test("stop fails without clearing a live Agent host when forced termination is r
   assert.equal(client.processId, child.pid);
 
   child.killResult = true;
+  await client.stop();
+  assert.equal(client.processId, null);
+});
+
+test("does not replace an Agent host whose failed stop left it alive", async () => {
+  const children: FakeUtilityProcess[] = [];
+  const first = new FakeUtilityProcess();
+  first.autoExitOnShutdown = false;
+  first.killResult = false;
+  const client = createClient(() => {
+    const child = children.length === 0 ? first : new FakeUtilityProcess();
+    children.push(child);
+    queueMicrotask(() => child.message({ type: "host-ready", interruptedRuns: 0 }));
+    return child;
+  }, { shutdownTimeoutMs: 10 });
+  await client.start();
+
+  await assert.rejects(client.stop(), /could not be terminated/i);
+  await assert.rejects(client.start(), /termination was not confirmed/i);
+  await assert.rejects(
+    client.request("getWorkspaceSnapshot"),
+    /termination was not confirmed/i,
+  );
+  assert.equal(children.length, 1);
+  assert.equal(client.processId, first.pid);
+
+  first.killResult = true;
   await client.stop();
   assert.equal(client.processId, null);
 });

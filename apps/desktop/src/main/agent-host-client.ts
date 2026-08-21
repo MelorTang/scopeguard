@@ -105,6 +105,11 @@ export class AgentHostClient {
     if (this.#readyPromise) {
       return this.#readyPromise;
     }
+    if (this.#child) {
+      throw new Error(
+        `Agent host ${this.#child.pid} is still running because its termination was not confirmed; restart is refused until its exit is confirmed.`,
+      );
+    }
 
     this.#stopping = false;
     this.#clearRestartTimer();
@@ -159,10 +164,14 @@ export class AgentHostClient {
       const error = new Error(
         `Agent host did not become ready within ${this.#readyTimeoutMs}ms.`,
       );
-      this.#child = null;
       this.#rejectReadyState(error);
-      child.kill();
-      this.#scheduleRestart();
+      try {
+        child.kill();
+      } catch (killError) {
+        console.error(
+          `[scopeguard] Unready Agent host ${child.pid} could not be terminated: ${asError(killError).message}`,
+        );
+      }
     }, this.#readyTimeoutMs);
 
     return readyPromise;
