@@ -9,6 +9,8 @@ import {
 import { useState, type CSSProperties } from "react";
 
 import { AgentDialog } from "./components/AgentDialog.js";
+import { ArtifactCaptureDialog } from "./components/ArtifactCaptureDialog.js";
+import { ArtifactReview } from "./components/ArtifactReview.js";
 import { ConversationDialog } from "./components/ConversationDialog.js";
 import { ProviderDialog } from "./components/ProviderDialog.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -24,6 +26,17 @@ export function App(): JSX.Element {
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [conversationDialogOpen, setConversationDialogOpen] = useState(false);
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
+  const [captureArtifactId, setCaptureArtifactId] = useState<string | undefined>(undefined);
+  const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
+
+  const openCaptureDialog = (artifactId?: string) => {
+    if (!workspace.selectedWorkspace) {
+      setWorkspaceDialogOpen(true);
+      return;
+    }
+    setCaptureArtifactId(artifactId);
+    setCaptureDialogOpen(true);
+  };
 
   const openAgentDialog = () => {
     if (!workspace.selectedWorkspace) {
@@ -61,6 +74,7 @@ export function App(): JSX.Element {
         onNewAgent={openAgentDialog}
         onNewConversation={openConversationDialog}
         onNewWorkspace={() => setWorkspaceDialogOpen(true)}
+        onCaptureArtifact={() => openCaptureDialog()}
         onProviders={() => setProviderDialogOpen(true)}
       />
 
@@ -82,7 +96,12 @@ export function App(): JSX.Element {
             </button>
           </div>
         )}
-        {workspace.visibleThreads.length > 0 ? (
+        {workspace.centerState?.mode === "artifact-review" ? (
+          <ArtifactReview
+            workspace={workspace}
+            onCaptureNewVersion={(artifactId) => openCaptureDialog(artifactId)}
+          />
+        ) : workspace.visibleThreads.length > 0 ? (
           <div
             className="workbench"
             style={{
@@ -138,6 +157,15 @@ export function App(): JSX.Element {
         open={providerDialogOpen}
         workspace={workspace}
         onClose={() => setProviderDialogOpen(false)}
+      />
+      <ArtifactCaptureDialog
+        open={captureDialogOpen}
+        workspace={workspace}
+        artifactId={captureArtifactId}
+        onClose={() => {
+          setCaptureDialogOpen(false);
+          setCaptureArtifactId(undefined);
+        }}
       />
       <WorkspaceDialog
         open={workspaceDialogOpen}

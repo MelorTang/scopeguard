@@ -6,6 +6,7 @@ import {
   CircleAlert,
   Folder,
   FolderPlus,
+  FileText,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -22,6 +23,7 @@ export function Sidebar(props: {
   onNewAgent: () => void;
   onNewConversation: () => void;
   onNewWorkspace: () => void;
+  onCaptureArtifact: () => void;
   onProviders: () => void;
 }): JSX.Element {
   const { workspace } = props;
@@ -121,6 +123,9 @@ export function Sidebar(props: {
           const conversations = snapshot.conversations.filter(
             (conversation) => conversation.workspaceId === project.id,
           );
+          const artifacts = snapshot.artifacts.filter(
+            (artifact) => artifact.workspaceId === project.id,
+          );
           return (
             <section className="project-node" key={project.id}>
               <button
@@ -194,6 +199,40 @@ export function Sidebar(props: {
                     <Bot size={15} />
                     <span>新建 Agent</span>
                   </button>
+                  <div className="tree-group-label tree-group-label--artifacts">
+                    <span>成果</span>
+                    <button
+                      type="button"
+                      className="icon-button icon-button--small"
+                      onClick={props.onCaptureArtifact}
+                      title="捕获成果"
+                      aria-label="捕获成果"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {artifacts.map((artifact) => {
+                    const active = workspace.centerState?.mode === "artifact-review" &&
+                      workspace.centerState.artifactId === artifact.id;
+                    const versionCount = snapshot.artifactVersions.filter(
+                      ({ artifactId }) => artifactId === artifact.id,
+                    ).length;
+                    return (
+                      <button
+                        type="button"
+                        key={artifact.id}
+                        className={`thread-row artifact-row ${active ? "is-selected" : ""}`}
+                        aria-current={active ? "page" : undefined}
+                        onClick={() => void workspace.openArtifact(artifact.id)}
+                      >
+                        <FileText size={15} />
+                        <span className="thread-row__content">
+                          <span className="thread-row__title">{artifact.title}</span>
+                          <span className="thread-row__agent">{versionCount} 个版本</span>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </section>

@@ -8,7 +8,7 @@ import type {
   Workspace,
   WorkspaceContextRevision,
 } from "@scopeguard/domain";
-import { parseWorkspaceLayout } from "@scopeguard/domain";
+import { parseWorkspaceCenterState, parseWorkspaceLayout } from "@scopeguard/domain";
 import type {
   DesktopWorkspaceSnapshot,
   ProviderProfileView,
@@ -48,6 +48,28 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
     createdAt: now,
     updatedAt: now,
   };
+  const demoArtifactRun: AgentRun = {
+    id: "run-artifact-demo",
+    conversationId: "conversation-docs",
+    triggerMessageId: "message-artifact-demo",
+    contextRevisionId: null,
+    configSnapshot: {
+      agentId: "agent-docs",
+      providerProfileId: provider.id,
+      providerProtocol: provider.protocol,
+      providerBaseUrl: provider.baseUrl,
+      model: provider.defaultModel,
+      instructions: "起草清晰的内部文档。",
+      executionProfile: "request-approval",
+      toolPolicy: { readFiles: "allow", writeFiles: "ask", runCommands: "ask" },
+    },
+    status: "completed",
+    startedAt: now,
+    completedAt: now,
+    error: null,
+    effect: "confirmed",
+    createdAt: now,
+  };
   let snapshot: DesktopWorkspaceSnapshot = {
     workspaces: [workspace, workspaceB],
     providerProfiles: [provider],
@@ -70,7 +92,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       makeConversation("conversation-b-review", "agent-b-review", "B 核验", workspaceB.id),
     ],
     activeRuns: [],
-    recentRuns: [],
+    recentRuns: [demoArtifactRun],
     pendingApprovals: [],
     layouts: [{
       workspaceId: workspace.id,
@@ -98,6 +120,70 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       requestedPaneCount: 2,
     }],
     dispatches: [],
+    artifacts: [{
+      id: "artifact-quarterly-brief",
+      workspaceId: workspace.id,
+      title: "季度简报.docx",
+      format: "docx",
+      sourceRelativePath: "reports/quarterly-brief.docx",
+      currentVersionId: "artifact-version-2",
+      associatedConversationId: "conversation-docs",
+      createdAt: now,
+      updatedAt: now,
+    }],
+    artifactVersions: [{
+      id: "artifact-version-1",
+      artifactId: "artifact-quarterly-brief",
+      version: 1,
+      parentVersionId: null,
+      inputs: [{
+        workspaceId: workspace.id,
+        relativePath: "inputs/quarterly-data.xlsx",
+        contentHash: "c".repeat(64),
+        byteSize: 768,
+      }],
+      source: {
+        workspaceId: workspace.id,
+        relativePath: "reports/quarterly-brief.docx",
+        contentHash: "a".repeat(64),
+        byteSize: 1024,
+      },
+      contentHash: "a".repeat(64),
+      byteSize: 1024,
+      producedByConversationId: "conversation-docs",
+      producedByRunId: demoArtifactRun.id,
+      toolchain: "Agent Skill: documents",
+      limitations: ["复杂宏未验证"],
+      createdAt: now,
+    }, {
+      id: "artifact-version-2",
+      artifactId: "artifact-quarterly-brief",
+      version: 2,
+      parentVersionId: "artifact-version-1",
+      inputs: [{
+        workspaceId: workspace.id,
+        relativePath: "inputs/quarterly-data.xlsx",
+        contentHash: "d".repeat(64),
+        byteSize: 800,
+      }],
+      source: {
+        workspaceId: workspace.id,
+        relativePath: "reports/quarterly-brief.docx",
+        contentHash: "b".repeat(64),
+        byteSize: 1152,
+      },
+      contentHash: "b".repeat(64),
+      byteSize: 1152,
+      producedByConversationId: "conversation-docs",
+      producedByRunId: demoArtifactRun.id,
+      toolchain: "Agent Skill: documents + LibreOffice 25.2",
+      limitations: ["复杂宏未验证"],
+      createdAt: now,
+    }],
+    centerStates: [
+      { workspaceId: workspace.id, mode: "workbench" },
+      { workspaceId: workspaceB.id, mode: "workbench" },
+    ],
   };
   const persistedLayouts = snapshot.layouts.map((layout) =>
     readPersistedMockLayout(
@@ -107,7 +193,13 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         .map(({ id }) => id)),
     ) ?? layout
   );
-  snapshot = { ...snapshot, layouts: persistedLayouts };
+  snapshot = {
+    ...snapshot,
+    layouts: persistedLayouts,
+    centerStates: snapshot.centerStates.map((state) =>
+      readPersistedMockCenterState(state.workspaceId) ?? state
+    ),
+  };
   const messages = new Map<string, ConversationMessage[]>([
     ["conversation-research", [
       makeMessage("conversation-research", "user", "整理三家供应商的差异。", 1),
@@ -129,6 +221,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
   ]);
   const contexts = new Map<string, WorkspaceContextRevision>();
   const listeners = new Set<(event: RunEvent) => void>();
+  let workspaceFileSelectionIndex = 0;
 
   const emit = (event: RunEvent) => {
     for (const listener of listeners) listener(clone(event));
@@ -160,7 +253,14 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       };
     },
     async chooseWorkspaceFiles() {
-      return { canceled: true, files: [] };
+      const selection = workspaceFileSelectionIndex % 2 === 0
+        ? { name: "agent-result.docx", relativePath: "reports/agent-result.docx" }
+        : { name: "source-data.xlsx", relativePath: "inputs/source-data.xlsx" };
+      workspaceFileSelectionIndex += 1;
+      return {
+        canceled: false,
+        files: [selection],
+      };
     },
     async saveProviderProfile(input) {
       const timestamp = new Date().toISOString();
@@ -478,6 +578,100 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       };
       return clone(revision);
     },
+    async captureWorkspaceFile(request) {
+      const timestamp = new Date().toISOString();
+      const existing = request.artifactId
+        ? snapshot.artifacts.find(({ id }) => id === request.artifactId)
+        : null;
+      const artifactId = existing?.id ?? createId("artifact");
+      const prior = snapshot.artifactVersions
+        .filter(({ artifactId: owner }) => owner === artifactId)
+        .sort((left, right) => right.version - left.version)[0] ?? null;
+      const version = {
+        id: createId("artifact-version"),
+        artifactId,
+        version: (prior?.version ?? 0) + 1,
+        parentVersionId: prior?.id ?? null,
+        inputs: (request.inputRelativePaths ?? []).map((relativePath) => ({
+          workspaceId: request.workspaceId,
+          relativePath,
+          contentHash: "c".repeat(64),
+          byteSize: 1,
+        })),
+        source: {
+          workspaceId: request.workspaceId,
+          relativePath: request.relativePath,
+          contentHash: "a".repeat(64),
+          byteSize: 1,
+        },
+        contentHash: "a".repeat(64),
+        byteSize: 1,
+        producedByConversationId: request.producedByConversationId ?? null,
+        producedByRunId: request.producedByRunId ?? null,
+        toolchain: request.toolchain,
+        limitations: request.limitations ?? [],
+        createdAt: timestamp,
+      };
+      const artifact = {
+        id: artifactId,
+        workspaceId: request.workspaceId,
+        title: existing?.title ?? request.title ?? request.relativePath.split("/").at(-1)!,
+        format: existing?.format ?? request.format ?? request.relativePath.split(".").at(-1) ?? "file",
+        sourceRelativePath: existing?.sourceRelativePath ?? request.relativePath,
+        currentVersionId: version.id,
+        associatedConversationId:
+          existing?.associatedConversationId ?? request.producedByConversationId ?? null,
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      };
+      snapshot = {
+        ...snapshot,
+        artifacts: [artifact, ...snapshot.artifacts.filter(({ id }) => id !== artifact.id)],
+        artifactVersions: [...snapshot.artifactVersions, version],
+      };
+      return clone({ artifact, version });
+    },
+    async exportArtifactVersion(request) {
+      const version = snapshot.artifactVersions.find(({ id }) => id === request.versionId);
+      if (!version) throw new Error("Artifact Version not found.");
+      return {
+        workspaceId: request.workspaceId,
+        relativePath: request.relativePath,
+        contentHash: version.contentHash,
+        byteSize: version.byteSize,
+      };
+    },
+    async openArtifactVersion(request) {
+      const version = snapshot.artifactVersions.find(({ id }) => id === request.versionId);
+      if (!version) throw new Error("Artifact Version not found.");
+    },
+    async setArtifactCurrentVersion(request) {
+      const artifact = snapshot.artifacts.find(({ id }) => id === request.artifactId);
+      const version = snapshot.artifactVersions.find(({ id }) => id === request.versionId);
+      if (!artifact || version?.artifactId !== artifact.id) {
+        throw new Error("Artifact Version does not belong to the Artifact.");
+      }
+      const updated = { ...artifact, currentVersionId: version.id, updatedAt: new Date().toISOString() };
+      snapshot = {
+        ...snapshot,
+        artifacts: snapshot.artifacts.map((item) => item.id === updated.id ? updated : item),
+      };
+      return clone(updated);
+    },
+    async saveWorkspaceCenterState(state) {
+      snapshot = {
+        ...snapshot,
+        centerStates: [
+          state,
+          ...snapshot.centerStates.filter(({ workspaceId }) => workspaceId !== state.workspaceId),
+        ],
+      };
+      sessionStorage.setItem(
+        `scopeguard.mock.center-state:${state.workspaceId}`,
+        JSON.stringify(state),
+      );
+      return clone(state);
+    },
     subscribeRunEvents(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -514,6 +708,19 @@ function readPersistedMockLayout(
   if (!value) return null;
   try {
     return parseWorkspaceLayout(JSON.parse(value), conversationIds);
+  } catch {
+    sessionStorage.removeItem(key);
+    return null;
+  }
+}
+
+function readPersistedMockCenterState(workspaceId: string) {
+  const key = `scopeguard.mock.center-state:${workspaceId}`;
+  const value = sessionStorage.getItem(key);
+  if (!value) return null;
+  try {
+    const parsed = parseWorkspaceCenterState(JSON.parse(value));
+    return parsed.workspaceId === workspaceId ? parsed : null;
   } catch {
     sessionStorage.removeItem(key);
     return null;

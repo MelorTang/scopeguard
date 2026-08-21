@@ -32,6 +32,7 @@ export function WorkspaceToolbar(props: {
   const agentCount = workspace.snapshot?.agents.filter(
     (agent) => agent.workspaceId === workspaceId,
   ).length ?? 0;
+  const reviewingArtifact = workspace.centerState?.mode === "artifact-review";
 
   useEffect(() => {
     if (!layoutMenuOpen) {
@@ -107,9 +108,13 @@ export function WorkspaceToolbar(props: {
       <div className="workspace-toolbar__drag-region" aria-hidden="true" />
       <div className="workspace-toolbar__identity">
         <strong>{workspace.selectedWorkspace?.name ?? "ScopeGuard"}</strong>
-        <span>{conversationCount} 个对话 · {agentCount} 个 Agent</span>
+        <span>{reviewingArtifact
+          ? `Artifact Review · ${workspace.selectedArtifact?.title ?? "版本不可用"}`
+          : `${conversationCount} 个对话 · ${agentCount} 个 Agent`}</span>
       </div>
-      <div className="workbench-controls">
+      {reviewingArtifact ? (
+        <span className="toolbar-context-pill">不可变版本审阅</span>
+      ) : <div className="workbench-controls">
         <button
           type="button"
           className="button button--secondary button--compact"
@@ -163,7 +168,7 @@ export function WorkspaceToolbar(props: {
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </header>
   );
 }

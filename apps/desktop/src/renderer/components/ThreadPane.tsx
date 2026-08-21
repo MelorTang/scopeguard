@@ -48,6 +48,9 @@ export function ThreadPane(props: {
   paneIndex: number;
   active: boolean;
   onActivate: () => void;
+  onClose?: () => void;
+  ariaLabel?: string;
+  variant?: "workbench" | "artifact-review";
 }): JSX.Element {
   const { thread, workspace } = props;
   const snapshot = workspace.snapshot;
@@ -248,11 +251,13 @@ export function ThreadPane(props: {
   return (
     <section
       id={`thread-panel-${thread.id}`}
-      className={`thread-pane ${props.active ? "is-active" : ""} ${
+      className={`thread-pane ${
+        props.variant === "artifact-review" ? "thread-pane--artifact-review" : ""
+      } ${props.active ? "is-active" : ""} ${
         messages.length === 0 && !stream ? "thread-pane--empty" : ""
       }`}
       role="region"
-      aria-label={`${thread.title}，第 ${props.paneIndex + 1} 个窗格`}
+      aria-label={props.ariaLabel ?? `${thread.title}，第 ${props.paneIndex + 1} 个窗格`}
       onPointerDownCapture={props.onActivate}
       onFocusCapture={props.onActivate}
     >
@@ -282,7 +287,7 @@ export function ThreadPane(props: {
         <button
           type="button"
           className="icon-button icon-button--small"
-          onClick={() => workspace.closePane(thread.id)}
+          onClick={props.onClose ?? (() => workspace.closePane(thread.id))}
           aria-label={`关闭 ${thread.title} 窗格`}
           title="关闭窗格"
         >

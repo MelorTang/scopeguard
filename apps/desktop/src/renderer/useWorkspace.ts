@@ -12,6 +12,8 @@ import {
 import type {
   Agent,
   AgentRun,
+  Artifact,
+  ArtifactVersion,
   ApprovalDecision,
   Conversation,
   ConversationMessage,
@@ -22,10 +24,14 @@ import type {
   RunEvent,
   UpdateConversationSettingsInput,
   Workspace,
+  WorkspaceCenterState,
+  WorkspaceFileVersion,
   WorkspaceLayout,
 } from "@scopeguard/domain";
 import type {
   DesktopWorkspaceSnapshot,
+  CaptureWorkspaceFileRequest,
+  ExportArtifactVersionRequest,
   ProviderProfileView,
   SaveProviderProfileRequest,
   WorkspaceFileSelection,
@@ -68,6 +74,11 @@ export type WorkspaceController = {
   error: string | null;
   selectedProject: Workspace | null;
   selectedWorkspace: Workspace | null;
+  centerState: WorkspaceCenterState | null;
+  selectedArtifact: Artifact | null;
+  selectedArtifactVersion: ArtifactVersion | null;
+  comparisonArtifactVersion: ArtifactVersion | null;
+  associatedArtifactConversation: Conversation | null;
   activeThread: Conversation | null;
   activeAgent: Agent | null;
   visibleThreads: Conversation[];
@@ -83,6 +94,19 @@ export type WorkspaceController = {
   approvalFocus: ApprovalFocusRequest | null;
   selectProject: (workspaceId: string) => void;
   openThread: (conversationId: string) => void;
+  openArtifact: (artifactId: string, versionId?: string) => Promise<void>;
+  returnToWorkbench: () => Promise<void>;
+  selectArtifactVersion: (versionId: string) => Promise<void>;
+  selectComparisonArtifactVersion: (versionId: string | null) => Promise<void>;
+  setArtifactConversationPanelOpen: (open: boolean) => Promise<void>;
+  captureArtifactVersion: (
+    input: Omit<CaptureWorkspaceFileRequest, "workspaceId">,
+  ) => Promise<Artifact>;
+  exportArtifactVersion: (
+    input: Omit<ExportArtifactVersionRequest, "workspaceId">,
+  ) => Promise<WorkspaceFileVersion>;
+  setArtifactCurrentVersion: (artifactId: string, versionId: string) => Promise<Artifact>;
+  openArtifactVersionExternally: (versionId: string) => Promise<void>;
   focusApproval: (conversationId: string, approvalId: string) => void;
   selectPane: (paneIndex: number) => void;
   setRequestedSplitCount: (count: number) => void;
@@ -236,6 +260,32 @@ export function useWorkspace(): WorkspaceController {
       ?? snapshot?.workspaces[0]
       ?? null,
   [snapshot, ui.selectedWorkspaceId]);
+  const centerState = useMemo<WorkspaceCenterState | null>(() => {
+    if (!selectedWorkspace) return null;
+    return snapshot?.centerStates.find(({ workspaceId }) => workspaceId === selectedWorkspace.id)
+      ?? { workspaceId: selectedWorkspace.id, mode: "workbench" };
+  }, [selectedWorkspace, snapshot?.centerStates]);
+  const selectedArtifact = useMemo(() => centerState?.mode === "artifact-review"
+    ? snapshot?.artifacts.find(({ id }) => id === centerState.artifactId) ?? null
+    : null,
+  [centerState, snapshot?.artifacts]);
+  const selectedArtifactVersion = useMemo(() => centerState?.mode === "artifact-review"
+    ? snapshot?.artifactVersions.find(({ id }) => id === centerState.versionId) ?? null
+    : null,
+  [centerState, snapshot?.artifactVersions]);
+  const comparisonArtifactVersion = useMemo(() =>
+    centerState?.mode === "artifact-review" && centerState.comparisonVersionId
+      ? snapshot?.artifactVersions.find(({ id }) => id === centerState.comparisonVersionId) ?? null
+      : null,
+  [centerState, snapshot?.artifactVersions]);
+  const associatedArtifactConversation = useMemo(() =>
+    centerState?.mode === "artifact-review" && centerState.associatedConversationId
+      ? snapshot?.conversations.find((conversation) =>
+          conversation.id === centerState.associatedConversationId &&
+          conversation.workspaceId === centerState.workspaceId
+        ) ?? null
+      : null,
+  [centerState, snapshot?.conversations]);
   const activeThread = useMemo(() =>
     snapshot?.conversations.find((item) =>
       item.id === ui.activeConversationId && item.workspaceId === selectedWorkspace?.id
@@ -266,8 +316,21 @@ export function useWorkspace(): WorkspaceController {
     paneIds.indexOf(ui.activeConversationId ?? ""),
   );
 
+  const conversationsToHydrate = useMemo(() => {
+    const conversations = [...openThreads];
+    if (
+      centerState?.mode === "artifact-review" &&
+      centerState.conversationPanelOpen &&
+      associatedArtifactConversation &&
+      !conversations.some(({ id }) => id === associatedArtifactConversation.id)
+    ) {
+      conversations.push(associatedArtifactConversation);
+    }
+    return conversations;
+  }, [associatedArtifactConversation, centerState, openThreads]);
+
   useEffect(() => {
-    for (const conversation of openThreads) {
+    for (const conversation of conversationsToHydrate) {
       if (messagesByThread[conversation.id]) continue;
       void desktopApi.listConversationMessages(conversation.id)
         .then((messages) => setMessagesByThread((current) => ({
@@ -276,7 +339,7 @@ export function useWorkspace(): WorkspaceController {
         })))
         .catch((cause: unknown) => setError(messageFromError(cause)));
     }
-  }, [messagesByThread, openThreads]);
+  }, [conversationsToHydrate, messagesByThread]);
 
   const transitionWorkspace = useCallback(async (workspaceId: string) => {
     if (!layoutStageCoordinator.isAcceptingSubmissions) {
@@ -303,6 +366,23 @@ export function useWorkspace(): WorkspaceController {
     });
   }, [transitionWorkspace]);
 
+  const persistCenterState = useCallback(async (state: WorkspaceCenterState) => {
+    const saved = await desktopApi.saveWorkspaceCenterState(state);
+    const update = (current: DesktopWorkspaceSnapshot): DesktopWorkspaceSnapshot => ({
+      ...current,
+      centerStates: [
+        saved,
+        ...current.centerStates.filter(({ workspaceId }) => workspaceId !== saved.workspaceId),
+      ],
+    });
+    if (snapshotRef.current) snapshotRef.current = update(snapshotRef.current);
+    setSnapshot((current) => current ? update(current) : current);
+  }, []);
+
+  const returnWorkspaceToWorkbench = useCallback(async (workspaceId: string) => {
+    await persistCenterState({ workspaceId, mode: "workbench" });
+  }, [persistCenterState]);
+
   const activateConversation = useCallback((conversationId: string, workspaceId: string) => {
     mutateLayout((current) => {
       if (current.selectedWorkspaceId !== workspaceId) {
@@ -321,14 +401,68 @@ export function useWorkspace(): WorkspaceController {
       (item) => item.id === conversationId,
     );
     if (!conversation) return;
-    if (uiRef.current.selectedWorkspaceId === conversation.workspaceId) {
-      activateConversation(conversationId, conversation.workspaceId);
-      return;
-    }
-    void transitionWorkspace(conversation.workspaceId)
-      .then(() => activateConversation(conversationId, conversation.workspaceId))
+    void Promise.resolve()
+      .then(async () => {
+        if (uiRef.current.selectedWorkspaceId !== conversation.workspaceId) {
+          await transitionWorkspace(conversation.workspaceId);
+        }
+        await returnWorkspaceToWorkbench(conversation.workspaceId);
+        activateConversation(conversationId, conversation.workspaceId);
+      })
       .catch((cause: unknown) => setError(messageFromError(cause)));
-  }, [activateConversation, transitionWorkspace]);
+  }, [activateConversation, returnWorkspaceToWorkbench, transitionWorkspace]);
+
+  const openArtifact = useCallback(async (artifactId: string, versionId?: string) => {
+    const artifact = snapshotRef.current?.artifacts.find(({ id }) => id === artifactId);
+    if (!artifact) throw new Error("Artifact 不存在。");
+    if (uiRef.current.selectedWorkspaceId !== artifact.workspaceId) {
+      await transitionWorkspace(artifact.workspaceId);
+    }
+    const versions = (snapshotRef.current?.artifactVersions ?? [])
+      .filter(({ artifactId: owner }) => owner === artifact.id)
+      .sort((left, right) => right.version - left.version);
+    const selectedVersion = versions.find(({ id }) => id === versionId)
+      ?? versions.find(({ id }) => id === artifact.currentVersionId)
+      ?? versions[0];
+    if (!selectedVersion) throw new Error("Artifact 还没有可审阅的版本。");
+    await persistCenterState({
+      workspaceId: artifact.workspaceId,
+      mode: "artifact-review",
+      artifactId: artifact.id,
+      versionId: selectedVersion.id,
+      comparisonVersionId: null,
+      associatedConversationId: artifact.associatedConversationId,
+      conversationPanelOpen: false,
+    });
+  }, [persistCenterState, transitionWorkspace]);
+
+  const returnToWorkbench = useCallback(async () => {
+    if (!selectedWorkspace) return;
+    await returnWorkspaceToWorkbench(selectedWorkspace.id);
+  }, [returnWorkspaceToWorkbench, selectedWorkspace]);
+
+  const updateArtifactReviewState = useCallback(async (
+    update: (current: Extract<WorkspaceCenterState, { mode: "artifact-review" }>) =>
+      Extract<WorkspaceCenterState, { mode: "artifact-review" }>,
+  ) => {
+    const current = snapshotRef.current?.centerStates.find(
+      ({ workspaceId }) => workspaceId === uiRef.current.selectedWorkspaceId,
+    );
+    if (!current || current.mode !== "artifact-review") {
+      throw new Error("当前没有正在审阅的 Artifact。");
+    }
+    await persistCenterState(update(current));
+  }, [persistCenterState]);
+
+  const selectArtifactVersion = useCallback((versionId: string) =>
+    updateArtifactReviewState((current) => ({ ...current, versionId })),
+  [updateArtifactReviewState]);
+  const selectComparisonArtifactVersion = useCallback((versionId: string | null) =>
+    updateArtifactReviewState((current) => ({ ...current, comparisonVersionId: versionId })),
+  [updateArtifactReviewState]);
+  const setArtifactConversationPanelOpen = useCallback((open: boolean) =>
+    updateArtifactReviewState((current) => ({ ...current, conversationPanelOpen: open })),
+  [updateArtifactReviewState]);
 
   const focusApproval = useCallback((conversationId: string, approvalId: string) => {
     openThread(conversationId);
@@ -460,6 +594,43 @@ export function useWorkspace(): WorkspaceController {
     return (await desktopApi.chooseWorkspaceFiles(selectedWorkspace.id)).files;
   }, [selectedWorkspace]);
 
+  const captureArtifactVersion = useCallback(async (
+    input: Omit<CaptureWorkspaceFileRequest, "workspaceId">,
+  ) => {
+    if (!selectedWorkspace) throw new Error("请先选择工作区。");
+    const captured = await desktopApi.captureWorkspaceFile({
+      ...input,
+      workspaceId: selectedWorkspace.id,
+    });
+    await refresh();
+    await openArtifact(captured.artifact.id, captured.version.id);
+    return captured.artifact;
+  }, [openArtifact, refresh, selectedWorkspace]);
+
+  const exportArtifactVersion = useCallback((
+    input: Omit<ExportArtifactVersionRequest, "workspaceId">,
+  ) => {
+    if (!selectedWorkspace) throw new Error("请先选择工作区。");
+    return desktopApi.exportArtifactVersion({ ...input, workspaceId: selectedWorkspace.id });
+  }, [selectedWorkspace]);
+
+  const setArtifactCurrentVersion = useCallback(async (
+    artifactId: string,
+    versionId: string,
+  ) => {
+    const updated = await desktopApi.setArtifactCurrentVersion({ artifactId, versionId });
+    const update = (current: DesktopWorkspaceSnapshot): DesktopWorkspaceSnapshot => ({
+      ...current,
+      artifacts: current.artifacts.map((artifact) => artifact.id === updated.id ? updated : artifact),
+    });
+    if (snapshotRef.current) snapshotRef.current = update(snapshotRef.current);
+    setSnapshot((current) => current ? update(current) : current);
+    return updated;
+  }, []);
+
+  const openArtifactVersionExternally = useCallback((versionId: string) =>
+    desktopApi.openArtifactVersion({ versionId }), []);
+
   const sendMessage = useCallback(async (conversationId: string, prompt: string) => {
     const run = await desktopApi.startRun({ conversationId, prompt });
     setSnapshot((current) => current ? {
@@ -570,6 +741,11 @@ export function useWorkspace(): WorkspaceController {
     error,
     selectedProject: selectedWorkspace,
     selectedWorkspace,
+    centerState,
+    selectedArtifact,
+    selectedArtifactVersion,
+    comparisonArtifactVersion,
+    associatedArtifactConversation,
     activeThread,
     activeAgent,
     visibleThreads,
@@ -585,6 +761,15 @@ export function useWorkspace(): WorkspaceController {
     approvalFocus,
     selectProject,
     openThread,
+    openArtifact,
+    returnToWorkbench,
+    selectArtifactVersion,
+    selectComparisonArtifactVersion,
+    setArtifactConversationPanelOpen,
+    captureArtifactVersion,
+    exportArtifactVersion,
+    setArtifactCurrentVersion,
+    openArtifactVersionExternally,
     focusApproval,
     selectPane,
     setRequestedSplitCount,
