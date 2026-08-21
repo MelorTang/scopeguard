@@ -85,7 +85,7 @@ async function assertSuccessfulTransientDrainsLatestLayout(
     timeoutMs: 100,
     drainRenderer: async () => {
       events.push("renderer-drain-started");
-      await stage.quiesceAndDrain();
+      await stage.quiesceAndDrain("successful-transient-drain");
       events.push("renderer-drained");
     },
     resumeRenderer: async () => stage.resumeSubmissions(),
@@ -169,6 +169,7 @@ test("layout save failure blocks BrowserWindow close and remains diagnosable", a
 
 test("destructive transient action failure restores Main and Renderer scheduling", async () => {
   const events: string[] = [];
+  const diagnostics: string[] = [];
   const fence = new LayoutPersistenceFence({
     timeoutMs: 100,
     drainRenderer: async () => {
@@ -182,7 +183,7 @@ test("destructive transient action failure restores Main and Renderer scheduling
     flushAll: async () => {
       events.push("sqlite-flushed");
     },
-    reportError: () => undefined,
+    reportError: (message) => diagnostics.push(message),
   });
 
   await assert.rejects(
@@ -190,7 +191,7 @@ test("destructive transient action failure restores Main and Renderer scheduling
       events.push("reload-started");
       throw new Error("reload failed");
     }),
-    /reload failed/,
+    /Agent Host ready Renderer reload.*reload failed/,
   );
   assert.deepEqual(events, [
     "renderer-drained",
@@ -199,6 +200,66 @@ test("destructive transient action failure restores Main and Renderer scheduling
     "reload-started",
     "main-resumed",
     "renderer-resumed",
+  ]);
+  assert.deepEqual(diagnostics, [
+    "Agent Host ready Renderer reload blocked because the destructive lifecycle action failed: reload failed",
+  ]);
+});
+
+test("destructive transient action timeout restores Main and Renderer scheduling", async () => {
+  const events: string[] = [];
+  const diagnostics: string[] = [];
+  let mainSuspended = false;
+  let rendererAccepting = true;
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 20,
+    drainRenderer: async () => {
+      rendererAccepting = false;
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => {
+      rendererAccepting = true;
+      events.push("renderer-resumed");
+    },
+    suspend: () => {
+      mainSuspended = true;
+      events.push("main-suspended");
+    },
+    resume: () => {
+      mainSuspended = false;
+      events.push("main-resumed");
+    },
+    flushAll: async () => {
+      events.push("sqlite-flushed");
+    },
+    reportError: (message) => diagnostics.push(message),
+  });
+
+  await assert.rejects(
+    () => withTestTimeout(
+      fence.runTransient(
+        "BrowserWindow close",
+        async () => {
+          events.push("close-started");
+          await new Promise<void>(() => undefined);
+        },
+      ),
+      80,
+    ),
+    /BrowserWindow close.*Destructive lifecycle action timed out after 20ms/,
+  );
+  assert.equal(mainSuspended, false);
+  assert.equal(rendererAccepting, true);
+  assert.deepEqual(events, [
+    "renderer-drained",
+    "main-suspended",
+    "sqlite-flushed",
+    "close-started",
+    "main-resumed",
+    "renderer-resumed",
+  ]);
+  assert.deepEqual(diagnostics, [
+    "BrowserWindow close blocked because the destructive lifecycle action failed: Destructive lifecycle action timed out after 20ms.",
   ]);
 });
 
@@ -585,17 +646,13 @@ test("app quit drains a Renderer revision rejected during transient quiesce befo
       return { accepted: true };
     },
   });
-  const rendererLifecycle = stage as WorkbenchLayoutStageCoordinator & {
-    quiesceAndDrain(): Promise<void>;
-    resumeSubmissions(): void;
-  };
   const fenceOptions = {
     timeoutMs: 100,
     drainRenderer: async () => {
-      await rendererLifecycle.quiesceAndDrain();
+      await stage.quiesceAndDrain("terminal-drain");
       events.push("renderer-drained");
     },
-    resumeRenderer: async () => rendererLifecycle.resumeSubmissions(),
+    resumeRenderer: async () => stage.resumeSubmissions(),
     suspend: () => {
       persistence.suspendScheduling();
       events.push("main-suspended");
@@ -721,5 +778,22 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error("Layout fence test timed out.");
     await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+async function withTestTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Test guard timed out after ${timeoutMs}ms.`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

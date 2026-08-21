@@ -89,9 +89,11 @@ Exit gate:
   drained every Workspace's latest pending revision. Main then flushes through
   Agent Host and SQLite before the destructive action; app quit additionally
   destroys the Renderer before stopping Agent Host. A failed or timed-out
-  Renderer drain acknowledgement, Main flush, or destructive action resumes
-  layout acceptance on both sides when the Renderer remains alive, blocks the
-  lifecycle action, and reports a diagnostic. Pending revisions, retry timers,
+  Renderer drain acknowledgement, Main flush, or bounded destructive action
+  resumes layout acceptance on both sides when the Renderer remains alive,
+  blocks the lifecycle action, and reports the failing lifecycle context.
+  BrowserWindow close failures remain visible rather than being swallowed.
+  Pending revisions, retry timers,
   and drains are isolated per Workspace, while the Renderer accepts only the
   exact runtime-validated stage-result union;
 - Playwright screenshots cover desktop and constrained-width layouts without
@@ -106,10 +108,13 @@ Exit gate:
   layout/session/Dispatch recovery, disk Vault credential recovery, secret
   absence, and complete process-tree cleanup. The Pilot also records a target
   layout revision through the real Main/preload/Renderer path: it must first be
-  rejected while Main is quiescing, then be accepted only while Renderer drain
-  is active, followed by drain acknowledgement, Main suspension, SQLite flush,
-  Renderer destruction, and Agent Host stop. Acceptance by the ordinary retry
-  timer before drain fails the Pilot. The exact shutdown sequence remains
+  rejected while Main is quiescing. The real Renderer coordinator must then
+  return a drain-generation receipt naming the exact Workspace, revision, and
+  layout that its drain started and Main accepted, followed by Main suspension,
+  SQLite flush, Renderer destruction, and Agent Host stop. A normal retry that
+  was already in flight when Main requested a drain is excluded from that
+  generation; if it accepts the target first, the Pilot fails. The exact
+  shutdown sequence remains
   `renderer-layout-drained -> layout-suspended -> layout-flushed ->
   renderer-destroyed -> host-stop-started -> host-stop-complete`; a separate
   delayed Renderer revision must never cross IPC after destruction.

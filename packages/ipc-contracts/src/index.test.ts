@@ -38,6 +38,31 @@ test("accepts only exact Renderer layout lifecycle requests and responses", () =
   }), { requestId: "request-1", action: "drain" });
   assert.deepEqual(parseRendererLayoutLifecycleResponse({
     requestId: "request-1",
+    action: "drain",
+    ok: true,
+    drainReceipt: {
+      generation: "request-1",
+      acceptedRevisions: [{
+        workspaceId: "workspace",
+        revision: 3,
+        layout: layout(560),
+      }],
+    },
+  }), {
+    requestId: "request-1",
+    action: "drain",
+    ok: true,
+    drainReceipt: {
+      generation: "request-1",
+      acceptedRevisions: [{
+        workspaceId: "workspace",
+        revision: 3,
+        layout: layout(560),
+      }],
+    },
+  });
+  assert.deepEqual(parseRendererLayoutLifecycleResponse({
+    requestId: "request-1",
     action: "resume",
     ok: true,
   }), { requestId: "request-1", action: "resume", ok: true });
@@ -62,6 +87,26 @@ test("accepts only exact Renderer layout lifecycle requests and responses", () =
   }
   for (const invalid of [
     undefined,
+    { requestId: "request-1", action: "drain", ok: true },
+    {
+      requestId: "request-1",
+      action: "drain",
+      ok: true,
+      drainReceipt: { generation: "forged", acceptedRevisions: [] },
+    },
+    {
+      requestId: "request-1",
+      action: "drain",
+      ok: true,
+      drainReceipt: {
+        generation: "request-1",
+        acceptedRevisions: [{
+          workspaceId: "workspace",
+          revision: 0,
+          layout: layout(560),
+        }],
+      },
+    },
     { requestId: "request-1", action: "drain", ok: false },
     { requestId: "request-1", action: "drain", ok: true, error: "mixed" },
     { requestId: "request-1", action: "drain", ok: false, error: "" },
@@ -70,6 +115,17 @@ test("accepts only exact Renderer layout lifecycle requests and responses", () =
     assert.throws(() => parseRendererLayoutLifecycleResponse(invalid), /lifecycle response/i);
   }
 });
+
+function layout(width: number) {
+  return {
+    workspaceId: "workspace",
+    openConversationIds: ["conversation"],
+    paneConversationIds: ["conversation"],
+    paneWidths: [width],
+    activeConversationId: "conversation",
+    requestedPaneCount: 1,
+  };
+}
 
 test("accepts only the exact Workspace layout stage result union", () => {
   assert.deepEqual(parseStageWorkspaceLayoutResult({ accepted: true }), {

@@ -66,9 +66,10 @@ const api = Object.freeze({
       void Promise.resolve()
         .then(() => listener(request))
         .then(
-          () => ipcRenderer.send(channels.rendererLayoutLifecycleResponse, {
+          (result) => ipcRenderer.send(channels.rendererLayoutLifecycleResponse, {
             ...request,
             ok: true,
+            ...(request.action === "drain" ? { drainReceipt: result } : {}),
           }),
           (error) => ipcRenderer.send(channels.rendererLayoutLifecycleResponse, {
             ...request,

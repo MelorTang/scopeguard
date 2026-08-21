@@ -67,8 +67,22 @@ export type RendererLayoutLifecycleRequest = {
   requestId: string;
   action: RendererLayoutLifecycleAction;
 };
+export type RendererLayoutDrainAcceptedRevision = {
+  workspaceId: string;
+  revision: number;
+  layout: WorkspaceLayout;
+};
+export type RendererLayoutDrainReceipt = {
+  generation: string;
+  acceptedRevisions: RendererLayoutDrainAcceptedRevision[];
+};
 export type RendererLayoutLifecycleResponse =
-  | (RendererLayoutLifecycleRequest & { ok: true })
+  | (RendererLayoutLifecycleRequest & {
+      action: "drain";
+      ok: true;
+      drainReceipt: RendererLayoutDrainReceipt;
+    })
+  | (RendererLayoutLifecycleRequest & { action: "resume"; ok: true })
   | (RendererLayoutLifecycleRequest & { ok: false; error: string });
 
 export type AgentHostMethod =
@@ -211,7 +225,9 @@ export type ScopeGuardDesktopApi = {
   flushWorkspaceLayouts: () => Promise<void>;
   saveWorkspaceLayout: (layout: WorkspaceLayout) => Promise<WorkspaceLayout>;
   subscribeRendererLayoutLifecycleRequests: (
-    listener: (request: RendererLayoutLifecycleRequest) => Promise<void>,
+    listener: (
+      request: RendererLayoutLifecycleRequest,
+    ) => Promise<RendererLayoutDrainReceipt | void>,
   ) => () => void;
   listConversationMessages: (
     conversationId: Id,
@@ -353,15 +369,41 @@ export function parseRendererLayoutLifecycleResponse(
   value: unknown,
 ): RendererLayoutLifecycleResponse {
   const record = requireRecord(value, "Renderer layout lifecycle response");
-  const fields = record.ok === true
-    ? ["action", "ok", "requestId"]
-    : ["action", "error", "ok", "requestId"];
-  const exact = requireExactRecord(value, "Renderer layout lifecycle response", fields);
   const request = parseRendererLayoutLifecycleRequest({
-    action: exact.action,
-    requestId: exact.requestId,
+    action: record.action,
+    requestId: record.requestId,
   });
-  if (exact.ok === true) return { ...request, ok: true };
+  if (record.ok === true) {
+    if (request.action === "drain") {
+      const exact = requireExactRecord(value, "Renderer layout lifecycle response", [
+        "action",
+        "drainReceipt",
+        "ok",
+        "requestId",
+      ]);
+      return {
+        ...request,
+        action: "drain",
+        ok: true,
+        drainReceipt: parseRendererLayoutDrainReceipt(
+          exact.drainReceipt,
+          request.requestId,
+        ),
+      };
+    }
+    requireExactRecord(value, "Renderer layout lifecycle response", [
+      "action",
+      "ok",
+      "requestId",
+    ]);
+    return { ...request, action: "resume", ok: true };
+  }
+  const exact = requireExactRecord(value, "Renderer layout lifecycle response", [
+    "action",
+    "error",
+    "ok",
+    "requestId",
+  ]);
   if (exact.ok !== false) {
     throw new Error("Renderer layout lifecycle response ok must be a boolean.");
   }
@@ -373,6 +415,72 @@ export function parseRendererLayoutLifecycleResponse(
     throw new Error("Renderer layout lifecycle response error is too large.");
   }
   return { ...request, ok: false, error };
+}
+
+function parseRendererLayoutDrainReceipt(
+  value: unknown,
+  requestId: string,
+): RendererLayoutDrainReceipt {
+  const record = requireExactRecord(
+    value,
+    "Renderer layout lifecycle response drainReceipt",
+    ["acceptedRevisions", "generation"],
+  );
+  const generation = requireNonEmptyString(
+    record.generation,
+    "Renderer layout lifecycle response drainReceipt generation",
+  );
+  if (generation !== requestId) {
+    throw new Error(
+      "Renderer layout lifecycle response drainReceipt generation must match requestId.",
+    );
+  }
+  if (!Array.isArray(record.acceptedRevisions)) {
+    throw new Error(
+      "Renderer layout lifecycle response drainReceipt acceptedRevisions must be an array.",
+    );
+  }
+  if (record.acceptedRevisions.length > 128) {
+    throw new Error(
+      "Renderer layout lifecycle response drainReceipt has too many accepted revisions.",
+    );
+  }
+  const seen = new Set<string>();
+  const acceptedRevisions = record.acceptedRevisions.map((value, index) => {
+    const revision = requireExactRecord(
+      value,
+      `Renderer layout lifecycle response drainReceipt revision ${index}`,
+      ["layout", "revision", "workspaceId"],
+    );
+    const workspaceId = requireNonEmptyString(
+      revision.workspaceId,
+      `Renderer layout lifecycle response drainReceipt revision ${index} workspaceId`,
+    );
+    if (!Number.isInteger(revision.revision) || Number(revision.revision) <= 0) {
+      throw new Error(
+        `Renderer layout lifecycle response drainReceipt revision ${index} must be positive.`,
+      );
+    }
+    const layout = parseWorkspaceLayoutRequest(revision.layout);
+    if (layout.workspaceId !== workspaceId) {
+      throw new Error(
+        `Renderer layout lifecycle response drainReceipt revision ${index} Workspace mismatch.`,
+      );
+    }
+    const key = `${workspaceId}:${String(revision.revision)}`;
+    if (seen.has(key)) {
+      throw new Error(
+        "Renderer layout lifecycle response drainReceipt contains a duplicate revision.",
+      );
+    }
+    seen.add(key);
+    return {
+      workspaceId,
+      revision: Number(revision.revision),
+      layout,
+    };
+  });
+  return { generation, acceptedRevisions };
 }
 
 export function parseCreateDispatchRequest(value: unknown): CreateDispatchInput {

@@ -4,6 +4,17 @@ export type WorkspaceLayoutStageResult =
   | { accepted: true }
   | { accepted: false; reason: "quiescing" };
 
+export type WorkspaceLayoutDrainAcceptedRevision = {
+  workspaceId: string;
+  revision: number;
+  layout: WorkspaceLayout;
+};
+
+export type WorkspaceLayoutDrainReceipt = {
+  generation: string;
+  acceptedRevisions: WorkspaceLayoutDrainAcceptedRevision[];
+};
+
 export type WorkbenchLayoutStageCoordinatorOptions = {
   retryDelayMs: number;
   stage(layout: WorkspaceLayout): Promise<WorkspaceLayoutStageResult>;
@@ -29,11 +40,17 @@ type WorkspaceStageState = {
   waiters: Set<IdleWaiter>;
 };
 
+type ActiveDrain = {
+  generation: string;
+  acceptedRevisions: WorkspaceLayoutDrainAcceptedRevision[];
+};
+
 export class WorkbenchLayoutStageCoordinator {
   readonly #options: WorkbenchLayoutStageCoordinatorOptions;
   readonly #workspaces = new Map<string, WorkspaceStageState>();
   #disposed = false;
   #acceptingSubmissions = true;
+  #activeDrain: ActiveDrain | null = null;
 
   constructor(options: WorkbenchLayoutStageCoordinatorOptions) {
     if (!Number.isFinite(options.retryDelayMs) || options.retryDelayMs < 0) {
@@ -71,18 +88,42 @@ export class WorkbenchLayoutStageCoordinator {
     return this.#acceptingSubmissions && !this.#disposed;
   }
 
-  async quiesceAndDrain(): Promise<void> {
+  async quiesceAndDrain(generation: string): Promise<WorkspaceLayoutDrainReceipt> {
     if (this.#disposed) {
       throw new Error("Layout stage coordinator is disposed.");
     }
-    this.#acceptingSubmissions = false;
-    for (const state of this.#workspaces.values()) {
-      state.failure = null;
-      if (state.retryTimer) clearTimeout(state.retryTimer);
-      state.retryTimer = null;
-      this.#startDrain(state);
+    if (!generation.trim()) {
+      throw new Error("Renderer layout drain generation must not be empty.");
     }
-    await this.whenIdle();
+    if (this.#activeDrain) {
+      throw new Error("Renderer layout drain is already in progress.");
+    }
+    const activeDrain: ActiveDrain = {
+      generation,
+      acceptedRevisions: [],
+    };
+    this.#activeDrain = activeDrain;
+    this.#acceptingSubmissions = false;
+    try {
+      for (const state of this.#workspaces.values()) {
+        state.failure = null;
+        if (state.retryTimer) clearTimeout(state.retryTimer);
+        state.retryTimer = null;
+        this.#startDrain(state);
+      }
+      await this.whenIdle();
+      return {
+        generation,
+        acceptedRevisions: activeDrain.acceptedRevisions
+          .map((revision) => structuredClone(revision))
+          .sort((left, right) =>
+            left.workspaceId.localeCompare(right.workspaceId) ||
+            left.revision - right.revision
+          ),
+      };
+    } finally {
+      if (this.#activeDrain === activeDrain) this.#activeDrain = null;
+    }
   }
 
   resumeSubmissions(): void {
@@ -142,6 +183,7 @@ export class WorkbenchLayoutStageCoordinator {
       while (state.pending && !this.#disposed) {
         const staged = state.pending;
         const startedWhileQuiesced = !this.#acceptingSubmissions;
+        const drainGeneration = this.#activeDrain?.generation ?? null;
         const result = await this.#options.stage(structuredClone(staged.layout));
         if (!result.accepted) {
           if (!this.#acceptingSubmissions && !startedWhileQuiesced) {
@@ -150,6 +192,16 @@ export class WorkbenchLayoutStageCoordinator {
             this.#scheduleRetry(state);
           }
           break;
+        }
+        if (
+          drainGeneration &&
+          this.#activeDrain?.generation === drainGeneration
+        ) {
+          this.#activeDrain.acceptedRevisions.push({
+            workspaceId: staged.layout.workspaceId,
+            revision: staged.revision,
+            layout: structuredClone(staged.layout),
+          });
         }
         if (state.pending?.revision === staged.revision) state.pending = null;
       }

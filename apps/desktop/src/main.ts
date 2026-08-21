@@ -31,6 +31,7 @@ import {
   parseUpdateWorkspaceContextRequest,
   parseUpdateConversationSettingsInput,
   parseWorkspaceLayoutRequest,
+  type RendererLayoutDrainReceipt,
 } from "@scopeguard/ipc-contracts";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
@@ -86,7 +87,6 @@ let shutdownComplete = false;
 const phase3ShutdownEvents: string[] = [];
 let phase3LateLayoutStageAttempts = 0;
 let phase3QuiescedLayoutStageAttempts = 0;
-let phase3RendererDrainActive = false;
 let phase3LayoutDrainEvidence: Phase3LayoutDrainEvidence | null = null;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
 
@@ -257,21 +257,10 @@ async function startApplication(): Promise<void> {
   layoutFence = new LayoutPersistenceFence({
     timeoutMs: 5_000,
     drainRenderer: async () => {
-      const recordsTargetRevision = Boolean(
-        isPhase3DesktopPilot() && shutdownStarted && phase3LayoutDrainEvidence,
-      );
-      if (recordsTargetRevision) {
-        phase3RendererDrainActive = true;
-        phase3LayoutDrainEvidence?.recordRendererDrainStarted();
-      }
-      try {
-        const acknowledged = await drainRendererLayouts();
-        if (shutdownStarted && acknowledged) {
-          phase3LayoutDrainEvidence?.recordRendererDrainAcknowledged();
-          recordPhase3ShutdownEvent("renderer-layout-drained");
-        }
-      } finally {
-        phase3RendererDrainActive = false;
+      const receipt = await drainRendererLayouts();
+      if (shutdownStarted && receipt) {
+        phase3LayoutDrainEvidence?.recordDrainReceipt(receipt);
+        recordPhase3ShutdownEvent("renderer-layout-drained");
       }
     },
     resumeRenderer: () => resumeRendererLayouts(),
@@ -386,9 +375,14 @@ async function createMainWindow(): Promise<BrowserWindow> {
     void runLayoutTransient("BrowserWindow close", async () => {
       closeAllowed = true;
       await closeBrowserWindow(window);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       closeAllowed = false;
       closePending = false;
+      console.error(
+        `[scopeguard] BrowserWindow close was blocked: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     });
   });
   window.on("closed", () => {
@@ -587,11 +581,7 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
     ) {
       phase3LateLayoutStageAttempts += 1;
     }
-    phase3LayoutDrainEvidence?.recordStage(
-      layout,
-      result,
-      phase3RendererDrainActive,
-    );
+    phase3LayoutDrainEvidence?.recordStage(layout, result);
     return result;
   });
   ipcMain.handle(IPC_CHANNELS.flushWorkspaceLayouts, async (event) => {
@@ -710,13 +700,12 @@ function requireLayoutPersistence(): WorkbenchLayoutPersistence {
   return layoutPersistence;
 }
 
-async function drainRendererLayouts(): Promise<boolean> {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
+async function drainRendererLayouts(): Promise<RendererLayoutDrainReceipt | null> {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
   if (!rendererLayoutLifecycle) {
     throw new Error("Renderer layout lifecycle client is unavailable.");
   }
-  await rendererLayoutLifecycle.drain();
-  return true;
+  return rendererLayoutLifecycle.drain();
 }
 
 function resumeRendererLayouts(): Promise<void> {

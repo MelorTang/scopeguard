@@ -1,12 +1,13 @@
 import {
   parseRendererLayoutLifecycleResponse,
+  type RendererLayoutDrainReceipt,
   type RendererLayoutLifecycleAction,
   type RendererLayoutLifecycleRequest,
 } from "@scopeguard/ipc-contracts";
 
 type PendingRequest = {
   action: RendererLayoutLifecycleAction;
-  resolve(): void;
+  resolve(value?: RendererLayoutDrainReceipt): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
 };
@@ -33,7 +34,7 @@ export class RendererLayoutLifecycleClient {
     this.#options = options;
   }
 
-  drain(): Promise<void> {
+  drain(): Promise<RendererLayoutDrainReceipt> {
     return this.#request("drain");
   }
 
@@ -51,8 +52,13 @@ export class RendererLayoutLifecycleClient {
     }
     clearTimeout(pending.timer);
     this.#pending.delete(response.requestId);
-    if (response.ok) pending.resolve();
-    else pending.reject(new Error(response.error));
+    if (response.ok && response.action === "drain") {
+      pending.resolve(response.drainReceipt);
+    } else if (response.ok) {
+      pending.resolve();
+    } else {
+      pending.reject(new Error(response.error));
+    }
     return true;
   }
 
@@ -66,7 +72,11 @@ export class RendererLayoutLifecycleClient {
     this.#pending.clear();
   }
 
-  #request(action: RendererLayoutLifecycleAction): Promise<void> {
+  #request(action: "drain"): Promise<RendererLayoutDrainReceipt>;
+  #request(action: "resume"): Promise<void>;
+  #request(
+    action: RendererLayoutLifecycleAction,
+  ): Promise<RendererLayoutDrainReceipt | void> {
     if (this.#disposed) {
       return Promise.reject(new Error("Renderer layout lifecycle client is disposed."));
     }
@@ -75,7 +85,7 @@ export class RendererLayoutLifecycleClient {
       requestId: `layout-lifecycle-${this.#sequence}`,
       action,
     };
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<RendererLayoutDrainReceipt | void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(request.requestId);
         reject(new Error(

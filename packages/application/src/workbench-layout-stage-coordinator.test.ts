@@ -104,7 +104,7 @@ test("terminal quiesce drains every Workspace immediately and blocks new submiss
   await waitFor(() => attempts.length === 2);
   mainQuiescing = false;
 
-  const drained = coordinator.quiesceAndDrain();
+  const drained = coordinator.quiesceAndDrain("terminal-drain");
   await assert.rejects(
     () => coordinator.submit(layout("workspace-a", 680)),
     /quiescing/i,
@@ -145,7 +145,7 @@ test("terminal drain overtakes a stale quiescing response without waiting its re
 
   const submitted = coordinator.submit(layout("workspace-a", 560));
   await firstAttempt;
-  const drained = coordinator.quiesceAndDrain();
+  const drained = coordinator.quiesceAndDrain("terminal-drain");
   releaseFirst?.();
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -163,6 +163,74 @@ test("terminal drain overtakes a stale quiescing response without waiting its re
   }
 
   assert.equal(attempts, 2);
+  coordinator.dispose();
+});
+
+test("Renderer drain receipt contains only exact Workspace revisions started by its generation", async () => {
+  const attempts: string[] = [];
+  let mainQuiescing = true;
+  const coordinator = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 1_000,
+    async stage(value) {
+      attempts.push(`${value.workspaceId}:${value.paneWidths[0]}`);
+      if (mainQuiescing) return { accepted: false, reason: "quiescing" };
+      return { accepted: true };
+    },
+  });
+  const workspaceA = coordinator.submit(layout("workspace-a", 560));
+  const workspaceB = coordinator.submit(layout("workspace-b", 620));
+  await waitFor(() => attempts.length === 2);
+  mainQuiescing = false;
+
+  const receipt = await coordinator.quiesceAndDrain("drain-generation-1");
+  await Promise.all([workspaceA, workspaceB]);
+
+  assert.deepEqual(receipt, {
+    generation: "drain-generation-1",
+    acceptedRevisions: [
+      {
+        workspaceId: "workspace-a",
+        revision: 1,
+        layout: layout("workspace-a", 560),
+      },
+      {
+        workspaceId: "workspace-b",
+        revision: 1,
+        layout: layout("workspace-b", 620),
+      },
+    ],
+  });
+  coordinator.dispose();
+});
+
+test("ordinary retry accepted after drain request is excluded before Renderer enters generation", async () => {
+  let releaseAttempt: (() => void) | undefined;
+  let attemptStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    attemptStarted = resolve;
+  });
+  const coordinator = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 1_000,
+    async stage() {
+      attemptStarted?.();
+      await new Promise<void>((resolve) => {
+        releaseAttempt = resolve;
+      });
+      return { accepted: true };
+    },
+  });
+
+  const submitted = coordinator.submit(layout("workspace-a", 560));
+  await started;
+  const draining = coordinator.quiesceAndDrain("drain-generation-race");
+  releaseAttempt?.();
+  const receipt = await draining;
+  await submitted;
+
+  assert.deepEqual(receipt, {
+    generation: "drain-generation-race",
+    acceptedRevisions: [],
+  });
   coordinator.dispose();
 });
 

@@ -5,14 +5,16 @@ import type { WorkspaceLayout } from "@scopeguard/domain";
 
 import { Phase3LayoutDrainEvidence } from "./phase3-layout-drain-evidence.js";
 
-test("proves the target revision was rejected then accepted only during Renderer drain", () => {
+test("proves the exact target revision was accepted by a Renderer drain generation", () => {
   const target = layout(560);
   const evidence = new Phase3LayoutDrainEvidence(target);
 
-  evidence.recordStage(target, { accepted: false, reason: "quiescing" }, false);
-  evidence.recordRendererDrainStarted();
-  evidence.recordStage(target, { accepted: true }, true);
-  evidence.recordRendererDrainAcknowledged();
+  evidence.recordStage(target, { accepted: false, reason: "quiescing" });
+  evidence.recordStage(target, { accepted: true });
+  evidence.recordDrainReceipt({
+    generation: "layout-lifecycle-7",
+    acceptedRevisions: [{ workspaceId: "workspace", revision: 2, layout: target }],
+  });
   evidence.recordMainSuspended();
   evidence.recordSqliteFlushed();
 
@@ -20,33 +22,37 @@ test("proves the target revision was rejected then accepted only during Renderer
     targetRevisionRejectedWhileQuiescing: true,
     targetRevisionAcceptedDuringRendererDrain: true,
     targetRevisionAcceptedOutsideRendererDrain: false,
+    targetDrainReceipt: {
+      generation: "layout-lifecycle-7",
+      acceptedRevision: { workspaceId: "workspace", revision: 2, layout: target },
+    },
     events: [
       "target-revision-rejected-quiescing",
-      "renderer-drain-started",
-      "target-revision-accepted-during-renderer-drain",
-      "renderer-drain-acknowledged",
+      "target-revision-accepted-by-main",
+      "target-revision-confirmed-by-renderer-drain-receipt",
       "main-suspended",
       "sqlite-flushed",
     ],
   });
 });
 
-test("exposes a normal retry that accepts the target revision before Renderer drain", () => {
+test("fails causality when an ordinary retry is accepted after drain request but before generation", () => {
   const target = layout(560);
   const evidence = new Phase3LayoutDrainEvidence(target);
 
-  evidence.recordStage(target, { accepted: false, reason: "quiescing" }, false);
-  evidence.recordStage(target, { accepted: true }, false);
-  evidence.recordRendererDrainStarted();
-  evidence.recordRendererDrainAcknowledged();
+  evidence.recordStage(target, { accepted: false, reason: "quiescing" });
+  evidence.recordStage(target, { accepted: true });
+  evidence.recordDrainReceipt({
+    generation: "layout-lifecycle-8",
+    acceptedRevisions: [],
+  });
 
   assert.equal(evidence.snapshot().targetRevisionAcceptedDuringRendererDrain, false);
   assert.equal(evidence.snapshot().targetRevisionAcceptedOutsideRendererDrain, true);
+  assert.equal(evidence.snapshot().targetDrainReceipt, null);
   assert.deepEqual(evidence.snapshot().events, [
     "target-revision-rejected-quiescing",
-    "target-revision-accepted-outside-renderer-drain",
-    "renderer-drain-started",
-    "renderer-drain-acknowledged",
+    "target-revision-accepted-by-main",
   ]);
 });
 

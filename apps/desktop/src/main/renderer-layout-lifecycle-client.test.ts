@@ -17,13 +17,15 @@ test("waits for an exact drain acknowledgement from the target Renderer", async 
     requestId: "layout-lifecycle-1",
     action: "drain",
     ok: true,
+    drainReceipt: drainReceipt("layout-lifecycle-1"),
   }), false);
   assert.equal(client.handleResponse(17, {
     requestId: "layout-lifecycle-1",
     action: "drain",
     ok: true,
+    drainReceipt: drainReceipt("layout-lifecycle-1"),
   }), true);
-  await draining;
+  assert.deepEqual(await draining, drainReceipt("layout-lifecycle-1"));
 });
 
 test("times out a missing drain acknowledgement and can complete a later resume", async () => {
@@ -60,7 +62,7 @@ test("propagates Renderer lifecycle failures without accepting malformed respons
     requestId: "layout-lifecycle-1",
     action: "drain",
     ok: true,
-    extra: true,
+    drainReceipt: drainReceipt("forged-generation"),
   }), /lifecycle response/i);
   client.handleResponse(17, {
     requestId: "layout-lifecycle-1",
@@ -70,3 +72,21 @@ test("propagates Renderer lifecycle failures without accepting malformed respons
   });
   await assert.rejects(() => draining, /Renderer coordinator failed/);
 });
+
+function drainReceipt(generation: string) {
+  return {
+    generation,
+    acceptedRevisions: [{
+      workspaceId: "workspace",
+      revision: 3,
+      layout: {
+        workspaceId: "workspace",
+        openConversationIds: ["conversation"],
+        paneConversationIds: ["conversation"],
+        paneWidths: [560],
+        activeConversationId: "conversation",
+        requestedPaneCount: 1,
+      },
+    }],
+  };
+}

@@ -89,7 +89,7 @@ export class LayoutPersistenceFence {
       this.#options.suspend();
       mainSuspended = true;
       await this.#flush(reason);
-      await action();
+      await this.#runAction(reason, action);
       completed = true;
     } catch (error) {
       operationError = error;
@@ -160,6 +160,24 @@ export class LayoutPersistenceFence {
     } catch (cause) {
       const error = asError(cause);
       const message = `${reason} blocked because the latest Workspace layout could not be saved: ${error.message}`;
+      this.#options.reportError(message);
+      throw new Error(message, { cause: error });
+    }
+  }
+
+  async #runAction(
+    reason: string,
+    action: () => void | Promise<void>,
+  ): Promise<void> {
+    try {
+      await withTimeout(
+        Promise.resolve().then(action),
+        this.#options.timeoutMs,
+        `Destructive lifecycle action timed out after ${this.#options.timeoutMs}ms.`,
+      );
+    } catch (cause) {
+      const error = asError(cause);
+      const message = `${reason} blocked because the destructive lifecycle action failed: ${error.message}`;
       this.#options.reportError(message);
       throw new Error(message, { cause: error });
     }

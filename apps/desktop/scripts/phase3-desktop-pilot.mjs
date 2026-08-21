@@ -49,7 +49,7 @@ try {
   assert.equal(first.lateLayoutMutationArmed, true);
   assert.equal(first.terminalLayoutDrainRaceArmed, true);
   assertShutdownEvidence(firstShutdown, 1);
-  assertTargetLayoutDrainEvidence(firstShutdown.targetLayoutDrain);
+  assertTargetLayoutDrainEvidence(firstShutdown.targetLayoutDrain, first.layout);
   assert.ok(firstShutdown.quiescedLayoutStageAttempts >= 1);
   assert.equal(first.rendererApi, "production-preload-ipc");
   assert.equal(first.clipboardVerified, true);
@@ -211,16 +211,22 @@ function assertShutdownEvidence(evidence, phase) {
   assert.equal(evidence.rendererDrainAcknowledgedBeforeMainSuspend, true);
 }
 
-function assertTargetLayoutDrainEvidence(evidence) {
+function assertTargetLayoutDrainEvidence(evidence, expectedLayout) {
   assert.ok(evidence);
   assert.equal(evidence.targetRevisionRejectedWhileQuiescing, true);
   assert.equal(evidence.targetRevisionAcceptedDuringRendererDrain, true);
   assert.equal(evidence.targetRevisionAcceptedOutsideRendererDrain, false);
+  assert.match(evidence.targetDrainReceipt.generation, /^layout-lifecycle-\d+$/);
+  assert.equal(
+    evidence.targetDrainReceipt.acceptedRevision.workspaceId,
+    expectedLayout.workspaceId,
+  );
+  assert.ok(evidence.targetDrainReceipt.acceptedRevision.revision > 0);
+  assert.deepEqual(evidence.targetDrainReceipt.acceptedRevision.layout, expectedLayout);
   assert.deepEqual(evidence.events, [
     "target-revision-rejected-quiescing",
-    "renderer-drain-started",
-    "target-revision-accepted-during-renderer-drain",
-    "renderer-drain-acknowledged",
+    "target-revision-accepted-by-main",
+    "target-revision-confirmed-by-renderer-drain-receipt",
     "main-suspended",
     "sqlite-flushed",
   ]);

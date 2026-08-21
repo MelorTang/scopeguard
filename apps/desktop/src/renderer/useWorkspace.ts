@@ -160,8 +160,7 @@ export function useWorkspace(): WorkspaceController {
   useEffect(() => {
     const unsubscribe = desktopApi.subscribeRendererLayoutLifecycleRequests(async (request) => {
       if (request.action === "drain") {
-        await layoutStageCoordinator.quiesceAndDrain();
-        return;
+        return await layoutStageCoordinator.quiesceAndDrain(request.requestId);
       }
       layoutStageCoordinator.resumeSubmissions();
     });
