@@ -234,43 +234,70 @@ export class AgentHostClient {
     const child = this.#child;
     if (!child) return;
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       let timeout: ReturnType<typeof setTimeout> | null = null;
       let settled = false;
+      const cleanup = (): void => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        child.removeListener("exit", finish);
+      };
       const finish = (): void => {
         if (settled) {
           return;
         }
         settled = true;
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-        child.removeListener("exit", finish);
+        cleanup();
         if (this.#child === child) {
           this.#child = null;
         }
         resolve();
       };
+      const fail = (stopError: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(stopError);
+      };
+      const forceTermination = (): void => {
+        if (settled) return;
+        let accepted: boolean;
+        try {
+          accepted = child.kill();
+        } catch (killError) {
+          fail(new Error(
+            `Agent host ${child.pid} could not be terminated: ${asError(killError).message}`,
+            { cause: killError },
+          ));
+          return;
+        }
+        if (settled) return;
+        if (!accepted) {
+          fail(new Error(`Agent host ${child.pid} could not be terminated.`));
+          return;
+        }
+        timeout = setTimeout(() => {
+          fail(new Error(
+            `Agent host ${child.pid} did not exit after forced termination within ${this.#shutdownTimeoutMs}ms.`,
+          ));
+        }, this.#shutdownTimeoutMs);
+      };
 
       child.once("exit", finish);
-      timeout = setTimeout(() => {
-        try {
-          child.kill();
-        } finally {
-          finish();
-        }
-      }, this.#shutdownTimeoutMs);
+      timeout = setTimeout(forceTermination, this.#shutdownTimeoutMs);
 
       try {
         child.postMessage({
           type: "host-shutdown",
         } satisfies MainToAgentHostMessage);
       } catch {
-        try {
-          child.kill();
-        } finally {
-          finish();
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
         }
+        forceTermination();
       }
     });
   }

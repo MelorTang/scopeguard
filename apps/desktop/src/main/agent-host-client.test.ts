@@ -110,6 +110,35 @@ test("uses graceful shutdown first and kills an unresponsive Agent host", async 
   assert.equal(forced.killed, true);
 });
 
+test("stop fails without clearing a live Agent host when forced termination is rejected", async () => {
+  const child = new FakeUtilityProcess();
+  child.autoExitOnShutdown = false;
+  child.killResult = false;
+  const client = createClient(() => child, { shutdownTimeoutMs: 10 });
+  queueMicrotask(() => child.message({ type: "host-ready", interruptedRuns: 0 }));
+  await client.start();
+
+  await assert.rejects(client.stop(), /could not be terminated/i);
+  assert.equal(client.processId, child.pid);
+
+  child.killResult = true;
+  await client.stop();
+  assert.equal(client.processId, null);
+});
+
+test("stop fails when forced termination is accepted but no exit is observed", async () => {
+  const child = new FakeUtilityProcess();
+  child.autoExitOnShutdown = false;
+  child.autoExitOnKill = false;
+  const client = createClient(() => child, { shutdownTimeoutMs: 10 });
+  queueMicrotask(() => child.message({ type: "host-ready", interruptedRuns: 0 }));
+  await client.start();
+
+  await assert.rejects(client.stop(), /did not exit after forced termination/i);
+  assert.equal(client.processId, child.pid);
+  child.exit(137);
+});
+
 let nextPid = 10_000;
 
 class FakeUtilityProcess extends EventEmitter {
@@ -118,6 +147,8 @@ class FakeUtilityProcess extends EventEmitter {
   readonly messages: unknown[] = [];
   killed = false;
   autoExitOnShutdown = true;
+  autoExitOnKill = true;
+  killResult = true;
   onPost: ((message: unknown) => void) | null = null;
   #exited = false;
 
@@ -131,9 +162,9 @@ class FakeUtilityProcess extends EventEmitter {
   }
 
   kill(): boolean {
-    if (this.killed) return false;
+    if (this.killed || !this.killResult) return false;
     this.killed = true;
-    queueMicrotask(() => this.exit(137));
+    if (this.autoExitOnKill) queueMicrotask(() => this.exit(137));
     return true;
   }
 
