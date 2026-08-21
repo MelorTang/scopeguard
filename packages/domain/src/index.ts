@@ -574,6 +574,7 @@ export type ArtifactVersion = {
   artifactId: Id;
   version: number;
   parentVersionId: Id | null;
+  inputs: WorkspaceFileVersion[];
   source: WorkspaceFileVersion | null;
   contentHash: Sha256Digest;
   byteSize: number;
@@ -607,6 +608,7 @@ export type CreateArtifactInput = {
 export type CreateArtifactVersionInput = {
   artifactId: Id;
   parentVersionId?: Id | null;
+  inputs?: WorkspaceFileVersion[];
   source?: WorkspaceFileVersion | null;
   contentHash: Sha256Digest;
   byteSize: number;
@@ -704,6 +706,7 @@ export function parseArtifactVersion(value: unknown): ArtifactVersion {
     "contentHash",
     "createdAt",
     "id",
+    "inputs",
     "limitations",
     "parentVersionId",
     "producedByConversationId",
@@ -729,6 +732,13 @@ export function parseArtifactVersion(value: unknown): ArtifactVersion {
   if (new Set(limitations).size !== limitations.length) {
     throw new Error("Artifact Version limitations must not contain duplicates.");
   }
+  if (!Array.isArray(record.inputs) || record.inputs.length > 64) {
+    throw new Error("Artifact Version inputs must be a bounded Workspace File array.");
+  }
+  const inputs = record.inputs.map(parseWorkspaceFileVersion);
+  if (new Set(inputs.map(({ relativePath }) => relativePath)).size !== inputs.length) {
+    throw new Error("Artifact Version input paths must not contain duplicates.");
+  }
   const version = nonNegativeSafeInteger(record.version, "Artifact Version number");
   if (version < 1) throw new Error("Artifact Version number must be at least 1.");
   return {
@@ -736,6 +746,7 @@ export function parseArtifactVersion(value: unknown): ArtifactVersion {
     artifactId: requiredId(record.artifactId, "Artifact Version artifactId"),
     version,
     parentVersionId: nullableId(record.parentVersionId, "Artifact Version parentVersionId"),
+    inputs,
     source: record.source === null ? null : parseWorkspaceFileVersion(record.source),
     contentHash: parseSha256Digest(record.contentHash, "Artifact Version contentHash"),
     byteSize: nonNegativeSafeInteger(record.byteSize, "Artifact Version byteSize"),

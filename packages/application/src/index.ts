@@ -11,6 +11,7 @@ import {
   validateProviderProfileInput,
   type Agent,
   type AgentRun,
+  type Artifact,
   type ApprovalDecision,
   type Conversation,
   type ConversationMessage,
@@ -34,13 +35,31 @@ import {
   type ToolPermission,
   type UpdateConversationSettingsInput,
   type Workspace,
+  type WorkspaceCenterState,
+  type WorkspaceFileVersion,
   type WorkspaceLayout,
   type WorkspaceContextRevision,
   type WorkspaceSnapshot,
 } from "@scopeguard/domain";
 
 import { DispatchWorkflow } from "./dispatch-workflow.js";
+import {
+  ArtifactWorkflow,
+  type CaptureWorkspaceFileInput,
+  type CapturedArtifactVersion,
+  type ExportArtifactVersionInput,
+} from "./artifact-workflow.js";
 import { WorkbenchLayoutService } from "./workbench-layout.js";
+
+export {
+  ArtifactWorkflow,
+  WorkspaceFileConflictError,
+} from "./artifact-workflow.js";
+export type {
+  CaptureWorkspaceFileInput,
+  CapturedArtifactVersion,
+  ExportArtifactVersionInput,
+} from "./artifact-workflow.js";
 
 export interface WorkspaceStore {
   getWorkspaceSnapshot(): WorkspaceSnapshot;
@@ -58,6 +77,8 @@ export interface WorkspaceStore {
   getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null;
   listWorkspaceLayouts(): WorkspaceLayout[];
   saveWorkspaceLayout(layout: WorkspaceLayout): WorkspaceLayout;
+  setArtifactCurrentVersion(artifactId: Id, versionId: Id): Artifact;
+  saveWorkspaceCenterState(state: WorkspaceCenterState): WorkspaceCenterState;
   setConversationSession(id: Id, locator: Conversation["piSession"] extends infer T ? Exclude<T, null> : never): Conversation;
   createRun(conversationId: Id, config: RunConfigSnapshot): AgentRun;
   getRun(id: Id): AgentRun | null;
@@ -99,6 +120,11 @@ export interface ScopeGuardCore {
   updateConversationSettings(input: UpdateConversationSettingsInput): Conversation;
   getWorkspaceLayout(workspaceId: Id): WorkspaceLayout | null;
   saveWorkspaceLayout(layout: WorkspaceLayout): WorkspaceLayout;
+  captureWorkspaceFile(input: CaptureWorkspaceFileInput): Promise<CapturedArtifactVersion>;
+  exportArtifactVersion(input: ExportArtifactVersionInput): Promise<WorkspaceFileVersion>;
+  prepareArtifactVersionOpen(versionId: Id): Promise<string>;
+  setArtifactCurrentVersion(artifactId: Id, versionId: Id): Artifact;
+  saveWorkspaceCenterState(state: WorkspaceCenterState): WorkspaceCenterState;
   listConversationMessages(conversationId: Id): ConversationMessage[];
   createDispatch(input: CreateDispatchInput): Dispatch;
   listDispatches(workspaceId: Id): Dispatch[];
@@ -123,11 +149,13 @@ export class ScopeGuardApplication implements ScopeGuardCore {
   readonly #approvals = new ApprovalWaiters();
   readonly #layouts: WorkbenchLayoutService;
   readonly #dispatches: DispatchWorkflow;
+  readonly #artifacts: ArtifactWorkflow | null;
 
   constructor(options: {
     store: WorkspaceStore;
     secrets: SecretVault;
     runtime: PiRuntimeSupervisor;
+    artifacts?: ArtifactWorkflow;
     publish?: RunEventPublisher;
     approvalTimeoutMs?: number;
   }) {
@@ -137,6 +165,7 @@ export class ScopeGuardApplication implements ScopeGuardCore {
     this.#publish = options.publish ?? (() => {});
     this.#layouts = new WorkbenchLayoutService(options.store);
     this.#dispatches = new DispatchWorkflow(options.store);
+    this.#artifacts = options.artifacts ?? null;
     this.#approvalTimeoutMs = options.approvalTimeoutMs ?? 180_000;
     if (!Number.isSafeInteger(this.#approvalTimeoutMs) || this.#approvalTimeoutMs <= 0) {
       throw new Error("Approval timeout must be a positive integer.");
@@ -258,6 +287,26 @@ export class ScopeGuardApplication implements ScopeGuardCore {
 
   saveWorkspaceLayout(layout: WorkspaceLayout): WorkspaceLayout {
     return this.#layouts.save(layout);
+  }
+
+  captureWorkspaceFile(input: CaptureWorkspaceFileInput): Promise<CapturedArtifactVersion> {
+    return this.#requireArtifactWorkflow().captureWorkspaceFile(input);
+  }
+
+  exportArtifactVersion(input: ExportArtifactVersionInput): Promise<WorkspaceFileVersion> {
+    return this.#requireArtifactWorkflow().exportArtifactVersion(input);
+  }
+
+  prepareArtifactVersionOpen(versionId: Id): Promise<string> {
+    return this.#requireArtifactWorkflow().prepareArtifactVersionOpen(versionId);
+  }
+
+  setArtifactCurrentVersion(artifactId: Id, versionId: Id): Artifact {
+    return this.#store.setArtifactCurrentVersion(artifactId, versionId);
+  }
+
+  saveWorkspaceCenterState(state: WorkspaceCenterState): WorkspaceCenterState {
+    return this.#store.saveWorkspaceCenterState(state);
   }
 
   listConversationMessages(conversationId: Id): ConversationMessage[] {
@@ -577,6 +626,13 @@ export class ScopeGuardApplication implements ScopeGuardCore {
   }
   requireRun(id: Id): AgentRun {
     const value = this.#store.getRun(id); if (!value) throw new Error(`Run not found: ${id}`); return value;
+  }
+
+  #requireArtifactWorkflow(): ArtifactWorkflow {
+    if (!this.#artifacts) {
+      throw new Error("Artifact file workflow is unavailable.");
+    }
+    return this.#artifacts;
   }
 
   emitStatus(run: AgentRun): void {

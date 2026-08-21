@@ -54,7 +54,7 @@ type Row = Record<string, unknown>;
 const TERMINAL: RunStatus[] = ["completed", "failed", "cancelled", "interrupted"];
 const EXPECTED_SCHEMA_COLUMNS = {
   agents: ["id", "workspace_id", "name", "instructions", "provider_profile_id", "model_override", "default_execution_profile", "tool_policy_json", "created_at", "updated_at"],
-  artifact_versions: ["id", "artifact_id", "version", "parent_version_id", "source_json", "content_hash", "byte_size", "storage_key", "produced_by_conversation_id", "produced_by_run_id", "toolchain", "limitations_json", "created_at"],
+  artifact_versions: ["id", "artifact_id", "version", "parent_version_id", "inputs_json", "source_json", "content_hash", "byte_size", "storage_key", "produced_by_conversation_id", "produced_by_run_id", "toolchain", "limitations_json", "created_at"],
   artifacts: ["id", "workspace_id", "title", "format", "source_relative_path", "current_version_id", "associated_conversation_id", "created_at", "updated_at"],
   center_state: ["workspace_id", "state_json"],
   conversations: ["id", "workspace_id", "agent_id", "title", "status", "model_override", "execution_profile", "pi_session_file", "pi_session_id", "pi_version", "pi_session_version", "created_at", "updated_at"],
@@ -66,6 +66,20 @@ const EXPECTED_SCHEMA_COLUMNS = {
   tool_approvals: ["id", "run_id", "status", "reason", "process_id", "request_id", "pi_tool_call_id", "tool_name", "canonical_input_json", "canonical_input_sha256", "created_at", "tool_call_id", "resolved_at"],
   workspace_context_revisions: ["id", "workspace_id", "version", "parent_id", "title", "content", "source_conversation_id", "source_run_id", "published_by", "created_at"],
   workspaces: ["id", "name", "local_root_path", "current_context_revision_id", "created_at", "updated_at", "last_opened_at"],
+} as const;
+const PHASE3_SCHEMA_VERSION = 1;
+const PHASE3_SCHEMA_COLUMNS = {
+  agents: EXPECTED_SCHEMA_COLUMNS.agents,
+  artifacts: ["id", "workspace_id", "metadata_json"],
+  conversations: EXPECTED_SCHEMA_COLUMNS.conversations,
+  dispatches: EXPECTED_SCHEMA_COLUMNS.dispatches,
+  layout_state: EXPECTED_SCHEMA_COLUMNS.layout_state,
+  provider_profiles: EXPECTED_SCHEMA_COLUMNS.provider_profiles,
+  runs: EXPECTED_SCHEMA_COLUMNS.runs,
+  schema_metadata: EXPECTED_SCHEMA_COLUMNS.schema_metadata,
+  tool_approvals: EXPECTED_SCHEMA_COLUMNS.tool_approvals,
+  workspace_context_revisions: EXPECTED_SCHEMA_COLUMNS.workspace_context_revisions,
+  workspaces: EXPECTED_SCHEMA_COLUMNS.workspaces,
 } as const;
 const ACTIVE_RUN_INDEX_NAME = "one_active_run_per_conversation";
 const ACTIVE_RUN_INDEX_SQL = `CREATE UNIQUE INDEX ${ACTIVE_RUN_INDEX_NAME} ON runs(conversation_id)
@@ -97,13 +111,23 @@ export class ScopeGuardStore {
   }
 
   getWorkspaceSnapshot(): WorkspaceSnapshot {
+    const recentRuns = this.listRecentRuns();
+    const seenRunIds = new Set(recentRuns.map(({ id }) => id));
+    for (const version of this.listArtifactVersions()) {
+      if (!version.producedByRunId || seenRunIds.has(version.producedByRunId)) continue;
+      const run = this.getRun(version.producedByRunId);
+      if (run) {
+        recentRuns.push(run);
+        seenRunIds.add(run.id);
+      }
+    }
     return {
       workspaces: this.listWorkspaces(),
       providerProfiles: this.listProviderProfiles(),
       agents: this.listAgents(),
       conversations: this.listConversations(),
       activeRuns: this.listActiveRuns(),
-      recentRuns: this.listRecentRuns(),
+      recentRuns,
       pendingApprovals: this.listPendingApprovals().map((approval) => ({
         approval,
         toolCall: approvalToolCall(approval),
@@ -347,6 +371,14 @@ export class ScopeGuardStore {
         throw new Error("Artifact Version parent must belong to the same Artifact.");
       }
     }
+    if ((input.parentVersionId ?? null) !== artifact.currentVersionId) {
+      throw new Error("Artifact Version parent must be the selected current Version.");
+    }
+    for (const inputFile of input.inputs ?? []) {
+      if (inputFile.workspaceId !== artifact.workspaceId) {
+        throw new Error("Artifact Version inputs must belong to the Artifact Workspace.");
+      }
+    }
     if (input.source?.workspaceId !== undefined && input.source.workspaceId !== artifact.workspaceId) {
       throw new Error("Artifact Version source must belong to the Artifact Workspace.");
     }
@@ -358,6 +390,9 @@ export class ScopeGuardStore {
     }
     if (input.producedByRunId) {
       const run = this.requireRun(input.producedByRunId);
+      if (run.status !== "completed" || run.effect !== "confirmed") {
+        throw new Error("Artifact Version Run must be completed with confirmed Tool effects.");
+      }
       const conversation = this.requireConversation(run.conversationId);
       if (
         conversation.workspaceId !== artifact.workspaceId ||
@@ -376,6 +411,7 @@ export class ScopeGuardStore {
       artifactId: artifact.id,
       version: asNumber(next?.next_version),
       parentVersionId: input.parentVersionId ?? null,
+      inputs: input.inputs ?? [],
       source: input.source ?? null,
       contentHash: input.contentHash,
       byteSize: input.byteSize,
@@ -385,6 +421,9 @@ export class ScopeGuardStore {
       limitations: input.limitations ?? [],
       createdAt: now,
     });
+    if (storageKey !== `${version.contentHash.slice(0, 2)}/${version.contentHash}`) {
+      throw new Error("Artifact storage key must match the Version content identity.");
+    }
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       const current = this.#get(
@@ -394,12 +433,20 @@ export class ScopeGuardStore {
       if (asNumber(current?.next_version) !== version.version) {
         throw new Error("Artifact Version changed while publication was being prepared.");
       }
+      const selected = this.#get(
+        "SELECT current_version_id FROM artifacts WHERE id = ?",
+        artifact.id,
+      );
+      if (asNullableString(selected?.current_version_id) !== version.parentVersionId) {
+        throw new Error("Artifact current Version changed while publication was being prepared.");
+      }
       this.#run(
-        "INSERT INTO artifact_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO artifact_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         version.id,
         version.artifactId,
         version.version,
         version.parentVersionId,
+        JSON.stringify(version.inputs),
         version.source ? JSON.stringify(version.source) : null,
         version.contentHash,
         version.byteSize,
@@ -771,10 +818,16 @@ export class ScopeGuardStore {
       const columns = this.#all("PRAGMA table_info(schema_metadata)").map((row) => asString(row.name));
       if (!columns.includes("schema_id") || !columns.includes("schema_version")) throw incompatibleSchema();
       const metadata = this.#get("SELECT schema_id, schema_version FROM schema_metadata");
-      if (
-        !metadata || asString(metadata.schema_id) !== SCOPEGUARD_SCHEMA_ID ||
-        asNumber(metadata.schema_version) !== SCOPEGUARD_SCHEMA_VERSION
-      ) throw incompatibleSchema();
+      if (!metadata || asString(metadata.schema_id) !== SCOPEGUARD_SCHEMA_ID) {
+        throw incompatibleSchema();
+      }
+      const version = asNumber(metadata.schema_version);
+      if (version === PHASE3_SCHEMA_VERSION) {
+        this.#migratePhase3Schema();
+        this.#validateSchema();
+        return;
+      }
+      if (version !== SCOPEGUARD_SCHEMA_VERSION) throw incompatibleSchema();
       this.#validateSchema();
       return;
     }
@@ -845,6 +898,7 @@ export class ScopeGuardStore {
         artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
         version INTEGER NOT NULL,
         parent_version_id TEXT REFERENCES artifact_versions(id),
+        inputs_json TEXT NOT NULL,
         source_json TEXT,
         content_hash TEXT NOT NULL,
         byte_size INTEGER NOT NULL,
@@ -865,6 +919,86 @@ export class ScopeGuardStore {
       COMMIT;
     `);
     this.#validateSchema();
+  }
+
+  #migratePhase3Schema(): void {
+    const expectedTables = Object.keys(PHASE3_SCHEMA_COLUMNS).sort();
+    if (JSON.stringify(this.listSchemaTables()) !== JSON.stringify(expectedTables)) {
+      throw incompatibleSchema();
+    }
+    for (const [table, expectedColumns] of Object.entries(PHASE3_SCHEMA_COLUMNS)) {
+      const actualColumns = this.#all(`PRAGMA table_info(${table})`)
+        .map((row) => asString(row.name));
+      if (JSON.stringify(actualColumns) !== JSON.stringify(expectedColumns)) {
+        throw incompatibleSchema();
+      }
+    }
+    const activeRunIndex = this.#all("PRAGMA index_list(runs)")
+      .find((row) => row.name === ACTIVE_RUN_INDEX_NAME);
+    const activeRunIndexDefinition = this.#get(
+      "SELECT tbl_name, sql FROM sqlite_master WHERE type='index' AND name=?",
+      ACTIVE_RUN_INDEX_NAME,
+    );
+    if (
+      !activeRunIndex ||
+      asNumber(activeRunIndex.unique) !== 1 ||
+      asNumber(activeRunIndex.partial) !== 1 ||
+      asString(activeRunIndex.origin) !== "c" ||
+      JSON.stringify(this.#all(`PRAGMA index_info(${ACTIVE_RUN_INDEX_NAME})`)
+        .map((row) => asString(row.name))) !== JSON.stringify(["conversation_id"]) ||
+      !activeRunIndexDefinition ||
+      asString(activeRunIndexDefinition.tbl_name) !== "runs" ||
+      typeof activeRunIndexDefinition.sql !== "string" ||
+      normalizeSchemaSql(activeRunIndexDefinition.sql) !== normalizeSchemaSql(ACTIVE_RUN_INDEX_SQL)
+    ) {
+      throw incompatibleSchema();
+    }
+    const placeholderCount = asNumber(
+      this.#get("SELECT COUNT(*) AS count FROM artifacts")?.count,
+    );
+    if (placeholderCount !== 0) {
+      throw new Error(
+        "Phase 3 placeholder Artifact rows cannot be migrated without an explicit data contract.",
+      );
+    }
+    this.#database.exec(`
+      BEGIN IMMEDIATE;
+      DROP TABLE artifacts;
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        format TEXT NOT NULL,
+        source_relative_path TEXT,
+        current_version_id TEXT,
+        associated_conversation_id TEXT REFERENCES conversations(id),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE artifact_versions (
+        id TEXT PRIMARY KEY,
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        parent_version_id TEXT REFERENCES artifact_versions(id),
+        inputs_json TEXT NOT NULL,
+        source_json TEXT,
+        content_hash TEXT NOT NULL,
+        byte_size INTEGER NOT NULL,
+        storage_key TEXT NOT NULL,
+        produced_by_conversation_id TEXT REFERENCES conversations(id),
+        produced_by_run_id TEXT REFERENCES runs(id),
+        toolchain TEXT NOT NULL,
+        limitations_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(artifact_id, version)
+      ) STRICT;
+      CREATE TABLE center_state (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+        state_json TEXT NOT NULL
+      ) STRICT;
+      UPDATE schema_metadata SET schema_version = ${SCOPEGUARD_SCHEMA_VERSION};
+      COMMIT;
+    `);
   }
 
   #validateSchema(): void {
@@ -913,8 +1047,15 @@ export class ScopeGuardStore {
       artifactVersions.forEach((row) => {
         const version = mapArtifactVersion(row);
         const artifact = artifacts.find(({ id }) => id === version.artifactId);
-        if (!artifact || !/^[a-f0-9]{2}\/[a-f0-9]{64}$/.test(asString(row.storage_key))) {
+        if (
+          !artifact ||
+          asString(row.storage_key) !==
+            `${version.contentHash.slice(0, 2)}/${version.contentHash}`
+        ) {
           throw new Error("Artifact Version has invalid ownership or storage identity.");
+        }
+        if (version.inputs.some(({ workspaceId }) => workspaceId !== artifact.workspaceId)) {
+          throw new Error("Artifact Version input belongs to a different Workspace.");
         }
         if (version.source && version.source.workspaceId !== artifact.workspaceId) {
           throw new Error("Artifact Version source belongs to a different Workspace.");
@@ -923,6 +1064,24 @@ export class ScopeGuardStore {
           const parent = this.getArtifactVersion(version.parentVersionId);
           if (!parent || parent.artifactId !== artifact.id) {
             throw new Error("Artifact Version parent belongs to a different Artifact.");
+          }
+        }
+        const producer = version.producedByConversationId
+          ? this.requireConversation(version.producedByConversationId)
+          : null;
+        if (producer && producer.workspaceId !== artifact.workspaceId) {
+          throw new Error("Artifact Version producer belongs to a different Workspace.");
+        }
+        if (version.producedByRunId) {
+          const run = this.requireRun(version.producedByRunId);
+          const owner = this.requireConversation(run.conversationId);
+          if (
+            run.status !== "completed" ||
+            run.effect !== "confirmed" ||
+            owner.workspaceId !== artifact.workspaceId ||
+            (producer && producer.id !== owner.id)
+          ) {
+            throw new Error("Artifact Version Run provenance is invalid.");
           }
         }
       });
@@ -1036,9 +1195,15 @@ export class ScopeGuardStore {
     }
     if (state.associatedConversationId) {
       const conversation = this.requireConversation(state.associatedConversationId);
-      if (conversation.workspaceId !== state.workspaceId) {
-        throw new Error("Artifact Review Conversation must belong to its Workspace.");
+      if (
+        conversation.workspaceId !== state.workspaceId ||
+        conversation.id !== artifact.associatedConversationId
+      ) {
+        throw new Error("Artifact Review Conversation must match the Artifact association.");
       }
+    }
+    if (state.conversationPanelOpen && !state.associatedConversationId) {
+      throw new Error("Artifact Review cannot open a Conversation panel without an association.");
     }
     return state;
   }
@@ -1114,12 +1279,14 @@ function mapArtifact(row: Row): Artifact {
 }
 
 function mapArtifactVersion(row: Row): ArtifactVersion {
+  const inputs = parseJsonValue(row.inputs_json);
   const limitations = parseJsonValue(row.limitations_json);
   return parseArtifactVersion({
     id: row.id,
     artifactId: row.artifact_id,
     version: row.version,
     parentVersionId: row.parent_version_id ?? null,
+    inputs,
     source: row.source_json == null ? null : parseObject(row.source_json),
     contentHash: row.content_hash,
     byteSize: row.byte_size,
@@ -1194,6 +1361,6 @@ function normalizeSchemaSql(sql: string): string {
 }
 function incompatibleSchema(): Error {
   return new Error(
-    `Incompatible ScopeGuard database. Expected ${SCOPEGUARD_SCHEMA_ID} schema ${SCOPEGUARD_SCHEMA_VERSION}; old databases are not migrated. Start with a fresh personal Pi profile.`,
+    `Incompatible ScopeGuard database. Expected ${SCOPEGUARD_SCHEMA_ID} schema ${SCOPEGUARD_SCHEMA_VERSION}; only the exact Phase 3 schema can migrate automatically.`,
   );
 }

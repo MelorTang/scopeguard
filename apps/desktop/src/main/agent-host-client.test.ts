@@ -244,6 +244,7 @@ function createClient(
     modulePath: "/fixture/agent-host.js",
     databasePath: "/fixture/scopeguard.db",
     piSessionRoot: "/fixture/pi-sessions",
+    artifactRoot: "/fixture/artifacts",
     vault: {} as never,
     fork: () => fork() as unknown as UtilityProcess,
     onRunEvent() {},

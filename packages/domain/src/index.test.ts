@@ -60,6 +60,12 @@ test("keeps Artifact Versions immutable and Workspace File identity explicit", (
     artifactId: artifact.id,
     version: 2,
     parentVersionId: "version-1",
+    inputs: [{
+      workspaceId: "workspace-1",
+      relativePath: "inputs/source.docx",
+      contentHash: "c".repeat(64),
+      byteSize: 41,
+    }],
     source,
     contentHash: "b".repeat(64),
     byteSize: 43,
@@ -70,9 +76,14 @@ test("keeps Artifact Versions immutable and Workspace File identity explicit", (
     createdAt: "2026-08-21T00:01:00.000Z",
   });
   assert.equal(version.parentVersionId, "version-1");
+  assert.equal(version.inputs[0]?.relativePath, "inputs/source.docx");
   assert.throws(
     () => parseArtifactVersion({ ...version, limitations: ["same", "same"] }),
     /duplicates/i,
+  );
+  assert.throws(
+    () => parseArtifactVersion({ ...version, inputs: [version.inputs[0], version.inputs[0]] }),
+    /input.*duplicate/i,
   );
 });
 

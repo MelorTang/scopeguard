@@ -28,6 +28,11 @@ const channels = Object.freeze({
   copyHandoffPrompt: "scopeguard:handoff:copy",
   getWorkspaceContext: "scopeguard:context:get",
   updateWorkspaceContext: "scopeguard:context:update",
+  captureWorkspaceFile: "scopeguard:artifact:capture-workspace-file",
+  exportArtifactVersion: "scopeguard:artifact:export-version",
+  openArtifactVersion: "scopeguard:artifact:open-version",
+  setArtifactCurrentVersion: "scopeguard:artifact:set-current-version",
+  saveWorkspaceCenterState: "scopeguard:workspace:center-state:save",
   runEvent: "scopeguard:event:run",
 });
 
@@ -100,6 +105,16 @@ const api = Object.freeze({
     ipcRenderer.invoke(channels.getWorkspaceContext, workspaceId),
   updateWorkspaceContext: (request) =>
     ipcRenderer.invoke(channels.updateWorkspaceContext, request),
+  captureWorkspaceFile: (request) =>
+    ipcRenderer.invoke(channels.captureWorkspaceFile, request),
+  exportArtifactVersion: (request) =>
+    ipcRenderer.invoke(channels.exportArtifactVersion, request),
+  openArtifactVersion: (request) =>
+    ipcRenderer.invoke(channels.openArtifactVersion, request),
+  setArtifactCurrentVersion: (request) =>
+    ipcRenderer.invoke(channels.setArtifactCurrentVersion, request),
+  saveWorkspaceCenterState: (state) =>
+    ipcRenderer.invoke(channels.saveWorkspaceCenterState, state),
   subscribeRunEvents: (listener) => {
     if (typeof listener !== "function") {
       throw new TypeError("Run event listener must be a function.");

@@ -1,8 +1,17 @@
-import { parseDispatchPrompt, parseWorkspaceLayout } from "@scopeguard/domain";
+import {
+  parseArtifactFormat,
+  parseDispatchPrompt,
+  parseSha256Digest,
+  parseWorkspaceCenterState,
+  parseWorkspaceLayout,
+  parseWorkspaceRelativePath,
+} from "@scopeguard/domain";
 import type {
   Agent,
   AgentRun,
   AgentToolPolicy,
+  Artifact,
+  ArtifactVersion,
   ApprovalDecision,
   Conversation,
   ConversationMessage,
@@ -22,6 +31,8 @@ import type {
   StartRunInput,
   UpdateConversationSettingsInput,
   Workspace,
+  WorkspaceCenterState,
+  WorkspaceFileVersion,
   WorkspaceLayout,
   WorkspaceContextRevision,
   WorkspaceSnapshot,
@@ -55,6 +66,11 @@ export const IPC_CHANNELS = {
   copyHandoffPrompt: "scopeguard:handoff:copy",
   getWorkspaceContext: "scopeguard:context:get",
   updateWorkspaceContext: "scopeguard:context:update",
+  captureWorkspaceFile: "scopeguard:artifact:capture-workspace-file",
+  exportArtifactVersion: "scopeguard:artifact:export-version",
+  openArtifactVersion: "scopeguard:artifact:open-version",
+  setArtifactCurrentVersion: "scopeguard:artifact:set-current-version",
+  saveWorkspaceCenterState: "scopeguard:workspace:center-state:save",
   runEvent: "scopeguard:event:run",
 } as const;
 
@@ -110,7 +126,12 @@ export type AgentHostMethod =
   | "executeDispatch"
   | "generateHandoffPrompt"
   | "getWorkspaceContext"
-  | "updateWorkspaceContext";
+  | "updateWorkspaceContext"
+  | "captureWorkspaceFile"
+  | "exportArtifactVersion"
+  | "prepareArtifactVersionOpen"
+  | "setArtifactCurrentVersion"
+  | "saveWorkspaceCenterState";
 
 export type AgentHostRequest = {
   type: "host-request";
@@ -176,6 +197,40 @@ export type UpdateWorkspaceContextRequest = {
   content: string;
   sourceConversationId?: Id | null;
   sourceRunId?: Id | null;
+};
+
+export type CaptureWorkspaceFileRequest = {
+  workspaceId: Id;
+  relativePath: string;
+  inputRelativePaths?: string[];
+  artifactId?: Id;
+  title?: string;
+  format?: string;
+  producedByConversationId?: Id | null;
+  producedByRunId?: Id | null;
+  toolchain: string;
+  limitations?: string[];
+};
+
+export type CapturedArtifactVersion = {
+  artifact: Artifact;
+  version: ArtifactVersion;
+};
+
+export type ExportArtifactVersionRequest = {
+  workspaceId: Id;
+  versionId: Id;
+  relativePath: string;
+  expectedContentHash: string | null;
+};
+
+export type SetArtifactCurrentVersionRequest = {
+  artifactId: Id;
+  versionId: Id;
+};
+
+export type OpenArtifactVersionRequest = {
+  versionId: Id;
 };
 
 export type WorkspaceFileSelection = { name: string; relativePath: string };
@@ -254,6 +309,19 @@ export type ScopeGuardDesktopApi = {
   updateWorkspaceContext: (
     request: UpdateWorkspaceContextRequest,
   ) => Promise<WorkspaceContextRevision>;
+  captureWorkspaceFile: (
+    request: CaptureWorkspaceFileRequest,
+  ) => Promise<CapturedArtifactVersion>;
+  exportArtifactVersion: (
+    request: ExportArtifactVersionRequest,
+  ) => Promise<WorkspaceFileVersion>;
+  openArtifactVersion: (request: OpenArtifactVersionRequest) => Promise<void>;
+  setArtifactCurrentVersion: (
+    request: SetArtifactCurrentVersionRequest,
+  ) => Promise<Artifact>;
+  saveWorkspaceCenterState: (
+    state: WorkspaceCenterState,
+  ) => Promise<WorkspaceCenterState>;
   subscribeRunEvents: (listener: (event: RunEvent) => void) => () => void;
 };
 
@@ -634,6 +702,93 @@ export function parseUpdateWorkspaceContextRequest(
   };
 }
 
+export function parseCaptureWorkspaceFileRequest(
+  value: unknown,
+): CaptureWorkspaceFileRequest {
+  const record = requireExactRecord(value, "Artifact capture input", [
+    "artifactId",
+    "format",
+    "inputRelativePaths",
+    "limitations",
+    "producedByConversationId",
+    "producedByRunId",
+    "relativePath",
+    "title",
+    "toolchain",
+    "workspaceId",
+  ]);
+  const toolchain = requireNonEmptyString(record.toolchain, "toolchain");
+  if (new TextEncoder().encode(toolchain).byteLength > 512) {
+    throw new Error("toolchain must not exceed 512 bytes of UTF-8 text.");
+  }
+  return {
+    workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
+    relativePath: parseWorkspaceRelativePath(record.relativePath),
+    inputRelativePaths: parseWorkspaceInputPaths(record.inputRelativePaths),
+    artifactId: optionalNonEmptyString(record.artifactId, "artifactId"),
+    title: optionalNonEmptyString(record.title, "title"),
+    format: record.format === undefined ? undefined : parseArtifactFormat(record.format),
+    producedByConversationId: optionalNullableNonEmptyString(
+      record.producedByConversationId,
+      "producedByConversationId",
+    ),
+    producedByRunId: optionalNullableNonEmptyString(
+      record.producedByRunId,
+      "producedByRunId",
+    ),
+    toolchain,
+    limitations: parseLimitations(record.limitations),
+  };
+}
+
+export function parseExportArtifactVersionRequest(
+  value: unknown,
+): ExportArtifactVersionRequest {
+  const record = requireExactRecord(value, "Artifact export input", [
+    "expectedContentHash",
+    "relativePath",
+    "versionId",
+    "workspaceId",
+  ]);
+  if (record.expectedContentHash !== null && record.expectedContentHash === undefined) {
+    throw new Error("expectedContentHash must be a SHA-256 digest or null.");
+  }
+  return {
+    workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
+    versionId: requireNonEmptyString(record.versionId, "versionId"),
+    relativePath: parseWorkspaceRelativePath(record.relativePath),
+    expectedContentHash: record.expectedContentHash === null
+      ? null
+      : parseSha256Digest(record.expectedContentHash, "expectedContentHash"),
+  };
+}
+
+export function parseSetArtifactCurrentVersionRequest(
+  value: unknown,
+): SetArtifactCurrentVersionRequest {
+  const record = requireExactRecord(value, "Set current Artifact Version input", [
+    "artifactId",
+    "versionId",
+  ]);
+  return {
+    artifactId: requireNonEmptyString(record.artifactId, "artifactId"),
+    versionId: requireNonEmptyString(record.versionId, "versionId"),
+  };
+}
+
+export function parseOpenArtifactVersionRequest(
+  value: unknown,
+): OpenArtifactVersionRequest {
+  const record = requireExactRecord(value, "Open Artifact Version input", [
+    "versionId",
+  ]);
+  return { versionId: requireNonEmptyString(record.versionId, "versionId") };
+}
+
+export function parseWorkspaceCenterStateRequest(value: unknown): WorkspaceCenterState {
+  return parseWorkspaceCenterState(value);
+}
+
 export function parseId(value: unknown, field = "id"): Id {
   return requireNonEmptyString(value, field);
 }
@@ -713,6 +868,10 @@ function optionalString(value: unknown, field: string): string | undefined {
   return value === undefined ? undefined : requireString(value, field);
 }
 
+function optionalNonEmptyString(value: unknown, field: string): string | undefined {
+  return value === undefined ? undefined : requireNonEmptyString(value, field);
+}
+
 function optionalNullableString(
   value: unknown,
   field: string,
@@ -747,6 +906,36 @@ function parseStringRecord(
     }
   }
   return record as Record<string, string>;
+}
+
+function parseLimitations(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 32) {
+    throw new Error("limitations must be a bounded text array.");
+  }
+  const limitations = value.map((item, index) => {
+    const limitation = requireNonEmptyString(item, `limitations[${index}]`);
+    if (new TextEncoder().encode(limitation).byteLength > 1_024) {
+      throw new Error(`limitations[${index}] must not exceed 1024 bytes of UTF-8 text.`);
+    }
+    return limitation;
+  });
+  if (new Set(limitations).size !== limitations.length) {
+    throw new Error("limitations must not contain duplicates.");
+  }
+  return limitations;
+}
+
+function parseWorkspaceInputPaths(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 64) {
+    throw new Error("inputRelativePaths must be a bounded Workspace File path array.");
+  }
+  const paths = value.map(parseWorkspaceRelativePath);
+  if (new Set(paths).size !== paths.length) {
+    throw new Error("inputRelativePaths must not contain duplicates.");
+  }
+  return paths;
 }
 
 function invalid(message: string): never { throw new Error(message); }

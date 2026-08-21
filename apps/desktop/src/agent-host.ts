@@ -3,6 +3,7 @@ import process from "node:process";
 
 import {
   ScopeGuardApplication,
+  ArtifactWorkflow,
   type ScopeGuardCore,
   type SaveProviderProfileInput,
   type SecretVault,
@@ -20,6 +21,11 @@ import {
   type MainToAgentHostMessage,
   type ResolveApprovalRequest,
   type UpdateWorkspaceContextRequest,
+  parseCaptureWorkspaceFileRequest,
+  parseExportArtifactVersionRequest,
+  parseId,
+  parseSetArtifactCurrentVersionRequest,
+  parseWorkspaceCenterStateRequest,
 } from "@scopeguard/ipc-contracts";
 import type {
   CreateAgentInput,
@@ -122,6 +128,10 @@ const piSessionRoot = process.env.SCOPEGUARD_PI_SESSION_ROOT;
 if (!piSessionRoot) {
   throw new Error("SCOPEGUARD_PI_SESSION_ROOT is required.");
 }
+const artifactRoot = process.env.SCOPEGUARD_ARTIFACT_ROOT;
+if (!artifactRoot) {
+  throw new Error("SCOPEGUARD_ARTIFACT_ROOT is required.");
+}
 
 const store = new ScopeGuardStore(databasePath);
 const secrets = new MainProcessSecretVault(parentPort);
@@ -130,10 +140,13 @@ const runtime = new PiRuntimeSupervisor({
   cliPath: process.env.SCOPEGUARD_PI_CLI_PATH,
   assetRoot: process.env.SCOPEGUARD_PI_RUNTIME_ASSET_ROOT,
 });
+const artifacts = new ArtifactWorkflow({ store, artifactRoot });
+await artifacts.initialize();
 const application: ScopeGuardCore = new ScopeGuardApplication({
   store,
   secrets,
   runtime,
+  artifacts,
   publish: (event) => {
     parentPort.postMessage({
       type: "host-run-event",
@@ -268,6 +281,24 @@ async function dispatch(
         input.sourceRunId,
       );
     }
+    case "captureWorkspaceFile":
+      return core.captureWorkspaceFile(
+        parseCaptureWorkspaceFileRequest(request.payload),
+      );
+    case "exportArtifactVersion":
+      return core.exportArtifactVersion(
+        parseExportArtifactVersionRequest(request.payload),
+      );
+    case "prepareArtifactVersionOpen":
+      return core.prepareArtifactVersionOpen(parseId(request.payload, "versionId"));
+    case "setArtifactCurrentVersion": {
+      const input = parseSetArtifactCurrentVersionRequest(request.payload);
+      return core.setArtifactCurrentVersion(input.artifactId, input.versionId);
+    }
+    case "saveWorkspaceCenterState":
+      return core.saveWorkspaceCenterState(
+        parseWorkspaceCenterStateRequest(request.payload),
+      );
     default:
       return assertNever(request.method);
   }

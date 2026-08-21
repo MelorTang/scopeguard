@@ -3,15 +3,19 @@ import test from "node:test";
 
 import {
   IPC_CHANNELS,
+  parseCaptureWorkspaceFileRequest,
   parseClipboardText,
   parseCreateAgentInput,
   parseCreateDispatchRequest,
   parseHandoffPromptRequest,
+  parseExportArtifactVersionRequest,
+  parseOpenArtifactVersionRequest,
   parseRendererLayoutLifecycleRequest,
   parseRendererLayoutLifecycleResponse,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseStageWorkspaceLayoutResult,
+  parseWorkspaceCenterStateRequest,
   parseUpdateConversationSettingsInput,
   parseWorkspaceLayoutRequest,
   toDesktopWorkspaceSnapshot,
@@ -273,10 +277,16 @@ test("projects the canonical V1 snapshot without compatibility collections", () 
     pendingApprovals: [],
     layouts: [],
     dispatches: [],
+    artifacts: [],
+    artifactVersions: [],
+    centerStates: [],
   });
   assert.deepEqual(Object.keys(snapshot).sort(), [
     "activeRuns",
     "agents",
+    "artifactVersions",
+    "artifacts",
+    "centerStates",
     "conversations",
     "dispatches",
     "layouts",
@@ -285,6 +295,96 @@ test("projects the canonical V1 snapshot without compatibility collections", () 
     "recentRuns",
     "workspaces",
   ]);
+});
+
+test("accepts only bounded Artifact capture, export, and Review requests", () => {
+  assert.deepEqual(parseCaptureWorkspaceFileRequest({
+    workspaceId: "workspace",
+    relativePath: "reports/final.docx",
+    artifactId: "artifact",
+    producedByConversationId: "conversation",
+    producedByRunId: "run",
+    inputRelativePaths: ["inputs/source.docx"],
+    toolchain: "Agent Skill: documents",
+    limitations: ["External preview."],
+  }), {
+    workspaceId: "workspace",
+    relativePath: "reports/final.docx",
+    artifactId: "artifact",
+    title: undefined,
+    format: undefined,
+    producedByConversationId: "conversation",
+    producedByRunId: "run",
+    inputRelativePaths: ["inputs/source.docx"],
+    toolchain: "Agent Skill: documents",
+    limitations: ["External preview."],
+  });
+  assert.deepEqual(parseExportArtifactVersionRequest({
+    workspaceId: "workspace",
+    versionId: "version",
+    relativePath: "exports/final.docx",
+    expectedContentHash: null,
+  }), {
+    workspaceId: "workspace",
+    versionId: "version",
+    relativePath: "exports/final.docx",
+    expectedContentHash: null,
+  });
+  assert.deepEqual(parseOpenArtifactVersionRequest({ versionId: "version" }), {
+    versionId: "version",
+  });
+  assert.throws(
+    () => parseOpenArtifactVersionRequest({ versionId: "version", path: "/private/blob" }),
+    /Open Artifact Version input/i,
+  );
+  assert.equal(parseWorkspaceCenterStateRequest({
+    workspaceId: "workspace",
+    mode: "artifact-review",
+    artifactId: "artifact",
+    versionId: "version",
+    comparisonVersionId: null,
+    associatedConversationId: null,
+    conversationPanelOpen: false,
+  }).mode, "artifact-review");
+
+  for (const invalid of [
+    {
+      workspaceId: "workspace",
+      relativePath: "../secret.docx",
+      toolchain: "Agent Skill",
+    },
+    {
+      workspaceId: "workspace",
+      relativePath: "file.docx",
+      toolchain: "Agent Skill",
+      limitations: ["same", "same"],
+    },
+    {
+      workspaceId: "workspace",
+      relativePath: "file.docx",
+      inputRelativePaths: ["inputs/source.docx", "inputs/source.docx"],
+      toolchain: "Agent Skill",
+    },
+    {
+      workspaceId: "workspace",
+      relativePath: "file.docx",
+      inputRelativePaths: ["../outside.docx"],
+      toolchain: "Agent Skill",
+    },
+    {
+      workspaceId: "workspace",
+      relativePath: "file.docx",
+      toolchain: "Agent Skill",
+      absolutePath: "/private/file.docx",
+    },
+  ]) {
+    assert.throws(() => parseCaptureWorkspaceFileRequest(invalid), /path|duplicate|supported fields/i);
+  }
+  assert.throws(() => parseExportArtifactVersionRequest({
+    workspaceId: "workspace",
+    versionId: "version",
+    relativePath: "file.docx",
+  }), /expectedContentHash/i);
 });
 
 test("validates provider and Agent inputs at the IPC boundary", () => {

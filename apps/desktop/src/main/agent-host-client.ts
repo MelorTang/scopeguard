@@ -40,6 +40,7 @@ export class AgentHostClient {
   readonly #modulePath: string;
   readonly #databasePath: string;
   readonly #piSessionRoot: string;
+  readonly #artifactRoot: string;
   readonly #piCliPath: string | undefined;
   readonly #piRuntimeAssetRoot: string | undefined;
   readonly #vault: EncryptedSecretVault;
@@ -66,6 +67,7 @@ export class AgentHostClient {
     modulePath: string;
     databasePath: string;
     piSessionRoot: string;
+    artifactRoot: string;
     piCliPath?: string;
     piRuntimeAssetRoot?: string;
     vault: EncryptedSecretVault;
@@ -81,6 +83,7 @@ export class AgentHostClient {
     this.#modulePath = options.modulePath;
     this.#databasePath = options.databasePath;
     this.#piSessionRoot = options.piSessionRoot;
+    this.#artifactRoot = options.artifactRoot;
     this.#piCliPath = options.piCliPath;
     this.#piRuntimeAssetRoot = options.piRuntimeAssetRoot;
     this.#vault = options.vault;
@@ -126,6 +129,7 @@ export class AgentHostClient {
         env: isolatedChildEnvironment(process.env, {
           SCOPEGUARD_DB_PATH: this.#databasePath,
           SCOPEGUARD_PI_SESSION_ROOT: this.#piSessionRoot,
+          SCOPEGUARD_ARTIFACT_ROOT: this.#artifactRoot,
           ...(this.#piCliPath ? { SCOPEGUARD_PI_CLI_PATH: this.#piCliPath } : {}),
           ...(this.#piRuntimeAssetRoot
             ? { SCOPEGUARD_PI_RUNTIME_ASSET_ROOT: this.#piRuntimeAssetRoot }

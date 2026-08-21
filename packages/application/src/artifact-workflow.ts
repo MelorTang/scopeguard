@@ -32,6 +32,7 @@ import {
 export type CaptureWorkspaceFileInput = {
   workspaceId: Id;
   relativePath: string;
+  inputRelativePaths?: string[];
   artifactId?: Id;
   title?: string;
   format?: string;
@@ -91,6 +92,7 @@ export class ArtifactWorkflow {
   async initialize(): Promise<void> {
     await mkdir(join(this.#artifactRoot, "blobs"), { recursive: true, mode: 0o700 });
     await mkdir(join(this.#artifactRoot, "staging"), { recursive: true, mode: 0o700 });
+    await mkdir(join(this.#artifactRoot, "open"), { recursive: true, mode: 0o700 });
   }
 
   async captureWorkspaceFile(
@@ -100,13 +102,24 @@ export class ArtifactWorkflow {
     const relativePath = parseWorkspaceRelativePath(raw.relativePath);
     const sourcePath = await resolveExistingWorkspaceFile(workspace, relativePath);
     const provenance = this.#validateProvenance(workspace, raw);
-    const captured = await this.#captureStableFile(sourcePath, workspace.id, relativePath);
-    const storageKey = await this.#publishBlob(captured.stagingPath, captured.version);
-
     let artifact = raw.artifactId ? this.#store.getArtifact(raw.artifactId) : null;
     if (raw.artifactId && (!artifact || artifact.workspaceId !== workspace.id)) {
       throw new Error("Artifact capture target must belong to the Workspace.");
     }
+    const observedInputs = await observeWorkspaceInputs(
+      workspace,
+      raw.inputRelativePaths ?? [],
+    );
+    const captured = await this.#captureStableFile(sourcePath, workspace.id, relativePath);
+    let storageKey: string;
+    try {
+      await verifyWorkspaceInputs(observedInputs);
+      storageKey = await this.#publishBlob(captured.stagingPath, captured.version);
+    } catch (error) {
+      await unlink(captured.stagingPath).catch(() => {});
+      throw error;
+    }
+
     if (!artifact) {
       artifact = this.#store.createArtifact({
         workspaceId: workspace.id,
@@ -120,6 +133,7 @@ export class ArtifactWorkflow {
     const version = this.#store.createArtifactVersion({
       artifactId: artifact.id,
       parentVersionId: artifact.currentVersionId,
+      inputs: observedInputs.map(({ version }) => version),
       source: captured.version,
       contentHash: captured.version.contentHash,
       byteSize: captured.version.byteSize,
@@ -155,9 +169,14 @@ export class ArtifactWorkflow {
 
     const workspaceRoot = await requireWorkspaceRoot(workspace);
     const destinationPath = resolve(workspaceRoot, ...relativePath.split("/"));
-    await assertParentInsideWorkspace(workspaceRoot, destinationPath);
+    await ensureWorkspaceParentDirectory(workspaceRoot, destinationPath);
     return this.#withPathLock(destinationPath, async () => {
-      const before = await optionalFileVersion(destinationPath, workspace.id, relativePath);
+      const before = await optionalWorkspaceFileVersion(
+        workspaceRoot,
+        destinationPath,
+        workspace.id,
+        relativePath,
+      );
       assertExpectedWorkspaceVersion(relativePath, before, expected);
       const tempPath = join(dirname(destinationPath), `.scopeguard-${randomUUID()}.tmp`);
       try {
@@ -166,7 +185,12 @@ export class ArtifactWorkflow {
         if (candidate.contentHash !== version.contentHash || candidate.byteSize !== version.byteSize) {
           throw new Error("Artifact export candidate failed its content identity check.");
         }
-        const current = await optionalFileVersion(destinationPath, workspace.id, relativePath);
+        const current = await optionalWorkspaceFileVersion(
+          workspaceRoot,
+          destinationPath,
+          workspace.id,
+          relativePath,
+        );
         assertSameObservedWorkspaceVersion(relativePath, before, current);
         if (current === null) {
           try {
@@ -184,7 +208,12 @@ export class ArtifactWorkflow {
         } else {
           await rename(tempPath, destinationPath);
         }
-        const published = await optionalFileVersion(destinationPath, workspace.id, relativePath);
+        const published = await optionalWorkspaceFileVersion(
+          workspaceRoot,
+          destinationPath,
+          workspace.id,
+          relativePath,
+        );
         if (
           !published ||
           published.contentHash !== version.contentHash ||
@@ -199,6 +228,31 @@ export class ArtifactWorkflow {
         });
       }
     });
+  }
+
+  async prepareArtifactVersionOpen(versionId: Id): Promise<string> {
+    const version = this.#store.getArtifactVersion(versionId);
+    if (!version) throw new Error(`Artifact Version not found: ${versionId}`);
+    const artifact = this.#store.getArtifact(version.artifactId);
+    if (!artifact) throw new Error(`Artifact not found: ${version.artifactId}`);
+    const storageKey = this.#store.getArtifactVersionStorageKey(version.id);
+    if (!storageKey) throw new Error("Artifact Version content is unavailable.");
+    const blobPath = resolveStorageKey(this.#artifactRoot, storageKey);
+    const blob = await hashRegularFile(blobPath);
+    if (blob.contentHash !== version.contentHash || blob.byteSize !== version.byteSize) {
+      throw new Error("Artifact Version content failed its stored identity check.");
+    }
+
+    const openDirectory = join(this.#artifactRoot, "open", version.id, randomUUID());
+    await mkdir(openDirectory, { recursive: true, mode: 0o700 });
+    const outputPath = join(openDirectory, externalOpenFileName(artifact));
+    await copyFile(blobPath, outputPath, constants.COPYFILE_EXCL);
+    const output = await hashRegularFile(outputPath);
+    if (output.contentHash !== version.contentHash || output.byteSize !== version.byteSize) {
+      await unlink(outputPath).catch(() => {});
+      throw new Error("External-open copy failed its Artifact Version identity check.");
+    }
+    return outputPath;
   }
 
   #requireWorkspace(id: Id): Workspace {
@@ -219,8 +273,8 @@ export class ArtifactWorkflow {
     }
     if (runId) {
       const run = this.#store.getRun(runId);
-      if (!run || run.status !== "completed" || run.effect === "effect_unknown") {
-        throw new Error("Only a completed Run with known Tool effects may produce an Artifact Version.");
+      if (!run || run.status !== "completed" || run.effect !== "confirmed") {
+        throw new Error("Only a completed Run with confirmed Tool effects may produce an Artifact Version.");
       }
       const owner = this.#store.getConversation(run.conversationId);
       if (
@@ -339,10 +393,90 @@ async function resolveExistingWorkspaceFile(
   return resolved;
 }
 
-async function assertParentInsideWorkspace(root: string, destinationPath: string): Promise<void> {
-  await mkdir(dirname(destinationPath), { recursive: true });
-  const parent = await realpath(dirname(destinationPath));
-  assertInside(root, parent, "Workspace export directory resolves outside its Workspace.");
+async function observeWorkspaceInputs(
+  workspace: Workspace,
+  relativePaths: readonly string[],
+): Promise<Array<{ path: string; version: WorkspaceFileVersion }>> {
+  if (relativePaths.length > 64) {
+    throw new Error("Artifact capture accepts at most 64 input Workspace Files.");
+  }
+  const paths = relativePaths.map(parseWorkspaceRelativePath);
+  if (new Set(paths).size !== paths.length) {
+    throw new Error("Artifact input Workspace File paths must not contain duplicates.");
+  }
+  return await Promise.all(paths.map(async (relativePath) => {
+    const path = await resolveExistingWorkspaceFile(workspace, relativePath);
+    return {
+      path,
+      version: {
+        workspaceId: workspace.id,
+        relativePath,
+        ...await hashRegularFile(path),
+      },
+    };
+  }));
+}
+
+async function verifyWorkspaceInputs(
+  observed: ReadonlyArray<{ path: string; version: WorkspaceFileVersion }>,
+): Promise<void> {
+  for (const input of observed) {
+    let current: { contentHash: string; byteSize: number };
+    try {
+      current = await hashRegularFile(input.path);
+    } catch (error) {
+      throw new WorkspaceFileConflictError(
+        input.version.relativePath,
+        `Artifact input Workspace File became unavailable while its result was captured: ${messageFromError(error)}`,
+      );
+    }
+    if (
+      current.contentHash !== input.version.contentHash ||
+      current.byteSize !== input.version.byteSize
+    ) {
+      throw new WorkspaceFileConflictError(
+        input.version.relativePath,
+        "Artifact input Workspace File changed while its result was being captured.",
+      );
+    }
+  }
+}
+
+async function ensureWorkspaceParentDirectory(
+  root: string,
+  destinationPath: string,
+): Promise<void> {
+  assertInside(root, destinationPath, "Workspace export path resolves outside its Workspace.");
+  const segments = relative(root, destinationPath).split(sep).slice(0, -1);
+  let current = root;
+  for (const segment of segments) {
+    current = join(current, segment);
+    let metadata;
+    try {
+      metadata = await lstat(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      try {
+        await mkdir(current, { mode: 0o700 });
+      } catch (mkdirError) {
+        if ((mkdirError as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw mkdirError;
+        }
+      }
+      metadata = await lstat(current);
+    }
+    if (metadata.isSymbolicLink()) {
+      throw new Error("Workspace export directory must not be a symbolic link.");
+    }
+    if (!metadata.isDirectory()) {
+      throw new Error("Workspace export parent must be a directory.");
+    }
+    assertInside(
+      root,
+      await realpath(current),
+      "Workspace export directory resolves outside its Workspace.",
+    );
+  }
 }
 
 function assertInside(root: string, candidate: string, message: string): void {
@@ -366,18 +500,32 @@ async function hashRegularFile(path: string): Promise<{ contentHash: string; byt
   }
 }
 
-async function optionalFileVersion(
+async function optionalWorkspaceFileVersion(
+  root: string,
   path: string,
   workspaceId: Id,
   relativePath: string,
 ): Promise<WorkspaceFileVersion | null> {
   try {
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink()) {
+      throw new Error("Workspace export target must not be a symbolic link.");
+    }
+    assertInside(
+      root,
+      await realpath(path),
+      "Workspace export target resolves outside its Workspace.",
+    );
     const value = await hashRegularFile(path);
     return { workspaceId, relativePath, ...value };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+function messageFromError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function assertExpectedWorkspaceVersion(
@@ -425,4 +573,17 @@ function formatFromPath(relativePath: string): string {
 
 function basenameFromPortablePath(relativePath: string): string {
   return relativePath.split("/").at(-1)!;
+}
+
+function externalOpenFileName(artifact: Artifact): string {
+  const preferred = artifact.sourceRelativePath
+    ? basenameFromPortablePath(artifact.sourceRelativePath)
+    : artifact.title;
+  const safe = preferred
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 180) || "artifact";
+  if (extname(safe)) return safe;
+  const extension = /^[a-z0-9]{1,16}$/.test(artifact.format) ? artifact.format : "bin";
+  return `${safe}.${extension}`;
 }

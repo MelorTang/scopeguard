@@ -9,6 +9,7 @@ import {
   dialog,
   ipcMain,
   session,
+  shell,
   utilityProcess,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -19,22 +20,28 @@ import { WorkbenchLayoutPersistence } from "@scopeguard/application/workbench-la
 import type { RunEvent, WorkspaceLayout, WorkspaceSnapshot } from "@scopeguard/domain";
 import {
   IPC_CHANNELS,
+  parseCaptureWorkspaceFileRequest,
   parseCreateAgentInput,
   parseCreateConversationInput,
   parseCreateDispatchRequest,
   parseCreateWorkspaceInput,
+  parseExportArtifactVersionRequest,
+  parseOpenArtifactVersionRequest,
   parseId,
   parseHandoffPromptRequest,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseStartRunInput,
+  parseSetArtifactCurrentVersionRequest,
   parseUpdateWorkspaceContextRequest,
   parseUpdateConversationSettingsInput,
   parseWorkspaceLayoutRequest,
+  parseWorkspaceCenterStateRequest,
   type RendererLayoutDrainReceipt,
 } from "@scopeguard/ipc-contracts";
 
 import { AgentHostClient } from "./main/agent-host-client.js";
+import { validateArtifactOpenPath } from "./main/artifact-open-path.js";
 import { writeControlledClipboard } from "./main/controlled-clipboard.js";
 import { runDesktopPilotPhase } from "./main/desktop-pilot.js";
 import { EncryptedSecretVault } from "./main/encrypted-secret-vault.js";
@@ -225,6 +232,7 @@ async function startApplication(): Promise<void> {
   });
 
   const userDataPath = app.getPath("userData");
+  const artifactRoot = join(userDataPath, "artifacts");
   const packagedRuntimeRoot = app.isPackaged
     ? join(process.resourcesPath, "app.asar.unpacked", "runtime")
     : process.env.SCOPEGUARD_DESKTOP_PILOT_STAGED === "1"
@@ -246,6 +254,7 @@ async function startApplication(): Promise<void> {
     modulePath: join(moduleDir, "agent-host.js"),
     databasePath: join(userDataPath, "scopeguard.db"),
     piSessionRoot: join(userDataPath, "pi-sessions"),
+    artifactRoot,
     piCliPath: packagedRuntimeRoot
       ? join(
           packagedRuntimeRoot,
@@ -301,7 +310,7 @@ async function startApplication(): Promise<void> {
     },
     reportError: reportLayoutPersistenceError,
   });
-  registerIpcHandlers(host);
+  registerIpcHandlers(host, artifactRoot);
   await host.start();
   if (desktopPilotPhase) {
     const agentHostPid = host.processId;
@@ -319,7 +328,9 @@ async function startApplication(): Promise<void> {
         agentHostPid,
       },
     );
-    const phase3Renderer = process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3"
+    const phase3Renderer = ["phase3", "phase4"].includes(
+        process.env.SCOPEGUARD_DESKTOP_PILOT_KIND ?? "",
+      )
       ? await createPhase3RendererEvidence()
       : undefined;
     phase3LateLayoutStageReceipt = await runDesktopPilotPhase(host, phase3Renderer);
@@ -466,7 +477,7 @@ async function createPhase3RendererEvidence() {
   };
 }
 
-function registerIpcHandlers(agentHost: AgentHostClient): void {
+function registerIpcHandlers(agentHost: AgentHostClient, artifactRoot: string): void {
   ipcMain.on(IPC_CHANNELS.rendererLayoutLifecycleResponse, (event, value: unknown) => {
     try {
       assertTrustedSender(event);
@@ -672,6 +683,45 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
     return agentHost.request(
       "updateWorkspaceContext",
       parseUpdateWorkspaceContextRequest(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.captureWorkspaceFile, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "captureWorkspaceFile",
+      parseCaptureWorkspaceFileRequest(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.exportArtifactVersion, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "exportArtifactVersion",
+      parseExportArtifactVersionRequest(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.openArtifactVersion, async (event, value: unknown) => {
+    assertTrustedSender(event);
+    const request = parseOpenArtifactVersionRequest(value);
+    const path = await agentHost.request<unknown>(
+      "prepareArtifactVersionOpen",
+      request.versionId,
+    );
+    const validatedPath = await validateArtifactOpenPath(path, artifactRoot);
+    const error = await shell.openPath(validatedPath);
+    if (error) throw new Error(`System application could not open the Artifact: ${error}`);
+  });
+  ipcMain.handle(IPC_CHANNELS.setArtifactCurrentVersion, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "setArtifactCurrentVersion",
+      parseSetArtifactCurrentVersionRequest(value),
+    );
+  });
+  ipcMain.handle(IPC_CHANNELS.saveWorkspaceCenterState, (event, value: unknown) => {
+    assertTrustedSender(event);
+    return agentHost.request(
+      "saveWorkspaceCenterState",
+      parseWorkspaceCenterStateRequest(value),
     );
   });
 }

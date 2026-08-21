@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { SCOPEGUARD_SCHEMA_ID } from "@scopeguard/domain";
+import { SCOPEGUARD_SCHEMA_ID, SCOPEGUARD_SCHEMA_VERSION } from "@scopeguard/domain";
 
 import { ScopeGuardStore } from "./index.js";
 
@@ -50,6 +50,59 @@ test("rejects old, malformed, and incompatible database families", async () => {
       db.close();
       assert.throws(() => new ScopeGuardStore(path), new RegExp(`Expected ${SCOPEGUARD_SCHEMA_ID}`));
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("migrates the exact Phase 3 schema to Artifact schema v2 without losing product state", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-v1-migration-"));
+  const path = join(root, "scopeguard.db");
+  try {
+    const original = new ScopeGuardStore(path);
+    const fixture = createWorkspaceFixture(original, 2);
+    const layout = original.saveWorkspaceLayout({
+      workspaceId: fixture.workspace.id,
+      openConversationIds: fixture.conversations.map(({ id }) => id),
+      paneConversationIds: fixture.conversations.map(({ id }) => id),
+      paneWidths: [440, 560],
+      activeConversationId: fixture.conversations[1]!.id,
+      requestedPaneCount: 2,
+    });
+    original.close();
+
+    const v1 = new DatabaseSync(path);
+    v1.exec(`
+      BEGIN IMMEDIATE;
+      DROP TABLE center_state;
+      DROP TABLE artifact_versions;
+      DROP TABLE artifacts;
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        metadata_json TEXT NOT NULL
+      ) STRICT;
+      UPDATE schema_metadata SET schema_version = 1;
+      COMMIT;
+    `);
+    v1.close();
+
+    const migrated = new ScopeGuardStore(path);
+    assert.equal(migrated.listWorkspaces().length, 1);
+    assert.equal(migrated.listConversations(fixture.workspace.id).length, 2);
+    assert.deepEqual(migrated.getWorkspaceLayout(fixture.workspace.id), layout);
+    assert.deepEqual(migrated.listArtifacts(fixture.workspace.id), []);
+    assert.deepEqual(migrated.listWorkspaceCenterStates(), []);
+    migrated.close();
+
+    const verified = new DatabaseSync(path);
+    const metadata = verified.prepare("SELECT schema_id, schema_version FROM schema_metadata").get() as {
+      schema_id: string;
+      schema_version: number;
+    };
+    verified.close();
+    assert.equal(metadata.schema_id, SCOPEGUARD_SCHEMA_ID);
+    assert.equal(metadata.schema_version, SCOPEGUARD_SCHEMA_VERSION);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -380,7 +433,7 @@ test("persists immutable Artifact Versions, provenance, current selection, and R
   const path = join(root, "scopeguard.db");
   try {
     const store = new ScopeGuardStore(path);
-    const fixture = createWorkspaceFixture(store, 1);
+    const fixture = createWorkspaceFixture(store, 2);
     const artifact = store.createArtifact({
       workspaceId: fixture.workspace.id,
       title: "Quarterly report",
@@ -420,6 +473,24 @@ test("persists immutable Artifact Versions, provenance, current selection, and R
     assert.equal(second.version, 2);
     assert.equal(store.getArtifact(artifact.id)?.currentVersionId, second.id);
     assert.equal(store.setArtifactCurrentVersion(artifact.id, first.id).currentVersionId, first.id);
+    assert.throws(() => store.saveWorkspaceCenterState({
+      workspaceId: fixture.workspace.id,
+      mode: "artifact-review",
+      artifactId: artifact.id,
+      versionId: second.id,
+      comparisonVersionId: first.id,
+      associatedConversationId: fixture.conversations[1]!.id,
+      conversationPanelOpen: true,
+    }), /must match the Artifact association/i);
+    assert.throws(() => store.saveWorkspaceCenterState({
+      workspaceId: fixture.workspace.id,
+      mode: "artifact-review",
+      artifactId: artifact.id,
+      versionId: second.id,
+      comparisonVersionId: first.id,
+      associatedConversationId: null,
+      conversationPanelOpen: true,
+    }), /without an association/i);
     const review = store.saveWorkspaceCenterState({
       workspaceId: fixture.workspace.id,
       mode: "artifact-review",
@@ -476,6 +547,76 @@ test("rejects cross-Workspace Artifact provenance and Review selections", () => 
   }
 });
 
+test("rejects Artifact Versions backed by an unconfirmed Run at the storage boundary", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const fixture = createWorkspaceFixture(store, 1);
+    const artifact = store.createArtifact({
+      workspaceId: fixture.workspace.id,
+      title: "Unconfirmed output",
+      format: "txt",
+    });
+    const run = createTerminalRun(store, fixture, "completed", "none");
+    assert.throws(() => store.createArtifactVersion({
+      artifactId: artifact.id,
+      contentHash: "d".repeat(64),
+      byteSize: 1,
+      producedByConversationId: fixture.conversations[0]!.id,
+      producedByRunId: run.id,
+      toolchain: "Agent write Tool",
+    }, `dd/${"d".repeat(64)}`), /confirmed Tool effects/i);
+  } finally {
+    store.close();
+  }
+});
+
+test("keeps Artifact provenance Runs in the snapshot after they leave the recent window", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scopeguard-artifact-run-snapshot-"));
+  const path = join(root, "scopeguard.db");
+  try {
+    const store = new ScopeGuardStore(path);
+    const fixture = createWorkspaceFixture(store, 1);
+    const provenanceRun = createTerminalRun(store, fixture, "completed", "confirmed");
+    const artifact = store.createArtifact({
+      workspaceId: fixture.workspace.id,
+      title: "Durable provenance",
+      format: "txt",
+    });
+    store.createArtifactVersion({
+      artifactId: artifact.id,
+      contentHash: "e".repeat(64),
+      byteSize: 1,
+      producedByConversationId: fixture.conversations[0]!.id,
+      producedByRunId: provenanceRun.id,
+      toolchain: "Agent write Tool",
+    }, `ee/${"e".repeat(64)}`);
+    for (let index = 0; index < 100; index += 1) {
+      createTerminalRun(store, fixture, "completed", "confirmed");
+    }
+    store.close();
+
+    const database = new DatabaseSync(path);
+    database.prepare("UPDATE runs SET created_at = ? WHERE id = ?").run(
+      "2000-01-01T00:00:00.000Z",
+      provenanceRun.id,
+    );
+    database.close();
+
+    const reopened = new ScopeGuardStore(path);
+    assert.equal(
+      reopened.listRecentRuns().some(({ id }) => id === provenanceRun.id),
+      false,
+    );
+    assert.equal(
+      reopened.getWorkspaceSnapshot().recentRuns.some(({ id }) => id === provenanceRun.id),
+      true,
+    );
+    reopened.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function createWorkspaceFixture(store: ScopeGuardStore, conversationCount: number) {
   const workspace = store.createWorkspace({ name: `Workspace ${Math.random()}` });
   const provider = store.saveProviderProfile({
@@ -498,4 +639,30 @@ function createWorkspaceFixture(store: ScopeGuardStore, conversationCount: numbe
     })
   );
   return { workspace, provider, agent, conversations };
+}
+
+function createTerminalRun(
+  store: ScopeGuardStore,
+  fixture: ReturnType<typeof createWorkspaceFixture>,
+  status: "completed" | "failed",
+  effect: "none" | "confirmed" | "effect_unknown",
+) {
+  const run = store.createRun(fixture.conversations[0]!.id, {
+    agentId: fixture.agent.id,
+    providerProfileId: fixture.provider.id,
+    providerProtocol: fixture.provider.protocol,
+    providerBaseUrl: fixture.provider.baseUrl,
+    model: fixture.provider.defaultModel,
+    instructions: fixture.agent.instructions,
+    executionProfile: fixture.conversations[0]!.executionProfile,
+    toolPolicy: fixture.agent.toolPolicy,
+  });
+  store.updateRunStatus(run.id, "preparing");
+  store.updateRunStatus(run.id, "running", undefined, effect);
+  return store.updateRunStatus(
+    run.id,
+    status,
+    status === "failed" ? "Tool failed." : undefined,
+    effect,
+  );
 }
