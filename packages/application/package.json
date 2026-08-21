@@ -13,6 +13,10 @@
     "./workbench-layout-persistence": {
       "types": "./dist/workbench-layout-persistence.d.ts",
       "import": "./dist/workbench-layout-persistence.js"
+    },
+    "./workbench-layout-stage-coordinator": {
+      "types": "./dist/workbench-layout-stage-coordinator.d.ts",
+      "import": "./dist/workbench-layout-stage-coordinator.js"
     }
   },
   "files": [

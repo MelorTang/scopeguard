@@ -1,3 +1,5 @@
+import type { WorkspaceLayout } from "@scopeguard/domain";
+
 const PHASE3_RENDERER_METHOD_NAMES = [
   "cancelRun",
   "copyHandoffPrompt",
@@ -42,5 +44,24 @@ export class Phase3RendererClient {
       return operation(...invocation.args);
     })()`;
     return await this.#webContents.executeJavaScript(source) as Result;
+  }
+
+  async armLateWorkspaceLayoutStage(
+    layout: WorkspaceLayout,
+    delayMs: number,
+  ): Promise<void> {
+    if (!Number.isInteger(delayMs) || delayMs <= 0) {
+      throw new Error("Late Workspace layout delay must be a positive integer.");
+    }
+    const invocation = JSON.stringify(JSON.stringify({ layout, delayMs }));
+    const source = `(() => {
+      const invocation = JSON.parse(${invocation});
+      const api = window.scopeguardDesktop;
+      if (!api) throw new Error("Production ScopeGuard preload API is unavailable.");
+      window.setTimeout(() => {
+        void api.stageWorkspaceLayout(invocation.layout).catch(() => undefined);
+      }, invocation.delayMs);
+    })()`;
+    await this.#webContents.executeJavaScript(source);
   }
 }

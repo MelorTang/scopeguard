@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { WorkbenchLayoutStageCoordinator } from "@scopeguard/application/workbench-layout-stage-coordinator";
 import {
   activateConversationInLayout,
   closeConversationInLayout,
@@ -145,6 +146,13 @@ export function useWorkspace(): WorkspaceController {
   snapshotRef.current = snapshot;
   uiRef.current = ui;
   messagesRef.current = messagesByThread;
+  const layoutStageCoordinator = useMemo(
+    () => new WorkbenchLayoutStageCoordinator({
+      retryDelayMs: 50,
+      stage: (layout) => desktopApi.stageWorkspaceLayout(layout),
+    }),
+    [],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -199,13 +207,13 @@ export function useWorkspace(): WorkspaceController {
       const normalized = applyLayoutToUi(next, layout);
       uiRef.current = normalized;
       setUi(normalized);
-      void desktopApi.stageWorkspaceLayout(layout).catch((cause: unknown) => {
+      void layoutStageCoordinator.submit(layout).catch((cause: unknown) => {
         setError(messageFromError(cause));
       });
     } catch (cause) {
       setError(messageFromError(cause));
     }
-  }, []);
+  }, [layoutStageCoordinator]);
 
   const selectedWorkspace = useMemo(() =>
     snapshot?.workspaces.find((item) => item.id === ui.selectedWorkspaceId)
@@ -263,9 +271,9 @@ export function useWorkspace(): WorkspaceController {
     uiRef.current = nextUi;
     setSnapshot(nextSnapshot);
     setUi(nextUi);
-    await desktopApi.stageWorkspaceLayout(layoutFromUi(nextUi, nextSnapshot));
+    await layoutStageCoordinator.submit(layoutFromUi(nextUi, nextSnapshot));
     setError(null);
-  }, []);
+  }, [layoutStageCoordinator]);
 
   const selectProject = useCallback((workspaceId: string) => {
     void transitionWorkspace(workspaceId).catch((cause: unknown) => {

@@ -30,3 +30,27 @@ test("Phase 3 Pilot calls only the production preload API in a real Renderer", a
   assert.match(scripts[1]!, /exact text/);
   assert.match(scripts[2]!, /stageWorkspaceLayout/);
 });
+
+test("Phase 3 Pilot arms a delayed layout revision through production preload IPC", async () => {
+  const scripts: string[] = [];
+  const client = new Phase3RendererClient({
+    async executeJavaScript(source) {
+      scripts.push(source);
+    },
+  });
+  await client.armLateWorkspaceLayoutStage({
+    workspaceId: "workspace",
+    openConversationIds: ["conversation"],
+    paneConversationIds: ["conversation"],
+    paneWidths: [560],
+    activeConversationId: "conversation",
+    requestedPaneCount: 1,
+  }, 250);
+
+  assert.equal(scripts.length, 1);
+  assert.match(scripts[0]!, /window\.scopeguardDesktop/);
+  assert.match(scripts[0]!, /setTimeout/);
+  assert.match(scripts[0]!, /stageWorkspaceLayout/);
+  assert.match(scripts[0]!, /560/);
+  assert.doesNotMatch(scripts[0]!, /createMockDesktopApi/);
+});

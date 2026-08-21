@@ -41,6 +41,7 @@ type Phase3PilotState = {
   locators: Record<string, PiSessionLocator>;
   layout: WorkspaceLayout;
   layoutMutationFlushedOnQuit: true;
+  lateLayoutMutationArmed: true;
   completedDispatchId: string;
   failedDispatchId: string;
   resumedMessageCount: number;
@@ -182,7 +183,14 @@ async function runFirstProcess(
     activeConversationId: conversations[2]!.id,
     requestedPaneCount: 3,
   };
-  await renderer.client.invoke("stageWorkspaceLayout", noWaitLayout);
+  assert.deepEqual(
+    await renderer.client.invoke("stageWorkspaceLayout", noWaitLayout),
+    { accepted: true },
+  );
+  await renderer.client.armLateWorkspaceLayoutStage(
+    withFirstPaneWidth(noWaitLayout, 640),
+    1_000,
+  );
   await persistState(statePath, {
     schemaVersion: 1,
     kind: "phase3",
@@ -200,6 +208,7 @@ async function runFirstProcess(
     locators,
     layout: noWaitLayout,
     layoutMutationFlushedOnQuit: true,
+    lateLayoutMutationArmed: true,
     completedDispatchId: created.id,
     failedDispatchId: blocked.id,
     resumedMessageCount: 0,
@@ -244,6 +253,10 @@ async function runSecondProcess(
     resumedConversationId,
   );
   assert.equal(messages.length, 4);
+  await renderer.client.armLateWorkspaceLayoutStage(
+    withFirstPaneWidth(previous.layout, 680),
+    1_000,
+  );
   await persistState(statePath, {
     ...previous,
     phase: 2,
@@ -301,11 +314,19 @@ function parseState(value: string): Phase3PilotState {
     state.schemaVersion !== 1 ||
     state.kind !== "phase3" ||
     state.phase !== 1 ||
-    state.layoutMutationFlushedOnQuit !== true
+    state.layoutMutationFlushedOnQuit !== true ||
+    state.lateLayoutMutationArmed !== true
   ) {
     throw new Error("Phase 3 Desktop Pilot state is incompatible.");
   }
   return state;
+}
+
+function withFirstPaneWidth(layout: WorkspaceLayout, width: number): WorkspaceLayout {
+  return {
+    ...structuredClone(layout),
+    paneWidths: [width, ...layout.paneWidths.slice(1)],
+  };
 }
 
 function requiredEnvironment(name: string): string {

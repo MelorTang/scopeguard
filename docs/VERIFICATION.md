@@ -87,7 +87,10 @@ Exit gate:
   stop accepting new layout revisions, complete a bounded flush through Agent
   Host and SQLite, destroy the Renderer, and only then stop Agent Host. A failed
   or timed-out flush resumes layout acceptance, blocks the lifecycle action,
-  and reports a diagnostic instead of accepting stale layout;
+  and reports a diagnostic. If a visible Renderer mutation was rejected while
+  the transient lifecycle fence was quiescing, the Renderer retains that exact
+  latest revision and retries it after acceptance resumes; it cannot silently
+  leave the UI ahead of the Main-owned persistence state;
 - Playwright screenshots cover desktop and constrained-width layouts without
   overlap or unreadable controls.
 - Windows development and staged both pass the real `pilot:phase3` workflow on
@@ -98,7 +101,11 @@ Exit gate:
   write, successful and busy-target Dispatch, full Desktop restart,
   a no-debounce pane-close mutation flushed by app quit, SQLite
   layout/session/Dispatch recovery, disk Vault credential recovery, secret
-  absence, and complete process-tree cleanup.
+  absence, and complete process-tree cleanup. The Pilot also arms a delayed
+  layout revision in the real Renderer, delays Agent Host stop, and records the
+  exact shutdown sequence `layout-suspended -> layout-flushed ->
+  renderer-destroyed -> host-stop-started -> host-stop-complete`; the delayed
+  Renderer revision must never cross IPC after destruction.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
   remains optional engineering evidence and is not a product-support gate.

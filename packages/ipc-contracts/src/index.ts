@@ -56,6 +56,10 @@ export const IPC_CHANNELS = {
   runEvent: "scopeguard:event:run",
 } as const;
 
+export type StageWorkspaceLayoutResult =
+  | { accepted: true }
+  | { accepted: false; reason: "quiescing" };
+
 export type AgentHostMethod =
   | "getWorkspaceSnapshot"
   | "createWorkspace"
@@ -192,7 +196,7 @@ export type ScopeGuardDesktopApi = {
     input: UpdateConversationSettingsInput,
   ) => Promise<Conversation>;
   getWorkspaceLayout: (workspaceId: Id) => Promise<WorkspaceLayout | null>;
-  stageWorkspaceLayout: (layout: WorkspaceLayout) => Promise<void>;
+  stageWorkspaceLayout: (layout: WorkspaceLayout) => Promise<StageWorkspaceLayoutResult>;
   flushWorkspaceLayouts: () => Promise<void>;
   saveWorkspaceLayout: (layout: WorkspaceLayout) => Promise<WorkspaceLayout>;
   listConversationMessages: (

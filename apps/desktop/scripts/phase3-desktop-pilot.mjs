@@ -38,6 +38,7 @@ try {
     SCOPEGUARD_DESKTOP_PILOT_API_KEY: secret,
   });
   const first = JSON.parse(await readFile(statePath, "utf8"));
+  const firstShutdown = await readShutdownEvidence(1);
   assert.equal(first.kind, "phase3");
   assert.equal(first.phase, 1);
   assert.equal(first.conversationIds.length, 4);
@@ -45,6 +46,8 @@ try {
   assert.equal(first.layout.requestedPaneCount, 3);
   assert.deepEqual(first.layout.paneWidths, [468, 512, 556]);
   assert.equal(first.layoutMutationFlushedOnQuit, true);
+  assert.equal(first.lateLayoutMutationArmed, true);
+  assertShutdownEvidence(firstShutdown, 1);
   assert.equal(first.rendererApi, "production-preload-ipc");
   assert.equal(first.clipboardVerified, true);
   assert.ok(first.browserWindowId > 0);
@@ -58,6 +61,7 @@ try {
 
   const secondOutput = await launchDesktop(2);
   const second = JSON.parse(await readFile(statePath, "utf8"));
+  const secondShutdown = await readShutdownEvidence(2);
   assert.equal(second.phase, 2);
   assert.equal(second.resumedMessageCount, 4);
   assert.match(secondOutput, /ScopeGuard Phase 3 Desktop Pilot phase 2 complete/);
@@ -70,6 +74,8 @@ try {
   assert.deepEqual(second.layout, first.layout);
   assert.deepEqual(second.layout.paneWidths, [468, 512, 556]);
   assert.equal(second.layoutMutationFlushedOnQuit, true);
+  assert.equal(second.lateLayoutMutationArmed, true);
+  assertShutdownEvidence(secondShutdown, 2);
 
   const finalRequest = provider.requests.at(-1);
   assert.deepEqual(finalRequest?.userTexts, [
@@ -79,7 +85,7 @@ try {
   assert.equal(provider.requests.every((request) => request.authorized), true);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
   console.log(JSON.stringify({
-    checks: 35,
+    checks: 43,
     mode: stageRoot ? "staged" : "development",
     electronVersion: "42.0.1",
     piVersion: Object.values(second.locators)[0]?.piVersion,
@@ -99,6 +105,10 @@ try {
     activePaneConversationId: second.layout.activeConversationId,
     paneWidths: second.layout.paneWidths,
     layoutMutationFlushedOnQuit: second.layoutMutationFlushedOnQuit,
+    rendererDestroyedBeforeHostStop: secondShutdown.rendererDestroyedBeforeHostStop,
+    shutdownEvents: secondShutdown.events,
+    hostStopDelayMs: secondShutdown.hostStopDelayMs,
+    lateLayoutStageAttempts: secondShutdown.lateLayoutStageAttempts,
     completedDispatchId: second.completedDispatchId,
     failedDispatchId: second.failedDispatchId,
     providerObservedHistory: finalRequest.userTexts,
@@ -138,6 +148,11 @@ async function launchDesktop(phase, extraEnvironment = {}) {
     SCOPEGUARD_DESKTOP_PILOT_PHASE: String(phase),
     SCOPEGUARD_DESKTOP_PILOT_LIFECYCLE: lifecyclePath,
     SCOPEGUARD_DESKTOP_PILOT_STATE: statePath,
+    SCOPEGUARD_PHASE3_PILOT_SHUTDOWN_EVIDENCE: join(
+      root,
+      `phase3-shutdown-${phase}.json`,
+    ),
+    SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS: "1200",
     SCOPEGUARD_DESKTOP_PILOT_USER_DATA: userDataRoot,
     SCOPEGUARD_DESKTOP_PILOT_WORKSPACE: workspaceRoot,
     SCOPEGUARD_DESKTOP_PILOT_PROVIDER_URL: provider.baseUrl,
@@ -163,6 +178,25 @@ async function launchDesktop(phase, extraEnvironment = {}) {
     statePath,
     timeoutMs: 120_000,
   });
+}
+
+async function readShutdownEvidence(phase) {
+  return JSON.parse(await readFile(join(root, `phase3-shutdown-${phase}.json`), "utf8"));
+}
+
+function assertShutdownEvidence(evidence, phase) {
+  assert.equal(evidence.schemaVersion, 1);
+  assert.equal(evidence.phase, phase);
+  assert.deepEqual(evidence.events, [
+    "layout-suspended",
+    "layout-flushed",
+    "renderer-destroyed",
+    "host-stop-started",
+    "host-stop-complete",
+  ]);
+  assert.equal(evidence.rendererDestroyedBeforeHostStop, true);
+  assert.equal(evidence.hostStopDelayMs, 1200);
+  assert.equal(evidence.lateLayoutStageAttempts, 0);
 }
 
 async function assertTreeDoesNotContain(directory, secrets) {

@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -77,6 +78,8 @@ let layoutPersistence: WorkbenchLayoutPersistence | null = null;
 let layoutFence: LayoutPersistenceFence | null = null;
 let shutdownStarted = false;
 let shutdownComplete = false;
+const phase3ShutdownEvents: string[] = [];
+let phase3LateLayoutStageAttempts = 0;
 const projectDirectoryAuthorizer = new ProjectDirectoryAuthorizer();
 
 if (!app.requestSingleInstanceLock()) {
@@ -137,6 +140,12 @@ process.once("SIGTERM", () => {
 async function stopAgentHostAndQuit(): Promise<void> {
   try {
     await runLayoutShutdown("app quit", destroyRendererForShutdown, async () => {
+      recordPhase3ShutdownEvent("host-stop-started");
+      if (isPhase3DesktopPilot()) {
+        await wait(requiredPositiveIntegerEnvironment(
+          "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
+        ));
+      }
       try {
         await host?.stop();
       } catch (error) {
@@ -145,7 +154,10 @@ async function stopAgentHostAndQuit(): Promise<void> {
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        if (isPhase3DesktopPilot()) throw error;
       }
+      recordPhase3ShutdownEvent("host-stop-complete");
+      await persistPhase3ShutdownEvidence();
     });
   } catch (error) {
     shutdownStarted = false;
@@ -168,6 +180,7 @@ function destroyRendererForShutdown(): void {
   if (!window.isDestroyed()) {
     throw new Error("Renderer could not be destroyed before Agent Host shutdown.");
   }
+  recordPhase3ShutdownEvent("renderer-destroyed");
 }
 
 async function startApplication(): Promise<void> {
@@ -233,9 +246,15 @@ async function startApplication(): Promise<void> {
   });
   layoutFence = new LayoutPersistenceFence({
     timeoutMs: 5_000,
-    suspend: () => requireLayoutPersistence().suspendScheduling(),
+    suspend: () => {
+      requireLayoutPersistence().suspendScheduling();
+      if (shutdownStarted) recordPhase3ShutdownEvent("layout-suspended");
+    },
     resume: () => requireLayoutPersistence().resumeScheduling(),
-    flushAll: () => requireLayoutPersistence().flushAll(),
+    flushAll: async () => {
+      await requireLayoutPersistence().flushAll();
+      if (shutdownStarted) recordPhase3ShutdownEvent("layout-flushed");
+    },
     reportError: reportLayoutPersistenceError,
   });
   registerIpcHandlers(host);
@@ -468,7 +487,15 @@ function registerIpcHandlers(agentHost: AgentHostClient): void {
   });
   ipcMain.handle(IPC_CHANNELS.stageWorkspaceLayout, (event, value: unknown) => {
     assertTrustedSender(event);
-    requireLayoutPersistence().schedule(parseWorkspaceLayoutRequest(value));
+    if (isPhase3DesktopPilot() && shutdownStarted) {
+      phase3LateLayoutStageAttempts += 1;
+    }
+    const persistence = requireLayoutPersistence();
+    if (persistence.isSchedulingSuspended) {
+      return { accepted: false, reason: "quiescing" } as const;
+    }
+    persistence.schedule(parseWorkspaceLayoutRequest(value));
+    return { accepted: true } as const;
   });
   ipcMain.handle(IPC_CHANNELS.flushWorkspaceLayouts, async (event) => {
     assertTrustedSender(event);
@@ -660,4 +687,64 @@ function reportLayoutPersistenceError(message: string): void {
   if (app.isReady()) {
     dialog.showErrorBox("ScopeGuard could not save the Workspace layout", message);
   }
+}
+
+function isPhase3DesktopPilot(): boolean {
+  return Boolean(
+    desktopPilotPhase &&
+    process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase3"
+  );
+}
+
+function recordPhase3ShutdownEvent(event: string): void {
+  if (isPhase3DesktopPilot()) phase3ShutdownEvents.push(event);
+}
+
+async function persistPhase3ShutdownEvidence(): Promise<void> {
+  if (!isPhase3DesktopPilot()) return;
+  const expectedEvents = [
+    "layout-suspended",
+    "layout-flushed",
+    "renderer-destroyed",
+    "host-stop-started",
+    "host-stop-complete",
+  ];
+  const evidence = {
+    schemaVersion: 1,
+    phase: desktopPilotPhase === "1" ? 1 : 2,
+    events: phase3ShutdownEvents,
+    rendererDestroyedBeforeHostStop:
+      phase3ShutdownEvents.indexOf("renderer-destroyed") >= 0 &&
+      phase3ShutdownEvents.indexOf("renderer-destroyed") <
+        phase3ShutdownEvents.indexOf("host-stop-started"),
+    hostStopDelayMs: requiredPositiveIntegerEnvironment(
+      "SCOPEGUARD_PHASE3_PILOT_HOST_STOP_DELAY_MS",
+    ),
+    lateLayoutStageAttempts: phase3LateLayoutStageAttempts,
+  };
+  await writeFile(
+    requiredPilotEnvironment("SCOPEGUARD_PHASE3_PILOT_SHUTDOWN_EVIDENCE"),
+    `${JSON.stringify(evidence, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  if (JSON.stringify(phase3ShutdownEvents) !== JSON.stringify(expectedEvents)) {
+    throw new Error(
+      `Phase 3 shutdown order was not exact: ${phase3ShutdownEvents.join(" -> ")}`,
+    );
+  }
+  if (phase3LateLayoutStageAttempts !== 0) {
+    throw new Error("A late Renderer layout revision crossed the shutdown boundary.");
+  }
+}
+
+function requiredPositiveIntegerEnvironment(name: string): number {
+  const value = Number(requiredPilotEnvironment(name));
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function wait(delayMs: number): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
 }

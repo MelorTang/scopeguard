@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { WorkbenchLayoutPersistence } from "@scopeguard/application/workbench-layout-persistence";
+import { WorkbenchLayoutStageCoordinator } from "@scopeguard/application/workbench-layout-stage-coordinator";
 import type { WorkspaceLayout } from "@scopeguard/domain";
 
 import { LayoutPersistenceFence } from "./layout-persistence-fence.js";
@@ -65,6 +66,71 @@ test("layout save failure blocks BrowserWindow close and remains diagnosable", a
     "BrowserWindow close blocked because the latest Workspace layout could not be saved: SQLite disk unavailable",
   ]);
 });
+
+for (const reason of [
+  "BrowserWindow close",
+  "Agent Host ready Renderer reload",
+] as const) {
+  test(`failed ${reason} retries the latest visible layout rejected during quiesce`, () =>
+    assertFailedTransientRetriesLatestLayout(reason));
+}
+
+async function assertFailedTransientRetriesLatestLayout(reason: string): Promise<void> {
+  const savedWidths: number[] = [];
+  let rejectFirstSave: ((error: Error) => void) | undefined;
+  let firstSaveStarted: (() => void) | undefined;
+  const firstSaveInFlight = new Promise<void>((resolve) => {
+    firstSaveStarted = resolve;
+  });
+  const persistence = new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    async save(value) {
+      if (value.paneWidths[0] === 440) {
+        firstSaveStarted?.();
+        await new Promise<never>((_resolve, reject) => {
+          rejectFirstSave = reject;
+        });
+      }
+      savedWidths.push(value.paneWidths[0]!);
+      return value;
+    },
+  });
+  const stage = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 1,
+    async stage(value) {
+      if (persistence.isSchedulingSuspended) {
+        return { accepted: false, reason: "quiescing" };
+      }
+      persistence.schedule(value);
+      return { accepted: true };
+    },
+    onError: (error) => assert.fail(`Layout retry failed: ${String(error)}`),
+  });
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 100,
+    suspend: () => persistence.suspendScheduling(),
+    resume: () => persistence.resumeScheduling(),
+    flushAll: () => persistence.flushAll(),
+    reportError: () => undefined,
+  });
+
+  persistence.schedule(layout(440));
+  const lifecycle = fence.runTransient(reason, () => {
+    assert.fail("failed flush must keep the Renderer open");
+  });
+  await firstSaveInFlight;
+
+  const visibleWidth = 560;
+  stage.submit(layout(visibleWidth));
+  rejectFirstSave?.(new Error("SQLite busy"));
+  await assert.rejects(() => lifecycle, /SQLite busy/);
+  await stage.whenIdle();
+  await persistence.flushAll();
+
+  assert.equal(visibleWidth, 560);
+  assert.deepEqual(savedWidths, [560]);
+  stage.dispose();
+}
 
 test("bounded app quit flush times out without stopping the Agent Host", async () => {
   const diagnostics: string[] = [];

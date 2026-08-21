@@ -269,6 +269,7 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         ...snapshot,
         layouts: [layout, ...snapshot.layouts.filter((item) => item.workspaceId !== layout.workspaceId)],
       };
+      return { accepted: true };
     },
     async flushWorkspaceLayouts() {
       // The browser preview persists staged layouts synchronously above to model Main ownership.
