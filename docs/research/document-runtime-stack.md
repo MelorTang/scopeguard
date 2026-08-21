@@ -1,6 +1,6 @@
 # Document Runtime Stack Research
 
-> Status: Historical research snapshot retained as input to the Office Tool Pack. Its enterprise assumptions and recommended stack are not current implementation commitments.
+> Status: Historical research snapshot. ADR 0027 rejects a ScopeGuard-owned Office editor or Document Runtime, so this stack is not current Phase 4 implementation input.
 
 Research snapshot: 2026-08-12. This answers [issue #11](https://github.com/MelorTang/scopeguard/issues/11) for the V1 planning map in [issue #2](https://github.com/MelorTang/scopeguard/issues/2). Sources are limited to standards bodies, official vendor documentation, and official project documentation, source, releases, and licenses.
 

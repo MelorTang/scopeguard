@@ -4,7 +4,9 @@ Status: Product boundary accepted by
 [ADR 0024](./adr/0024-adopt-a-personal-first-pi-rpc-workbench.md), Pi RPC
 contract accepted by [ADR 0025](./adr/0025-adopt-pi-rpc-with-an-extension-approval-bridge.md),
 and the Phase 2 Runtime/storage reset is accepted by
-[ADR 0026](./adr/0026-replace-the-native-harness-with-pi-runtime.md).
+[ADR 0026](./adr/0026-replace-the-native-harness-with-pi-runtime.md). Agent file
+editing and Artifact ownership are fixed by
+[ADR 0027](./adr/0027-use-agent-tools-for-file-editing.md).
 
 ## Product Shape
 
@@ -34,7 +36,6 @@ Electron Renderer
        |- local metadata store
        |- Workspace and Agent configuration
        |- Artifact and Dispatch services
-       |- Office Tool Pack
        `- Pi RPC client
             -> supervised Pi process
                  |- Agent loop
@@ -76,12 +77,15 @@ Artifact references, and delivery state. It never copies the source transcript
 or chooses a destination automatically.
 
 **Artifact service** owns durable work products, versions, preview state, and
-the switch between multi-Conversation Workbench and Artifact Review.
+the switch between multi-Conversation Workbench and Artifact Review. It records
+the source/output identity and provenance of Agent-produced files, stops on
+conflicting Workspace changes, and never mutates an existing Artifact Version.
 
-**Office Tool Pack** supplies typed operations for DOCX, XLSX, PPTX, and PDF.
-Plain text, Markdown, and HTML use normal Model and local-file capabilities.
-Historical document-runtime research is input to this module, not an already
-accepted implementation stack.
+**Agent file editing** is not a separate ScopeGuard module. Agents use Pi Tools,
+selected Skills, scripts, libraries, and mature external applications to work
+with ordinary Workspace Files. ScopeGuard captures the resulting files as
+Artifact Versions and exposes the actual workflow's limits; it does not provide
+a uniform Office operation layer or ship a Document Runtime.
 
 **Pi RPC adapter** translates between the ScopeGuard application contract and
 the pinned Pi RPC version. It owns process supervision, strict response unions,
@@ -90,17 +94,19 @@ Pi's transcript.
 
 ## Persistence
 
-ScopeGuard schema family `scopeguard-personal-pi-v1`, version 1, contains
+ScopeGuard schema family `scopeguard-personal-pi-v1`, version 2, contains
 Workspace, Provider reference, Agent, Conversation-to-Pi-locator, Run,
 approval-tuple, Workspace context, Artifact, Dispatch, and layout metadata.
-Artifact remains reserved for Phase 4. The Phase 3 candidate activates Dispatch
-and layout metadata without changing the schema family or version. The database
-has no message, Tool result, transcript, or compaction tables. Pi's Session JSONL
-is the sole Runtime truth. Workspace source files remain ordinary local files,
-and Provider secrets remain in the operating-system vault rather than SQLite or
-RPC payloads.
+Phase 4 activates immutable Artifact Versions, declared Workspace input
+identities, source/output identities, provenance, Review state, and the exact
+Phase 3-to-Phase 4 schema migration. Artifact file bytes live in
+content-addressed local storage rather than SQLite. The database has no message,
+Tool result, transcript, or compaction tables. Pi's Session JSONL is the sole
+Runtime truth. Workspace source files remain ordinary local files, and Provider
+secrets remain in the operating-system vault rather than SQLite or RPC payloads.
 
-There is no migration from the retired development schema. Startup validates
+There is no migration from the retired development schema; only the exact
+Phase 3 candidate schema version can move to version 2. Startup validates
 the schema family/version, complete table and column shape, SQLite integrity,
 the complete Pi locator, fixed Pi/Session versions, Session file readability,
 Session ID, and Workspace identity. Missing, malformed, incompatible, or
@@ -138,9 +144,10 @@ unopenable state stops startup; it never creates an empty replacement Session.
 2. Phase 1: Pi RPC qualification prototype and go/no-go decision. Complete.
 3. Phase 2: fresh local schema and runtime replacement behind stable interfaces. Complete.
 4. Phase 3: multi-Conversation workbench, explicit Dispatch, and recovery.
-   Candidate implementation awaiting Windows Pilot evidence and independent
-   review.
-5. Phase 4: Artifact Review and the bounded Office Tool Pack.
+   Candidate implementation has passed independent review but still awaits
+   exact-candidate Windows development and staged Pilot acceptance.
+5. Phase 4: Artifact Review and the Agent file-editing lifecycle. Candidate
+   implementation under verification; not yet accepted.
 6. Phase 5: packaging, cross-platform verification, and real-project pilot.
 
 Each phase advances only after the exit gate in

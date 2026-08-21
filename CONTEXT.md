@@ -11,6 +11,11 @@ Agents, permissions, inputs, and outputs.
 A user-created boundary for related local files, Agents, Conversations, and
 Artifacts. A Workspace may point at a local directory.
 
+**Workspace File**:
+An ordinary mutable file inside a Workspace that Agents may inspect, create, or
+revise through available Tools and Skills. A Workspace File is not an immutable
+Artifact Version.
+
 **Agent**:
 A user-configured working identity composed of a role, instructions, available
 Tools and Skills, and a selected Model. An Agent is not a person, account, or
@@ -40,12 +45,28 @@ Dispatch.
 
 **Artifact**:
 A durable work product produced, imported, or revised in a Workspace, such as a
-document, spreadsheet, presentation, PDF, report, or code change. An Artifact is
-distinct from transient chat output.
+document, spreadsheet, presentation, PDF, report, or code change. An Artifact
+keeps its identity across captured versions and is distinct from transient chat
+output.
+
+**Artifact Version**:
+An immutable captured revision of an Artifact with its source identity and
+provenance. Editing a related Workspace File may produce a new Artifact Version
+but never mutates an existing one.
+
+**Artifact Review**:
+The User's inspection of an Artifact and its versions before choosing how to
+open, accept, or export a result. Artifact Review is not a document editor.
+
+**Agent File Editing**:
+An Agent's use of available Tools, Skills, and mature external toolchains to
+inspect, create, or revise Workspace Files. The supported formats and operations
+belong to the selected workflow, not to a ScopeGuard-owned Office editor.
+_Avoid_: Office Tool Pack, built-in Office editor, Document Runtime
 
 **Skill**:
-A reusable package of instructions and optional resources that helps an Agent
-perform a class of work. Users may install and select Skills.
+A reusable package of instructions, scripts, and optional resources that helps
+an Agent perform a class of work. Users may install and select Skills.
 
 **Tool**:
 A callable capability available to an Agent, such as reading a file, editing a

@@ -2,9 +2,17 @@
 
 Status: Accepted on 2026-08-20.
 
+Phase 4 extends this schema to version 2 under
+[ADR 0027](./0027-use-agent-tools-for-file-editing.md). The version-1 statements
+below remain the accepted Phase 2 evidence boundary; the active implementation
+allows only its exact Phase 3 candidate shape to migrate to the Artifact schema.
+The rejection of retired, unknown, partial, or malformed databases remains
+unchanged.
+
 Implements the Runtime ownership chosen by ADR 0024 and the constrained Pi RPC
 Go accepted by ADR 0025. This decision does not authorize Phase 3 workbench or
-Dispatch UX, Phase 4 Office behavior, or migration of retired development data.
+Dispatch UX, Phase 4 Agent file-editing behavior, or migration of retired
+development data.
 
 ## Context
 

@@ -2,6 +2,10 @@
 
 Status: Accepted on 2026-08-18.
 
+The Office Tool Pack ownership and format-specific Tool Pack clauses are
+superseded by [ADR 0027](./0027-use-agent-tools-for-file-editing.md). The rest of
+this decision remains active.
+
 Supersedes ADR 0002, 0004, 0005, 0006, 0009, 0012, 0013, 0014, 0017,
 0018, 0019, 0020, 0022, and 0023. It amends the terminology and product
 boundary of ADR 0001, 0003, 0008, 0010, 0011, 0015, and 0016, while preserving

@@ -33,7 +33,8 @@ The retired enterprise route remains recoverable at:
 - User-configured Agents: role, instructions, Model, Tools, and Skills.
 - Persistent Conversations with one to four visible at once.
 - Manual Handoff prompts and explicit Agent Dispatch; no automatic routing.
-- Durable Artifacts and an Office Tool Pack for DOCX, XLSX, PPTX, and PDF.
+- Durable Artifact versions and review around files edited by Agents through
+  their available Tools, Skills, and mature external toolchains.
 - Pi RPC for the Agent loop, Providers, runtime Tools, sessions, and compaction.
 - Optional external MCP integrations later; enterprise RAG is a separate system.
 
@@ -49,7 +50,11 @@ development-database migration are not V1 goals.
 | Workspace and Agent configuration | Provider protocol execution |
 | Conversation-to-session mapping | Runtime Tool behavior |
 | Local metadata, Artifacts, Dispatch | Session resume and compaction |
-| Office Tool Pack | Runtime event production |
+| Artifact versions, provenance, and review | Runtime event production |
+
+ScopeGuard does not implement an Office editor or a uniform document-operation
+layer. Office files use the same Agent Tool and Skill path as other Workspace
+files; support reflects the selected workflow and installed toolchain.
 
 ## Development
 

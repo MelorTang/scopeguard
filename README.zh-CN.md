@@ -31,7 +31,8 @@ Phase 3 的多 Conversation 布局和显式 Dispatch 已形成候选实现；在
 - 用户配置 Agent：角色、指令、Model、Tool 和 Skill。
 - Conversation 持久保存，同时可见一到四个。
 - 支持人工 Handoff 提示词和显式 Agent Dispatch，不做自动路由。
-- 管理持久 Artifact，并提供 DOCX、XLSX、PPTX、PDF Office Tool Pack。
+- 管理持久 Artifact 版本和审阅；文件编辑由 Agent 通过现有 Tool、Skill
+  和成熟外部工具链完成。
 - Pi RPC 负责 Agent loop、Provider、运行时 Tool、Session 和 Compaction。
 - 后续可接外部 MCP；企业知识库和 RAG 作为独立系统开发。
 
@@ -46,7 +47,11 @@ Organization 管理、Agent Template、企业控制面、自动多 Agent 编排�
 | Workspace 和 Agent 配置 | Provider 协议执行 |
 | Conversation 到 Session 的映射 | 运行时 Tool 行为 |
 | 本地元数据、Artifact、Dispatch | Session 恢复和 Compaction |
-| Office Tool Pack | 运行时事件产生 |
+| Artifact 版本、来源和审阅 | 运行时事件产生 |
+
+ScopeGuard 不实现 Office 编辑器或统一的文档操作层。Office 文件与其他
+Workspace 文件使用相同的 Agent Tool/Skill 路径；实际支持范围取决于所选
+工作流和已安装工具链。
 
 ## 开发
 

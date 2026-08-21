@@ -132,17 +132,44 @@ Exit gate:
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
   remains optional engineering evidence and is not a product-support gate.
 
-## Phase 4: Artifact And Office Tool Pack
+## Phase 4: Artifact Review And Agent File Editing
+
+Status: candidate implementation under verification. Phase 4 is not accepted
+until GitHub issue #27 passes the exact-candidate Windows development and staged
+Pilots plus an independent Standards and Spec review.
 
 Exit gate:
 
 - Artifact versions and Workspace-file changes are distinct and recoverable;
-- DOCX, XLSX, PPTX, and PDF fixtures cover inspect, generate or revise, preview,
-  and export behavior selected for V1;
-- structure and rendered-output checks use representative public or synthetic
-  fixtures; private enterprise samples are not a release prerequisite;
+- a selected Agent can inspect, create, and revise representative office files
+  through its declared Tools, Skills, scripts, libraries, or external
+  applications without a ScopeGuard-owned format editor;
+- each captured result records declared Workspace input identities,
+  source/output identity, producing Conversation and confirmed-effect Run,
+  actual toolchain, and known limitations; evidence applies to that workflow and
+  does not imply a uniform format guarantee;
+- unavailable tools, failed validation, partial output, and unknown effects are
+  visible and never promoted as a successful Artifact Version;
 - conflicting Workspace writes stop instead of silently overwriting;
-- Artifact Review and return to the multi-Conversation workbench preserve state.
+- Artifact Review can open or export a selected immutable version, and returning
+  to the multi-Conversation workbench preserves state;
+- no Office editor, OOXML/PDF semantic editing engine, conversion/runtime pack,
+  or format-specific operation matrix is required for V1 acceptance.
+
+The real Phase 4 Desktop Pilot uses two repository synthetic DOCX fixtures only
+as ordinary Workspace Files. A selected full-access Agent invokes Pi's `bash`
+Tool, which calls a test-only external workflow built with `docx@9.7.1` and
+`mammoth@1.12.1`. That workflow reads the input, creates a first result, then
+reads both the previous result and a second input to produce a revision; it
+reopens each output and validates readable text. ScopeGuard then records the
+exact Run, declared input hashes, toolchain, limitations, source/output hashes,
+and immutable parent chain. The Pilot proves conflict rejection, export
+recovery, production Renderer Artifact Review hydration, full Desktop restart,
+disk Vault recovery, and process-tree cleanup. Package verification must prove
+that the test-only DOCX libraries are absent from the staged product. This
+evidence applies only to the declared workflow; it does not add a ScopeGuard
+DOCX editing guarantee. Unsigned macOS Phase 4 Pilot automation rejects before
+Electron spawn.
 
 ## Phase 5: Usable Desktop Milestone
 
@@ -182,6 +209,13 @@ The Phase 3 candidate adds:
 pnpm --filter @scopeguard/desktop test:renderer
 pnpm pilot:phase3
 pnpm pilot:phase3:staged
+```
+
+The Phase 4 candidate adds:
+
+```bash
+pnpm pilot:phase4
+pnpm pilot:phase4:staged
 ```
 
 Windows Development and Windows staged are the Phase 2 real Desktop hard gates.
