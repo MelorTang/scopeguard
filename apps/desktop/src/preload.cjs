@@ -14,6 +14,8 @@ const channels = Object.freeze({
   getWorkspaceLayout: "scopeguard:layout:get",
   stageWorkspaceLayout: "scopeguard:layout:stage",
   flushWorkspaceLayouts: "scopeguard:layout:flush",
+  rendererLayoutLifecycleRequest: "scopeguard:layout:lifecycle-request",
+  rendererLayoutLifecycleResponse: "scopeguard:layout:lifecycle-response",
   saveWorkspaceLayout: "scopeguard:layout:save",
   listConversationMessages: "scopeguard:conversation:list-messages",
   startRun: "scopeguard:run:start",
@@ -54,6 +56,30 @@ const api = Object.freeze({
     ipcRenderer.invoke(channels.flushWorkspaceLayouts),
   saveWorkspaceLayout: (layout) =>
     ipcRenderer.invoke(channels.saveWorkspaceLayout, layout),
+  subscribeRendererLayoutLifecycleRequests: (listener) => {
+    if (typeof listener !== "function") {
+      throw new TypeError("Renderer layout lifecycle listener must be a function.");
+    }
+    const handler = (_event, value) => {
+      const request = parseRendererLayoutLifecycleRequest(value);
+      if (!request) return;
+      void Promise.resolve()
+        .then(() => listener(request))
+        .then(
+          () => ipcRenderer.send(channels.rendererLayoutLifecycleResponse, {
+            ...request,
+            ok: true,
+          }),
+          (error) => ipcRenderer.send(channels.rendererLayoutLifecycleResponse, {
+            ...request,
+            ok: false,
+            error: boundedErrorMessage(error),
+          }),
+        );
+    };
+    ipcRenderer.on(channels.rendererLayoutLifecycleRequest, handler);
+    return () => ipcRenderer.removeListener(channels.rendererLayoutLifecycleRequest, handler);
+  },
   listConversationMessages: (conversationId) =>
     ipcRenderer.invoke(channels.listConversationMessages, conversationId),
   startRun: (input) => ipcRenderer.invoke(channels.startRun, input),
@@ -98,4 +124,19 @@ function isRunEventEnvelope(value) {
       typeof value.conversationId === "string" &&
       typeof value.at === "string",
   );
+}
+
+function parseRendererLayoutLifecycleRequest(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (Object.keys(value).sort().join(",") !== "action,requestId") return null;
+  if (typeof value.requestId !== "string" || !value.requestId.trim()) return null;
+  if (value.action !== "drain" && value.action !== "resume") return null;
+  return { requestId: value.requestId.trim(), action: value.action };
+}
+
+function boundedErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return Buffer.from(message || "Renderer layout lifecycle failed.", "utf8")
+    .subarray(0, 2_048)
+    .toString("utf8") || "Renderer layout lifecycle failed.";
 }

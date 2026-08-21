@@ -54,3 +54,24 @@ test("Phase 3 Pilot arms a delayed layout revision through production preload IP
   assert.match(scripts[0]!, /560/);
   assert.doesNotMatch(scripts[0]!, /createMockDesktopApi/);
 });
+
+test("Phase 3 Pilot resizes through the real Workbench control", async () => {
+  const scripts: string[] = [];
+  const client = new Phase3RendererClient({
+    async executeJavaScript(source) {
+      scripts.push(source);
+      return [492, 488, 556];
+    },
+  });
+
+  assert.deepEqual(
+    await client.resizeFirstPaneThroughWorkbench([468, 512, 556]),
+    [492, 488, 556],
+  );
+  assert.equal(scripts.length, 1);
+  assert.match(scripts[0]!, /\.workbench/);
+  assert.match(scripts[0]!, /role="separator/);
+  assert.match(scripts[0]!, /ArrowRight/);
+  assert.doesNotMatch(scripts[0]!, /stageWorkspaceLayout/);
+  assert.doesNotMatch(scripts[0]!, /createMockDesktopApi/);
+});

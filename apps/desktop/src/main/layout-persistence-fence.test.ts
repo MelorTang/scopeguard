@@ -7,10 +7,16 @@ import type { WorkspaceLayout } from "@scopeguard/domain";
 
 import { LayoutPersistenceFence } from "./layout-persistence-fence.js";
 
+const NOOP_RENDERER_LIFECYCLE = {
+  drainRenderer: async () => undefined,
+  resumeRenderer: async () => undefined,
+};
+
 test("Agent Host ready reload waits for pending layouts to reach SQLite", async () => {
   const events: string[] = [];
   let releaseFlush: (() => void) | undefined;
   const fence = new LayoutPersistenceFence({
+    ...NOOP_RENDERER_LIFECYCLE,
     timeoutMs: 100,
     suspend: () => events.push("suspended"),
     resume: () => events.push("resumed"),
@@ -46,6 +52,7 @@ test("layout save failure blocks BrowserWindow close and remains diagnosable", a
   const diagnostics: string[] = [];
   let closed = false;
   const fence = new LayoutPersistenceFence({
+    ...NOOP_RENDERER_LIFECYCLE,
     timeoutMs: 100,
     suspend: () => undefined,
     resume: () => undefined,
@@ -107,6 +114,7 @@ async function assertFailedTransientRetriesLatestLayout(reason: string): Promise
     onError: (error) => assert.fail(`Layout retry failed: ${String(error)}`),
   });
   const fence = new LayoutPersistenceFence({
+    ...NOOP_RENDERER_LIFECYCLE,
     timeoutMs: 100,
     suspend: () => persistence.suspendScheduling(),
     resume: () => persistence.resumeScheduling(),
@@ -138,6 +146,7 @@ test("bounded app quit flush times out without stopping the Agent Host", async (
   let attempts = 0;
   let hostStopped = false;
   const fence = new LayoutPersistenceFence({
+    ...NOOP_RENDERER_LIFECYCLE,
     timeoutMs: 20,
     suspend: () => {
       suspended = true;
@@ -181,6 +190,97 @@ test("bounded app quit flush times out without stopping the Agent Host", async (
   assert.equal(suspended, true);
 });
 
+test("Renderer drain acknowledgement timeout blocks app quit and restores both schedulers", async () => {
+  const events: string[] = [];
+  let mainSuspended = false;
+  let rendererAccepting = true;
+  let drainAttempts = 0;
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 20,
+    drainRenderer: async () => {
+      drainAttempts += 1;
+      rendererAccepting = false;
+      if (drainAttempts === 1) await new Promise<void>(() => undefined);
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => {
+      rendererAccepting = true;
+      events.push("renderer-resumed");
+    },
+    suspend: () => {
+      mainSuspended = true;
+      events.push("main-suspended");
+    },
+    resume: () => {
+      mainSuspended = false;
+      events.push("main-resumed");
+    },
+    flushAll: async () => {
+      events.push("flushed");
+    },
+    reportError: (message) => events.push(message),
+  });
+
+  await assert.rejects(() => fence.runShutdown(
+    "app quit",
+    () => assert.fail("drain timeout must not destroy the Renderer"),
+    () => assert.fail("drain timeout must not stop the Agent Host"),
+  ), /Renderer layout drain timed out after 20ms/);
+  assert.equal(mainSuspended, false);
+  assert.equal(rendererAccepting, true);
+  assert.deepEqual(events, [
+    "app quit blocked because the latest Renderer layout could not be staged: Renderer layout drain timed out after 20ms.",
+    "renderer-resumed",
+  ]);
+
+  await fence.runShutdown(
+    "app quit retry",
+    () => {
+      events.push("renderer-destroyed");
+    },
+    () => {
+      events.push("host-stopped");
+    },
+  );
+  assert.equal(mainSuspended, true);
+  assert.equal(rendererAccepting, false);
+  assert.deepEqual(events.slice(-5), [
+    "renderer-drained",
+    "main-suspended",
+    "flushed",
+    "renderer-destroyed",
+    "host-stopped",
+  ]);
+});
+
+test("shutdown recovery attempts Renderer resume even when Main resume fails", async () => {
+  let rendererResumed = false;
+  const diagnostics: string[] = [];
+  const fence = new LayoutPersistenceFence({
+    timeoutMs: 100,
+    drainRenderer: async () => undefined,
+    resumeRenderer: async () => {
+      rendererResumed = true;
+    },
+    suspend: () => undefined,
+    resume: () => {
+      throw new Error("Main scheduler recovery failed");
+    },
+    flushAll: async () => {
+      throw new Error("SQLite busy");
+    },
+    reportError: (message) => diagnostics.push(message),
+  });
+
+  await assert.rejects(() => fence.runShutdown(
+    "app quit",
+    () => assert.fail("failed flush must not destroy the Renderer"),
+    () => assert.fail("failed flush must not stop the Agent Host"),
+  ), /SQLite busy.*Main scheduler recovery failed/);
+  assert.equal(rendererResumed, true);
+  assert.match(diagnostics.at(-1) ?? "", /Layout scheduling recovery failed/);
+});
+
 test("app quit rejects a layout revision staged while Agent Host stop is delayed", async () => {
   const savedWidths: number[] = [];
   const persistence = new WorkbenchLayoutPersistence({
@@ -197,6 +297,7 @@ test("app quit rejects a layout revision staged while Agent Host stop is delayed
     hostStopStarted = resolve;
   });
   const fence = new LayoutPersistenceFence({
+    ...NOOP_RENDERER_LIFECYCLE,
     timeoutMs: 100,
     suspend: () => {
       persistence.suspendScheduling();
@@ -239,6 +340,12 @@ test("failed shutdown resumes layout scheduling and a later retry drains the lat
   const events: string[] = [];
   const fence = new LayoutPersistenceFence({
     timeoutMs: 100,
+    drainRenderer: async () => {
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => {
+      events.push("renderer-resumed");
+    },
     suspend: () => {
       suspended = true;
       events.push("suspended");
@@ -273,13 +380,102 @@ test("failed shutdown resumes layout scheduling and a later retry drains the lat
   );
   assert.equal(suspended, true);
   assert.deepEqual(events, [
+    "renderer-drained",
     "suspended",
     "app quit blocked because the latest Workspace layout could not be saved: SQLite busy",
     "resumed",
+    "renderer-resumed",
+    "renderer-drained",
     "suspended",
     "flushed-latest",
     "renderer-destroyed",
     "shutdown-complete",
+  ]);
+});
+
+test("app quit drains a Renderer revision rejected during transient quiesce before Main suspension", async () => {
+  const savedWidths: number[] = [];
+  const events: string[] = [];
+  let firstSave = true;
+  let rejectFirstSave: ((error: Error) => void) | undefined;
+  let firstSaveStarted: (() => void) | undefined;
+  const firstSaveInFlight = new Promise<void>((resolve) => {
+    firstSaveStarted = resolve;
+  });
+  const persistence = new WorkbenchLayoutPersistence({
+    delayMs: 80,
+    async save(value) {
+      if (value.paneWidths[0] === 440 && firstSave) {
+        firstSave = false;
+        firstSaveStarted?.();
+        await new Promise<never>((_resolve, reject) => {
+          rejectFirstSave = reject;
+        });
+      }
+      savedWidths.push(value.paneWidths[0]!);
+      return value;
+    },
+  });
+  const stage = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 50,
+    async stage(value) {
+      if (persistence.isSchedulingSuspended) {
+        return { accepted: false, reason: "quiescing" };
+      }
+      persistence.schedule(value);
+      return { accepted: true };
+    },
+  });
+  const rendererLifecycle = stage as WorkbenchLayoutStageCoordinator & {
+    quiesceAndDrain(): Promise<void>;
+    resumeSubmissions(): void;
+  };
+  const fenceOptions = {
+    timeoutMs: 100,
+    drainRenderer: async () => {
+      await rendererLifecycle.quiesceAndDrain();
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => rendererLifecycle.resumeSubmissions(),
+    suspend: () => {
+      persistence.suspendScheduling();
+      events.push("main-suspended");
+    },
+    resume: () => persistence.resumeScheduling(),
+    flushAll: () => persistence.flushAll(),
+    reportError: () => undefined,
+  };
+  const fence = new LayoutPersistenceFence(fenceOptions);
+
+  persistence.schedule(layout(440));
+  const transient = fence.runTransient("BrowserWindow close", () => {
+    assert.fail("failed transient flush must keep the Renderer open");
+  });
+  await firstSaveInFlight;
+
+  const latestVisible = stage.submit(layout(560));
+  rejectFirstSave?.(new Error("SQLite busy"));
+  await assert.rejects(() => transient, /SQLite busy/);
+
+  await fence.runShutdown(
+    "app quit",
+    () => {
+      events.push("renderer-destroyed");
+    },
+    () => {
+      events.push("host-stopped");
+    },
+  );
+  stage.dispose();
+  await latestVisible;
+
+  assert.deepEqual(savedWidths, [560]);
+  assert.deepEqual(events, [
+    "main-suspended",
+    "renderer-drained",
+    "main-suspended",
+    "renderer-destroyed",
+    "host-stopped",
   ]);
 });
 
@@ -292,6 +488,12 @@ test("concurrent reload close and quit serialize without duplicate terminal shut
   });
   const fence = new LayoutPersistenceFence({
     timeoutMs: 100,
+    drainRenderer: async () => {
+      events.push("renderer-drained");
+    },
+    resumeRenderer: async () => {
+      events.push("renderer-resumed");
+    },
     suspend: () => events.push("suspended"),
     resume: () => events.push("resumed"),
     flushAll: async () => {
@@ -338,7 +540,7 @@ test("concurrent reload close and quit serialize without duplicate terminal shut
   assert.deepEqual(events, [
     "suspended", "flushed", "reload-started", "reload-complete", "resumed",
     "suspended", "flushed", "close-complete", "resumed",
-    "suspended", "flushed", "quit-renderer-destroyed", "quit-complete",
+    "renderer-drained", "suspended", "flushed", "quit-renderer-destroyed", "quit-complete",
   ]);
 });
 

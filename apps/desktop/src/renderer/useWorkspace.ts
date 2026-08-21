@@ -157,6 +157,17 @@ export function useWorkspace(): WorkspaceController {
     [],
   );
 
+  useEffect(() => {
+    const unsubscribe = desktopApi.subscribeRendererLayoutLifecycleRequests(async (request) => {
+      if (request.action === "drain") {
+        await layoutStageCoordinator.quiesceAndDrain();
+        return;
+      }
+      layoutStageCoordinator.resumeSubmissions();
+    });
+    return unsubscribe;
+  }, [layoutStageCoordinator]);
+
   const refresh = useCallback(async () => {
     try {
       const next = await desktopApi.getWorkspaceSnapshot();
@@ -205,6 +216,9 @@ export function useWorkspace(): WorkspaceController {
     update: (current: PersistedUiState) => PersistedUiState,
   ) => {
     try {
+      if (!layoutStageCoordinator.isAcceptingSubmissions) {
+        throw new Error("Workspace layout is quiescing and cannot be changed.");
+      }
       const next = update(uiRef.current);
       const layout = layoutFromUi(next, snapshotRef.current);
       const normalized = applyLayoutToUi(next, layout);
@@ -266,9 +280,15 @@ export function useWorkspace(): WorkspaceController {
   }, [messagesByThread, openThreads]);
 
   const transitionWorkspace = useCallback(async (workspaceId: string) => {
+    if (!layoutStageCoordinator.isAcceptingSubmissions) {
+      throw new Error("Workspace layout is quiescing and cannot be changed.");
+    }
     const currentWorkspaceId = uiRef.current.selectedWorkspaceId;
     if (currentWorkspaceId) await desktopApi.flushWorkspaceLayouts();
     const nextSnapshot = await desktopApi.getWorkspaceSnapshot();
+    if (!layoutStageCoordinator.isAcceptingSubmissions) {
+      throw new Error("Workspace layout is quiescing and cannot be changed.");
+    }
     const nextUi = selectWorkspace(uiRef.current, nextSnapshot, workspaceId);
     snapshotRef.current = nextSnapshot;
     uiRef.current = nextUi;

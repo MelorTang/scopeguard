@@ -84,6 +84,88 @@ test("an invalid stage response fails explicitly and can be resubmitted without 
   coordinator.dispose();
 });
 
+test("terminal quiesce drains every Workspace immediately and blocks new submissions", async () => {
+  const attempts: string[] = [];
+  const accepted: string[] = [];
+  let mainQuiescing = true;
+  const coordinator = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 1_000,
+    async stage(value) {
+      const key = `${value.workspaceId}:${value.paneWidths[0]}`;
+      attempts.push(key);
+      if (mainQuiescing) return { accepted: false, reason: "quiescing" };
+      accepted.push(key);
+      return { accepted: true };
+    },
+  });
+
+  const workspaceA = coordinator.submit(layout("workspace-a", 560));
+  const workspaceB = coordinator.submit(layout("workspace-b", 620));
+  await waitFor(() => attempts.length === 2);
+  mainQuiescing = false;
+
+  const drained = coordinator.quiesceAndDrain();
+  await assert.rejects(
+    () => coordinator.submit(layout("workspace-a", 680)),
+    /quiescing/i,
+  );
+  await Promise.all([workspaceA, workspaceB, drained]);
+
+  assert.deepEqual(new Set(accepted), new Set([
+    "workspace-a:560",
+    "workspace-b:620",
+  ]));
+  coordinator.resumeSubmissions();
+  await coordinator.submit(layout("workspace-a", 700));
+  assert.equal(accepted.at(-1), "workspace-a:700");
+  coordinator.dispose();
+});
+
+test("terminal drain overtakes a stale quiescing response without waiting its retry timer", async () => {
+  let releaseFirst: (() => void) | undefined;
+  let firstAttemptStarted: (() => void) | undefined;
+  const firstAttempt = new Promise<void>((resolve) => {
+    firstAttemptStarted = resolve;
+  });
+  let attempts = 0;
+  const coordinator = new WorkbenchLayoutStageCoordinator({
+    retryDelayMs: 1_000,
+    async stage() {
+      attempts += 1;
+      if (attempts === 1) {
+        firstAttemptStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        return { accepted: false, reason: "quiescing" };
+      }
+      return { accepted: true };
+    },
+  });
+
+  const submitted = coordinator.submit(layout("workspace-a", 560));
+  await firstAttempt;
+  const drained = coordinator.quiesceAndDrain();
+  releaseFirst?.();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all([submitted, drained]),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Terminal drain waited for the retry timer.")),
+          50,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+
+  assert.equal(attempts, 2);
+  coordinator.dispose();
+});
+
 function layout(workspaceId: string, width: number): WorkspaceLayout {
   return {
     workspaceId,

@@ -1,5 +1,7 @@
 export type LayoutPersistenceFenceOptions = {
   timeoutMs: number;
+  drainRenderer(): Promise<void>;
+  resumeRenderer(): Promise<void>;
   suspend(): void;
   resume(): void;
   flushAll(): Promise<void>;
@@ -50,7 +52,7 @@ export class LayoutPersistenceFence {
     const operation = this.#enqueue(() => this.#runQuiesced(reason, async () => {
       await destroyRenderer();
       await stopAgentHost();
-    }, false));
+    }, false, true));
     this.#shutdown = operation;
     void operation.then(
       () => {
@@ -75,17 +77,78 @@ export class LayoutPersistenceFence {
     reason: string,
     action: () => void | Promise<void>,
     resumeAfter: boolean,
+    drainRenderer = false,
   ): Promise<void> {
-    this.#options.suspend();
+    let rendererQuiesced = false;
+    let mainSuspended = false;
     let completed = false;
+    let operationError: unknown = null;
     try {
+      if (drainRenderer) {
+        await this.#drainRenderer(reason);
+        rendererQuiesced = true;
+      }
+      this.#options.suspend();
+      mainSuspended = true;
       await this.#flush(reason);
       await action();
       completed = true;
+    } catch (error) {
+      operationError = error;
+      throw error;
     } finally {
       if (resumeAfter || !completed) {
-        this.#options.resume();
+        await this.#recoverScheduling({
+          mainSuspended,
+          rendererMustResume: drainRenderer && (rendererQuiesced || !completed),
+          operationError,
+        });
       }
+    }
+  }
+
+  async #recoverScheduling(input: {
+    mainSuspended: boolean;
+    rendererMustResume: boolean;
+    operationError: unknown;
+  }): Promise<void> {
+    const recoveryErrors: Error[] = [];
+    if (input.mainSuspended) {
+      try {
+        this.#options.resume();
+      } catch (error) {
+        recoveryErrors.push(asError(error));
+      }
+    }
+    if (input.rendererMustResume) {
+      try {
+        await this.#options.resumeRenderer();
+      } catch (error) {
+        recoveryErrors.push(asError(error));
+      }
+    }
+    if (recoveryErrors.length === 0) return;
+    const primary = input.operationError === null ? null : asError(input.operationError);
+    const message = [
+      primary?.message,
+      `Layout scheduling recovery failed: ${recoveryErrors.map(({ message }) => message).join("; ")}`,
+    ].filter(Boolean).join(". ");
+    this.#options.reportError(message);
+    throw new Error(message, { cause: primary ?? recoveryErrors[0] });
+  }
+
+  async #drainRenderer(reason: string): Promise<void> {
+    try {
+      await withTimeout(
+        this.#options.drainRenderer(),
+        this.#options.timeoutMs,
+        `Renderer layout drain timed out after ${this.#options.timeoutMs}ms.`,
+      );
+    } catch (cause) {
+      const error = asError(cause);
+      const message = `${reason} blocked because the latest Renderer layout could not be staged: ${error.message}`;
+      this.#options.reportError(message);
+      throw new Error(message, { cause: error });
     }
   }
 

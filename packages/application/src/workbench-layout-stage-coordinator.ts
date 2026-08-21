@@ -33,6 +33,7 @@ export class WorkbenchLayoutStageCoordinator {
   readonly #options: WorkbenchLayoutStageCoordinatorOptions;
   readonly #workspaces = new Map<string, WorkspaceStageState>();
   #disposed = false;
+  #acceptingSubmissions = true;
 
   constructor(options: WorkbenchLayoutStageCoordinatorOptions) {
     if (!Number.isFinite(options.retryDelayMs) || options.retryDelayMs < 0) {
@@ -44,6 +45,9 @@ export class WorkbenchLayoutStageCoordinator {
   submit(layout: WorkspaceLayout): Promise<void> {
     if (this.#disposed) {
       return Promise.reject(new Error("Layout stage coordinator is disposed."));
+    }
+    if (!this.#acceptingSubmissions) {
+      return Promise.reject(new Error("Workspace layout staging is quiescing."));
     }
     const state = this.#stateFor(layout.workspaceId);
     state.failure = null;
@@ -63,8 +67,32 @@ export class WorkbenchLayoutStageCoordinator {
     ).then(() => undefined);
   }
 
+  get isAcceptingSubmissions(): boolean {
+    return this.#acceptingSubmissions && !this.#disposed;
+  }
+
+  async quiesceAndDrain(): Promise<void> {
+    if (this.#disposed) {
+      throw new Error("Layout stage coordinator is disposed.");
+    }
+    this.#acceptingSubmissions = false;
+    for (const state of this.#workspaces.values()) {
+      state.failure = null;
+      if (state.retryTimer) clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+      this.#startDrain(state);
+    }
+    await this.whenIdle();
+  }
+
+  resumeSubmissions(): void {
+    if (this.#disposed) return;
+    this.#acceptingSubmissions = true;
+  }
+
   dispose(): void {
     this.#disposed = true;
+    this.#acceptingSubmissions = false;
     for (const state of this.#workspaces.values()) {
       state.pending = null;
       state.failure = null;
@@ -109,13 +137,19 @@ export class WorkbenchLayoutStageCoordinator {
   }
 
   async #drain(state: WorkspaceStageState): Promise<void> {
+    let retryImmediately = false;
     try {
       while (state.pending && !this.#disposed) {
         const staged = state.pending;
+        const startedWhileQuiesced = !this.#acceptingSubmissions;
         const result = await this.#options.stage(structuredClone(staged.layout));
         if (!result.accepted) {
-          this.#scheduleRetry(state);
-          return;
+          if (!this.#acceptingSubmissions && !startedWhileQuiesced) {
+            retryImmediately = true;
+          } else {
+            this.#scheduleRetry(state);
+          }
+          break;
         }
         if (state.pending?.revision === staged.revision) state.pending = null;
       }
@@ -127,6 +161,10 @@ export class WorkbenchLayoutStageCoordinator {
       return;
     } finally {
       state.draining = false;
+    }
+    if (retryImmediately) {
+      this.#startDrain(state);
+      return;
     }
     if (!state.pending) this.#resolveWaiters(state);
     else this.#startDrain(state);

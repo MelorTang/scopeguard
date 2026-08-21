@@ -41,6 +41,8 @@ export const IPC_CHANNELS = {
   getWorkspaceLayout: "scopeguard:layout:get",
   stageWorkspaceLayout: "scopeguard:layout:stage",
   flushWorkspaceLayouts: "scopeguard:layout:flush",
+  rendererLayoutLifecycleRequest: "scopeguard:layout:lifecycle-request",
+  rendererLayoutLifecycleResponse: "scopeguard:layout:lifecycle-response",
   saveWorkspaceLayout: "scopeguard:layout:save",
   listConversationMessages: "scopeguard:conversation:list-messages",
   startRun: "scopeguard:run:start",
@@ -59,6 +61,15 @@ export const IPC_CHANNELS = {
 export type StageWorkspaceLayoutResult =
   | { accepted: true }
   | { accepted: false; reason: "quiescing" };
+
+export type RendererLayoutLifecycleAction = "drain" | "resume";
+export type RendererLayoutLifecycleRequest = {
+  requestId: string;
+  action: RendererLayoutLifecycleAction;
+};
+export type RendererLayoutLifecycleResponse =
+  | (RendererLayoutLifecycleRequest & { ok: true })
+  | (RendererLayoutLifecycleRequest & { ok: false; error: string });
 
 export type AgentHostMethod =
   | "getWorkspaceSnapshot"
@@ -199,6 +210,9 @@ export type ScopeGuardDesktopApi = {
   stageWorkspaceLayout: (layout: WorkspaceLayout) => Promise<StageWorkspaceLayoutResult>;
   flushWorkspaceLayouts: () => Promise<void>;
   saveWorkspaceLayout: (layout: WorkspaceLayout) => Promise<WorkspaceLayout>;
+  subscribeRendererLayoutLifecycleRequests: (
+    listener: (request: RendererLayoutLifecycleRequest) => Promise<void>,
+  ) => () => void;
   listConversationMessages: (
     conversationId: Id,
   ) => Promise<ConversationMessage[]>;
@@ -313,6 +327,52 @@ export function parseStageWorkspaceLayoutResult(
     return { accepted: false, reason: "quiescing" };
   }
   throw new Error("Workspace layout stage result accepted must be a boolean.");
+}
+
+export function parseRendererLayoutLifecycleRequest(
+  value: unknown,
+): RendererLayoutLifecycleRequest {
+  const record = requireExactRecord(value, "Renderer layout lifecycle request", [
+    "action",
+    "requestId",
+  ]);
+  const requestId = requireNonEmptyString(
+    record.requestId,
+    "Renderer layout lifecycle request requestId",
+  );
+  if (new TextEncoder().encode(requestId).byteLength > 128) {
+    throw new Error("Renderer layout lifecycle request requestId is too large.");
+  }
+  if (record.action !== "drain" && record.action !== "resume") {
+    throw new Error("Renderer layout lifecycle request action must be drain or resume.");
+  }
+  return { requestId, action: record.action };
+}
+
+export function parseRendererLayoutLifecycleResponse(
+  value: unknown,
+): RendererLayoutLifecycleResponse {
+  const record = requireRecord(value, "Renderer layout lifecycle response");
+  const fields = record.ok === true
+    ? ["action", "ok", "requestId"]
+    : ["action", "error", "ok", "requestId"];
+  const exact = requireExactRecord(value, "Renderer layout lifecycle response", fields);
+  const request = parseRendererLayoutLifecycleRequest({
+    action: exact.action,
+    requestId: exact.requestId,
+  });
+  if (exact.ok === true) return { ...request, ok: true };
+  if (exact.ok !== false) {
+    throw new Error("Renderer layout lifecycle response ok must be a boolean.");
+  }
+  const error = requireNonEmptyString(
+    exact.error,
+    "Renderer layout lifecycle response error",
+  );
+  if (new TextEncoder().encode(error).byteLength > 2_048) {
+    throw new Error("Renderer layout lifecycle response error is too large.");
+  }
+  return { ...request, ok: false, error };
 }
 
 export function parseCreateDispatchRequest(value: unknown): CreateDispatchInput {

@@ -64,4 +64,40 @@ export class Phase3RendererClient {
     })()`;
     await this.#webContents.executeJavaScript(source);
   }
+
+  async resizeFirstPaneThroughWorkbench(
+    expectedBefore: readonly number[],
+  ): Promise<number[]> {
+    const invocation = JSON.stringify(JSON.stringify({ expectedBefore }));
+    const source = `(async () => {
+      const invocation = JSON.parse(${invocation});
+      const readWidths = () => {
+        const workbench = document.querySelector(".workbench");
+        if (!workbench) return [];
+        return getComputedStyle(workbench).gridTemplateColumns
+          .split(/\\s+/)
+          .filter((_value, index) => index % 2 === 0)
+          .map((value) => Number.parseFloat(value));
+      };
+      const deadline = Date.now() + 5000;
+      while (JSON.stringify(readWidths()) !== JSON.stringify(invocation.expectedBefore)) {
+        if (Date.now() >= deadline) {
+          throw new Error("Production Renderer did not hydrate the expected Workspace layout.");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 10));
+      }
+      const splitter = document.querySelector('[role="separator"][aria-orientation="vertical"]');
+      if (!(splitter instanceof HTMLElement)) {
+        throw new Error("Production Renderer pane splitter is unavailable.");
+      }
+      splitter.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        bubbles: true,
+        cancelable: true,
+      }));
+      await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+      return readWidths();
+    })()`;
+    return await this.#webContents.executeJavaScript(source) as number[];
+  }
 }

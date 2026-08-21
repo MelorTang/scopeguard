@@ -7,6 +7,8 @@ import {
   parseCreateAgentInput,
   parseCreateDispatchRequest,
   parseHandoffPromptRequest,
+  parseRendererLayoutLifecycleRequest,
+  parseRendererLayoutLifecycleResponse,
   parseResolveApprovalRequest,
   parseSaveProviderProfileRequest,
   parseStageWorkspaceLayoutResult,
@@ -19,6 +21,54 @@ import {
 test("exposes Main-owned layout staging and flush channels", () => {
   assert.equal(IPC_CHANNELS.stageWorkspaceLayout, "scopeguard:layout:stage");
   assert.equal(IPC_CHANNELS.flushWorkspaceLayouts, "scopeguard:layout:flush");
+  assert.equal(
+    IPC_CHANNELS.rendererLayoutLifecycleRequest,
+    "scopeguard:layout:lifecycle-request",
+  );
+  assert.equal(
+    IPC_CHANNELS.rendererLayoutLifecycleResponse,
+    "scopeguard:layout:lifecycle-response",
+  );
+});
+
+test("accepts only exact Renderer layout lifecycle requests and responses", () => {
+  assert.deepEqual(parseRendererLayoutLifecycleRequest({
+    requestId: "request-1",
+    action: "drain",
+  }), { requestId: "request-1", action: "drain" });
+  assert.deepEqual(parseRendererLayoutLifecycleResponse({
+    requestId: "request-1",
+    action: "resume",
+    ok: true,
+  }), { requestId: "request-1", action: "resume", ok: true });
+  assert.deepEqual(parseRendererLayoutLifecycleResponse({
+    requestId: "request-1",
+    action: "drain",
+    ok: false,
+    error: "Renderer drain failed.",
+  }), {
+    requestId: "request-1",
+    action: "drain",
+    ok: false,
+    error: "Renderer drain failed.",
+  });
+
+  for (const invalid of [
+    undefined,
+    { requestId: "request-1", action: "quit" },
+    { requestId: "request-1", action: "drain", extra: true },
+  ]) {
+    assert.throws(() => parseRendererLayoutLifecycleRequest(invalid), /lifecycle request/i);
+  }
+  for (const invalid of [
+    undefined,
+    { requestId: "request-1", action: "drain", ok: false },
+    { requestId: "request-1", action: "drain", ok: true, error: "mixed" },
+    { requestId: "request-1", action: "drain", ok: false, error: "" },
+    { requestId: "request-1", action: "drain", ok: true, extra: true },
+  ]) {
+    assert.throws(() => parseRendererLayoutLifecycleResponse(invalid), /lifecycle response/i);
+  }
 });
 
 test("accepts only the exact Workspace layout stage result union", () => {

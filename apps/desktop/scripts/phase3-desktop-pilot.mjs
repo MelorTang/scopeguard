@@ -44,10 +44,12 @@ try {
   assert.equal(first.conversationIds.length, 4);
   assert.equal(new Set(Object.values(first.locators).map((locator) => locator.sessionId)).size, 4);
   assert.equal(first.layout.requestedPaneCount, 3);
-  assert.deepEqual(first.layout.paneWidths, [468, 512, 556]);
+  assert.deepEqual(first.layout.paneWidths, [492, 488, 556]);
   assert.equal(first.layoutMutationFlushedOnQuit, true);
   assert.equal(first.lateLayoutMutationArmed, true);
+  assert.equal(first.terminalLayoutDrainRaceArmed, true);
   assertShutdownEvidence(firstShutdown, 1);
+  assert.ok(firstShutdown.quiescedLayoutStageAttempts >= 1);
   assert.equal(first.rendererApi, "production-preload-ipc");
   assert.equal(first.clipboardVerified, true);
   assert.ok(first.browserWindowId > 0);
@@ -72,9 +74,10 @@ try {
   assert.equal(second.clipboardVerified, true);
   assert.deepEqual(second.locators, first.locators);
   assert.deepEqual(second.layout, first.layout);
-  assert.deepEqual(second.layout.paneWidths, [468, 512, 556]);
+  assert.deepEqual(second.layout.paneWidths, [492, 488, 556]);
   assert.equal(second.layoutMutationFlushedOnQuit, true);
   assert.equal(second.lateLayoutMutationArmed, true);
+  assert.equal(second.terminalLayoutDrainRaceArmed, true);
   assertShutdownEvidence(secondShutdown, 2);
 
   const finalRequest = provider.requests.at(-1);
@@ -85,7 +88,7 @@ try {
   assert.equal(provider.requests.every((request) => request.authorized), true);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
   console.log(JSON.stringify({
-    checks: 43,
+    checks: 47,
     mode: stageRoot ? "staged" : "development",
     electronVersion: "42.0.1",
     piVersion: Object.values(second.locators)[0]?.piVersion,
@@ -109,6 +112,10 @@ try {
     shutdownEvents: secondShutdown.events,
     hostStopDelayMs: secondShutdown.hostStopDelayMs,
     lateLayoutStageAttempts: secondShutdown.lateLayoutStageAttempts,
+    rendererDrainAcknowledgedBeforeMainSuspend:
+      secondShutdown.rendererDrainAcknowledgedBeforeMainSuspend,
+    firstProcessQuiescedLayoutStageAttempts:
+      firstShutdown.quiescedLayoutStageAttempts,
     completedDispatchId: second.completedDispatchId,
     failedDispatchId: second.failedDispatchId,
     providerObservedHistory: finalRequest.userTexts,
@@ -188,6 +195,7 @@ function assertShutdownEvidence(evidence, phase) {
   assert.equal(evidence.schemaVersion, 1);
   assert.equal(evidence.phase, phase);
   assert.deepEqual(evidence.events, [
+    "renderer-layout-drained",
     "layout-suspended",
     "layout-flushed",
     "renderer-destroyed",
@@ -197,6 +205,7 @@ function assertShutdownEvidence(evidence, phase) {
   assert.equal(evidence.rendererDestroyedBeforeHostStop, true);
   assert.equal(evidence.hostStopDelayMs, 1200);
   assert.equal(evidence.lateLayoutStageAttempts, 0);
+  assert.equal(evidence.rendererDrainAcknowledgedBeforeMainSuspend, true);
 }
 
 async function assertTreeDoesNotContain(directory, secrets) {

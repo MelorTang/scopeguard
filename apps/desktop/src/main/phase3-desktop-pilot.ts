@@ -13,6 +13,7 @@ import type {
   WorkspaceLayout,
   WorkspaceSnapshot,
 } from "@scopeguard/domain";
+import { resizeWorkspacePanePair } from "@scopeguard/domain";
 
 import type { AgentHostClient } from "./agent-host-client.js";
 import type { Phase3RendererClient } from "./phase3-renderer-client.js";
@@ -22,6 +23,11 @@ export type Phase3DesktopRendererEvidence = {
   browserWindowId: number;
   rendererProcessId: number;
   readClipboardText: () => string;
+  reloadRenderer(): Promise<void>;
+  armTerminalLayoutDrainRace(
+    expectedBefore: WorkspaceLayout,
+    expectedAfter: WorkspaceLayout,
+  ): Promise<void>;
 };
 
 type Phase3PilotState = {
@@ -42,6 +48,7 @@ type Phase3PilotState = {
   layout: WorkspaceLayout;
   layoutMutationFlushedOnQuit: true;
   lateLayoutMutationArmed: true;
+  terminalLayoutDrainRaceArmed: true;
   completedDispatchId: string;
   failedDispatchId: string;
   resumedMessageCount: number;
@@ -187,6 +194,8 @@ async function runFirstProcess(
     await renderer.client.invoke("stageWorkspaceLayout", noWaitLayout),
     { accepted: true },
   );
+  await renderer.reloadRenderer();
+  const terminalLayout = resizeWorkspacePanePair(noWaitLayout, 0, 24);
   await renderer.client.armLateWorkspaceLayoutStage(
     withFirstPaneWidth(noWaitLayout, 640),
     1_000,
@@ -206,13 +215,15 @@ async function runFirstProcess(
     agentIds: agents.map(({ id }) => id),
     conversationIds: conversations.map(({ id }) => id),
     locators,
-    layout: noWaitLayout,
+    layout: terminalLayout,
     layoutMutationFlushedOnQuit: true,
     lateLayoutMutationArmed: true,
+    terminalLayoutDrainRaceArmed: true,
     completedDispatchId: created.id,
     failedDispatchId: blocked.id,
     resumedMessageCount: 0,
   });
+  await renderer.armTerminalLayoutDrainRace(noWaitLayout, terminalLayout);
   console.log("ScopeGuard Phase 3 Desktop Pilot phase 1 complete");
 }
 
@@ -316,6 +327,7 @@ function parseState(value: string): Phase3PilotState {
     state.phase !== 1 ||
     state.layoutMutationFlushedOnQuit !== true ||
     state.lateLayoutMutationArmed !== true
+    || state.terminalLayoutDrainRaceArmed !== true
   ) {
     throw new Error("Phase 3 Desktop Pilot state is incompatible.");
   }

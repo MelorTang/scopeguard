@@ -285,6 +285,9 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       };
       return clone(layout);
     },
+    subscribeRendererLayoutLifecycleRequests() {
+      return () => undefined;
+    },
     async listConversationMessages(conversationId) {
       return clone(messages.get(conversationId) ?? []);
     },

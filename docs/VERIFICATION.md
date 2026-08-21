@@ -83,14 +83,16 @@ Exit gate:
 - restart restores each Workspace's own pane IDs and widths, Conversations, and
   resumable sessions without cross-Workspace debounce or ID leakage;
 - every Renderer layout mutation is staged immediately in the Main-owned
-  coordinator. Agent Host ready reload, BrowserWindow close, and app quit must
-  stop accepting new layout revisions, complete a bounded flush through Agent
-  Host and SQLite, destroy the Renderer, and only then stop Agent Host. A failed
-  or timed-out flush resumes layout acceptance, blocks the lifecycle action,
-  and reports a diagnostic. If a visible Renderer mutation was rejected while
-  the transient lifecycle fence was quiescing, the Renderer retains that exact
-  latest revision and retries it after acceptance resumes; it cannot silently
-  leave the UI ahead of the Main-owned persistence state. Pending revisions,
+  coordinator. Before terminal app quit suspends Main staging, Main must receive
+  a bounded acknowledgement that the real Renderer coordinator has stopped new
+  layout mutations and drained every Workspace's latest pending revision. Main
+  then flushes through Agent Host and SQLite, destroys the Renderer, and only
+  then stops Agent Host. A failed or timed-out Renderer drain acknowledgement or
+  Main flush resumes layout acceptance on both sides, blocks the lifecycle
+  action, and reports a diagnostic. If a visible Renderer mutation was rejected
+  while the transient lifecycle fence was quiescing, the Renderer retains that
+  exact latest revision and retries it after acceptance resumes; it cannot
+  silently leave the UI ahead of the Main-owned persistence state. Pending revisions,
   retry timers, and drains are isolated per Workspace, while the Renderer
   accepts only the exact runtime-validated stage-result union;
 - Playwright screenshots cover desktop and constrained-width layouts without
@@ -105,8 +107,9 @@ Exit gate:
   layout/session/Dispatch recovery, disk Vault credential recovery, secret
   absence, and complete process-tree cleanup. The Pilot also arms a delayed
   layout revision in the real Renderer, delays Agent Host stop, and records the
-  exact shutdown sequence `layout-suspended -> layout-flushed ->
-  renderer-destroyed -> host-stop-started -> host-stop-complete`; the delayed
+  exact shutdown sequence `renderer-layout-drained -> layout-suspended ->
+  layout-flushed -> renderer-destroyed -> host-stop-started ->
+  host-stop-complete`; the delayed
   Renderer revision must never cross IPC after destruction.
 - Unsigned macOS Phase 3 Pilot automation fails before Electron spawn. Signed
   macOS installation, `safeStorage`, and recovery remain Phase 5 gates. Linux
