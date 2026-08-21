@@ -24,6 +24,8 @@
     "pilot:pi-runtime:staged": "pnpm run package:prepare && cross-env SCOPEGUARD_PILOT_STAGE_ROOT=.package/app node scripts/pi-runtime-desktop-pilot.mjs",
     "pilot:phase3": "pnpm run build && node scripts/phase3-desktop-pilot.mjs",
     "pilot:phase3:staged": "pnpm run package:prepare && cross-env SCOPEGUARD_PILOT_STAGE_ROOT=.package/app node scripts/phase3-desktop-pilot.mjs",
+    "pilot:phase4": "pnpm run build && node scripts/phase4-desktop-pilot.mjs",
+    "pilot:phase4:staged": "pnpm run package:prepare && cross-env SCOPEGUARD_PILOT_STAGE_ROOT=.package/app node scripts/phase4-desktop-pilot.mjs",
     "probe:pi-runtime:utility": "pnpm run build:main && node scripts/pi-runtime-utility-probe.mjs",
     "probe:pi-runtime:utility:host-node": "pnpm run build:main && cross-env SCOPEGUARD_PI_UTILITY_PROBE_MODE=host-node node scripts/pi-runtime-utility-probe.mjs",
     "probe:pi-runtime:utility:electron-node": "pnpm run build:main && cross-env SCOPEGUARD_PI_UTILITY_PROBE_MODE=electron-run-as-node node scripts/pi-runtime-utility-probe.mjs",
@@ -49,9 +51,11 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
+    "docx": "9.7.1",
     "electron": "42.0.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.25.12",
+    "mammoth": "1.12.1",
     "vite": "^6.0.7",
     "wait-on": "^8.0.1"
   }

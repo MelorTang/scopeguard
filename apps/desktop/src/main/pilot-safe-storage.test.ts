@@ -84,7 +84,7 @@ test("enters the Pilot seam only for an explicit supported phase", () => {
   assert.throws(() => parseDesktopPilotPhase("pilot"), /must be 1 or 2/);
 });
 
-test("blocks all unsigned Phase 2 and Phase 3 macOS Pilot automation before Electron can launch", () => {
+test("blocks all unsigned Phase 2 through Phase 4 macOS Pilot automation before Electron can launch", () => {
   assert.throws(
     () => assertDesktopPilotLaunchAllowed("darwin"),
     /Unsigned Desktop Pilot is disabled on macOS/,

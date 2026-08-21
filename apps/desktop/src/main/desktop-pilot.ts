@@ -17,6 +17,7 @@ import {
   type Phase3DesktopRendererEvidence,
 } from "./phase3-desktop-pilot.js";
 import type { LateWorkspaceLayoutStageReceipt } from "./phase3-late-layout-observation.js";
+import { runPhase4DesktopPilotPhase } from "./phase4-desktop-pilot.js";
 
 type PilotState = {
   schemaVersion: 1;
@@ -42,6 +43,13 @@ export async function runDesktopPilotPhase(
       throw new Error("Phase 3 Desktop Pilot requires a production BrowserWindow Renderer.");
     }
     return runPhase3DesktopPilotPhase(host, phase3Renderer, phase, statePath);
+  }
+  if (process.env.SCOPEGUARD_DESKTOP_PILOT_KIND === "phase4") {
+    if (!phase3Renderer) {
+      throw new Error("Phase 4 Desktop Pilot requires a production BrowserWindow Renderer.");
+    }
+    await runPhase4DesktopPilotPhase(host, phase3Renderer, phase, statePath);
+    return null;
   }
   const hostPid = host.processId;
   assert.ok(hostPid, "Production AgentHostClient did not expose a running utility process.");

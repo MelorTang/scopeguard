@@ -18,6 +18,8 @@
     "pilot:pi-runtime:staged": "pnpm --filter @scopeguard/desktop pilot:pi-runtime:staged",
     "pilot:phase3": "pnpm --filter @scopeguard/desktop pilot:phase3",
     "pilot:phase3:staged": "pnpm --filter @scopeguard/desktop pilot:phase3:staged",
+    "pilot:phase4": "pnpm --filter @scopeguard/desktop pilot:phase4",
+    "pilot:phase4:staged": "pnpm --filter @scopeguard/desktop pilot:phase4:staged",
     "probe:pi-runtime:utility": "pnpm --filter @scopeguard/desktop probe:pi-runtime:utility",
     "probe:pi-runtime:utility:host-node": "pnpm --filter @scopeguard/desktop probe:pi-runtime:utility:host-node",
     "probe:pi-runtime:utility:electron-node": "pnpm --filter @scopeguard/desktop probe:pi-runtime:utility:electron-node",

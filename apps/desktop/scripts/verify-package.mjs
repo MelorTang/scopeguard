@@ -40,6 +40,12 @@ const globalForbiddenPatterns = [
 for (const path of paths) {
   const isRuntimeDependency = path.startsWith("runtime/node_modules/");
   if (
+    path.startsWith("runtime/node_modules/docx/") ||
+    path.startsWith("runtime/node_modules/mammoth/")
+  ) {
+    throw new Error(`Package staging contains test-only file workflow dependency ${path}.`);
+  }
+  if (
     globalForbiddenPatterns.some((pattern) => pattern.test(path)) ||
     (!isRuntimeDependency && productForbiddenPatterns.some((pattern) => pattern.test(path)))
   ) {
@@ -163,6 +169,7 @@ console.log(JSON.stringify({
   electronVersion: installedElectronPackage.version,
   singlePiRuntimeTree: true,
   sourceMaps: false,
+  testOnlyFileWorkflowDependenciesShipped: false,
 }, null, 2));
 
 async function listFiles(root) {

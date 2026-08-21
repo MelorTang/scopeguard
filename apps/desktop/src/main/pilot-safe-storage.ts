@@ -43,7 +43,7 @@ export function assertDesktopPilotLaunchAllowed(
 ): void {
   if (platform === "darwin") {
     throw new Error(
-      "Unsigned Desktop Pilot is disabled on macOS because Electron can present a blocking Keychain dialog. Use Windows for Phase 2 or Phase 3 evidence; Phase 5 signed macOS verification has a separate future entry point.",
+      "Unsigned Desktop Pilot is disabled on macOS because Electron can present a blocking Keychain dialog. Use Windows for Phase 2, Phase 3, or Phase 4 evidence; Phase 5 signed macOS verification has a separate future entry point.",
     );
   }
 }

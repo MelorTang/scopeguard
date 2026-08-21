@@ -83,3 +83,32 @@ test("Phase 3 Pilot resizes through the real Workbench control", async () => {
   assert.doesNotMatch(scripts[0]!, /stageWorkspaceLayout/);
   assert.doesNotMatch(scripts[0]!, /createMockDesktopApi/);
 });
+
+test("Phase 4 Pilot reads restored Artifact Review state from the production Renderer", async () => {
+  const scripts: string[] = [];
+  const client = new Phase3RendererClient({
+    async executeJavaScript(source) {
+      scripts.push(source);
+      return {
+        title: "Quarterly report.docx",
+        versionId: "version-1",
+        comparisonVersionId: "version-2",
+        text: "Pi bash Tool + Node.js input-hash",
+      };
+    },
+  });
+
+  const result = await client.readArtifactReview({
+    artifactTitle: "Quarterly report.docx",
+    versionId: "version-1",
+    comparisonVersionId: "version-2",
+    toolchain: "Pi bash Tool + Node.js",
+    inputHash: "input-hash",
+  });
+  assert.equal(result.versionId, "version-1");
+  assert.equal(scripts.length, 1);
+  assert.match(scripts[0]!, /\.artifact-review/);
+  assert.match(scripts[0]!, /审阅版本/);
+  assert.match(scripts[0]!, /对比版本/);
+  assert.doesNotMatch(scripts[0]!, /createMockDesktopApi/);
+});

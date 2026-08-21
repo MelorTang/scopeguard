@@ -7,17 +7,21 @@ import {
 
 const PHASE3_RENDERER_METHOD_NAMES = [
   "cancelRun",
+  "captureWorkspaceFile",
   "copyHandoffPrompt",
   "createAgent",
   "createConversation",
   "createDispatch",
   "executeDispatch",
+  "exportArtifactVersion",
   "generateHandoffPrompt",
   "getWorkspaceLayout",
   "getWorkspaceSnapshot",
   "listConversationMessages",
   "listDispatches",
   "saveWorkspaceLayout",
+  "saveWorkspaceCenterState",
+  "setArtifactCurrentVersion",
   "stageWorkspaceLayout",
   "startRun",
 ] as const;
@@ -112,5 +116,55 @@ export class Phase3RendererClient {
       return readWidths();
     })()`;
     return await this.#webContents.executeJavaScript(source) as number[];
+  }
+
+  async readArtifactReview(expected: {
+    artifactTitle: string;
+    versionId: string;
+    comparisonVersionId: string | null;
+    toolchain: string;
+    inputHash: string;
+  }): Promise<{
+    title: string;
+    versionId: string;
+    comparisonVersionId: string;
+    text: string;
+  }> {
+    const invocation = JSON.stringify(JSON.stringify(expected));
+    const source = `(async () => {
+      const expected = JSON.parse(${invocation});
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const review = document.querySelector('.artifact-review');
+        const version = review?.querySelector('[aria-label="审阅版本"]');
+        const comparison = review?.querySelector('[aria-label="对比版本"]');
+        const title = review?.querySelector('.artifact-review__title h1')?.textContent ?? '';
+        const text = review?.textContent ?? '';
+        if (
+          version instanceof HTMLSelectElement &&
+          comparison instanceof HTMLSelectElement &&
+          title === expected.artifactTitle &&
+          version.value === expected.versionId &&
+          comparison.value === (expected.comparisonVersionId ?? '') &&
+          text.includes(expected.toolchain) &&
+          text.includes(expected.inputHash)
+        ) {
+          return {
+            title,
+            versionId: version.value,
+            comparisonVersionId: comparison.value,
+            text,
+          };
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
+      }
+      throw new Error('Production Renderer did not restore the expected Artifact Review.');
+    })()`;
+    return await this.#webContents.executeJavaScript(source) as {
+      title: string;
+      versionId: string;
+      comparisonVersionId: string;
+      text: string;
+    };
   }
 }

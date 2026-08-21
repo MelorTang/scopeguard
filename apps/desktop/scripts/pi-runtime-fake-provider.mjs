@@ -1,6 +1,6 @@
 import http from "node:http";
 
-export async function startPiRuntimeFakeProvider(expectedKey) {
+export async function startPiRuntimeFakeProvider(expectedKey, options = {}) {
   const requests = [];
   let sequence = 0;
   const server = http.createServer(async (request, response) => {
@@ -33,6 +33,33 @@ export async function startPiRuntimeFakeProvider(expectedKey) {
     const id = `desktop-pilot-${++sequence}`;
     const text = `observed:${userTexts.join("|")}`;
     const latestPrompt = userTexts.at(-1) ?? "";
+    if (options.phase4WorkflowScript && messages.at(-1)?.role === "tool") {
+      send(response, id, { role: "assistant", content: "" });
+      send(response, id, { content: "Agent file operation completed and validated." });
+      send(response, id, {}, "stop");
+      response.end("data: [DONE]\n\n");
+      return;
+    }
+    if (options.phase4WorkflowScript && latestPrompt.includes("[phase4-file-v1]")) {
+      sendToolCall(response, id, "bash", {
+        command: phase4WorkflowCommand(
+          options.phase4WorkflowScript,
+          "create",
+          "source-v1.docx",
+        ),
+      });
+      return;
+    }
+    if (options.phase4WorkflowScript && latestPrompt.includes("[phase4-file-v2]")) {
+      sendToolCall(response, id, "bash", {
+        command: phase4WorkflowCommand(
+          options.phase4WorkflowScript,
+          "revise",
+          "source-v2.docx",
+        ),
+      });
+      return;
+    }
     if (latestPrompt.includes("[phase3-slow]")) {
       if (!await waitForResponse(response, 5_000)) return;
     } else if (latestPrompt.includes("[phase3-parallel]")) {
@@ -58,6 +85,34 @@ export async function startPiRuntimeFakeProvider(expectedKey) {
     requests,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
+}
+
+function sendToolCall(response, id, name, args) {
+  const callId = `phase4-tool-${Date.now()}`;
+  send(response, id, { role: "assistant", content: "" });
+  send(response, id, {
+    tool_calls: [{
+      index: 0,
+      id: callId,
+      type: "function",
+      function: { name, arguments: JSON.stringify(args) },
+    }],
+  });
+  send(response, id, {}, "tool_calls");
+  response.end("data: [DONE]\n\n");
+}
+
+function phase4WorkflowCommand(scriptPath, mode, sourceName) {
+  if (typeof scriptPath !== "string" || !scriptPath) {
+    throw new Error("Phase 4 fake Provider requires a workflow script path.");
+  }
+  return [
+    "node",
+    JSON.stringify(scriptPath),
+    mode,
+    `inputs/${sourceName}`,
+    "reports/agent-result.docx",
+  ].join(" ");
 }
 
 function waitForResponse(response, milliseconds) {

@@ -36,7 +36,7 @@ for (const [entry, outfile] of [
   ["src/main.ts", "main.js"],
   ["src/agent-host.ts", "agent-host.js"],
 ]) {
-  await build({
+  const result = await build({
     entryPoints: [join(desktopRoot, entry)],
     outfile: join(stageDist, outfile),
     bundle: true,
@@ -49,9 +49,19 @@ for (const [entry, outfile] of [
       js: "import { createRequire as __scopeguardCreateRequire } from 'node:module'; const require = __scopeguardCreateRequire(import.meta.url);",
     },
     legalComments: "none",
+    metafile: true,
     sourcemap: false,
     logLevel: "info",
   });
+  const testOnlyWorkflowInputs = Object.keys(result.metafile.inputs).filter((path) =>
+    /(?:^|[/\\])(?:docx|mammoth)(?:@|[/\\])/.test(path) ||
+    /(?:^|[/\\])phase4-file-pilot-workflow\.[cm]?[jt]s$/.test(path)
+  );
+  if (testOnlyWorkflowInputs.length > 0) {
+    throw new Error(
+      `${outfile} bundles test-only file workflow inputs: ${testOnlyWorkflowInputs.join(", ")}`,
+    );
+  }
 }
 
 const repositoryRoot = join(desktopRoot, "..", "..");
