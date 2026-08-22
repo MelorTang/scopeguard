@@ -156,7 +156,7 @@ Exit gate:
 - no Office editor, OOXML/PDF semantic editing engine, conversion/runtime pack,
   or format-specific operation matrix is required for V1 acceptance.
 
-The real Phase 4 Desktop Pilot uses two repository synthetic DOCX fixtures only
+The real Phase 4 Desktop Pilot uses two repository-fixed public DOCX fixtures only
 as ordinary Workspace Files. A selected full-access Agent invokes Pi's `bash`
 Tool, which calls a test-only external workflow built with `docx@9.7.1` and
 `mammoth@1.12.1`. That workflow reads the input, creates a first result, then

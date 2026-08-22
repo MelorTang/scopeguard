@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { Phase3RendererClient } from "./phase3-renderer-client.js";
+import { DesktopRendererClient } from "./desktop-renderer-client.js";
 
 test("Phase 3 Pilot calls only the production preload API in a real Renderer", async () => {
   const scripts: string[] = [];
-  const client = new Phase3RendererClient({
+  const client = new DesktopRendererClient({
     async executeJavaScript(source) {
       scripts.push(source);
       return { ok: true };
@@ -33,7 +33,7 @@ test("Phase 3 Pilot calls only the production preload API in a real Renderer", a
 
 test("Phase 3 Pilot arms a delayed layout revision through production preload IPC", async () => {
   const scripts: string[] = [];
-  const client = new Phase3RendererClient({
+  const client = new DesktopRendererClient({
     async executeJavaScript(source) {
       scripts.push(source);
       return {
@@ -65,7 +65,7 @@ test("Phase 3 Pilot arms a delayed layout revision through production preload IP
 
 test("Phase 3 Pilot resizes through the real Workbench control", async () => {
   const scripts: string[] = [];
-  const client = new Phase3RendererClient({
+  const client = new DesktopRendererClient({
     async executeJavaScript(source) {
       scripts.push(source);
       return [492, 488, 556];
@@ -86,7 +86,7 @@ test("Phase 3 Pilot resizes through the real Workbench control", async () => {
 
 test("Phase 4 Pilot reads restored Artifact Review state from the production Renderer", async () => {
   const scripts: string[] = [];
-  const client = new Phase3RendererClient({
+  const client = new DesktopRendererClient({
     async executeJavaScript(source) {
       scripts.push(source);
       return {

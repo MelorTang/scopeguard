@@ -30,7 +30,7 @@ const PHASE3_RENDERER_METHODS = new Set<string>(PHASE3_RENDERER_METHOD_NAMES);
 
 export type Phase3RendererMethod = typeof PHASE3_RENDERER_METHOD_NAMES[number];
 
-export class Phase3RendererClient {
+export class DesktopRendererClient {
   readonly #webContents: {
     executeJavaScript(source: string): Promise<unknown>;
   };

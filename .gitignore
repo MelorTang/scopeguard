@@ -1,8 +1,5 @@
 node_modules/
 __pycache__/
-prototypes/document-runtime-roundtrip/out/
-prototypes/document-runtime-roundtrip/worker/bin/
-prototypes/document-runtime-roundtrip/worker/obj/
 dist/
 dist-renderer/
 build/

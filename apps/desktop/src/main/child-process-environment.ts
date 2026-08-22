@@ -14,6 +14,8 @@ const MINIMAL_CHILD_ENVIRONMENT_NAMES = [
   "ComSpec",
   "PATHEXT",
   "USERPROFILE",
+  "ProgramFiles",
+  "ProgramFiles(x86)",
 ] as const;
 
 export function isolatedChildEnvironment(

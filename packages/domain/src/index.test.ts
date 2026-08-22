@@ -73,6 +73,8 @@ test("keeps Artifact Versions immutable and Workspace File identity explicit", (
     producedByRunId: "run-1",
     toolchain: "selected Agent workflow",
     limitations: ["Preview fidelity is not guaranteed."],
+    validationStatus: "passed",
+    validationSummary: "The output reopened with readable text.",
     createdAt: "2026-08-21T00:01:00.000Z",
   });
   assert.equal(version.parentVersionId, "version-1");

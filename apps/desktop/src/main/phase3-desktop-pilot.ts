@@ -16,7 +16,7 @@ import type {
 import { resizeWorkspacePanePair } from "@scopeguard/domain";
 
 import type { AgentHostClient } from "./agent-host-client.js";
-import type { Phase3RendererClient } from "./phase3-renderer-client.js";
+import type { DesktopRendererClient } from "./desktop-renderer-client.js";
 import {
   parseLateWorkspaceLayoutStageReceipt,
   type LateWorkspaceLayoutStageReceipt,
@@ -25,7 +25,7 @@ import {
 const LATE_LAYOUT_STAGE_DELAY_MS = 1_000;
 
 export type Phase3DesktopRendererEvidence = {
-  client: Phase3RendererClient;
+  client: DesktopRendererClient;
   browserWindowId: number;
   rendererProcessId: number;
   readClipboardText: () => string;
@@ -292,7 +292,7 @@ async function runSecondProcess(
 }
 
 async function waitForRun(
-  renderer: Phase3RendererClient,
+  renderer: DesktopRendererClient,
   runId: string,
   expected: AgentRun["status"],
 ): Promise<void> {

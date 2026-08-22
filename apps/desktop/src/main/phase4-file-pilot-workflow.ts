@@ -18,14 +18,23 @@ export type Phase4FilePilotWorkflowResult = {
 export async function runPhase4FilePilotWorkflow(options: {
   mode: Phase4FilePilotWorkflowMode;
   inputPath: string;
+  previousOutputPath?: string;
   outputPath: string;
 }): Promise<Phase4FilePilotWorkflowResult> {
   assertDocxPath(options.inputPath, "inputPath");
   assertDocxPath(options.outputPath, "outputPath");
+  if (options.mode === "revise") {
+    if (!options.previousOutputPath) {
+      throw new Error("previousOutputPath is required when revising a DOCX.");
+    }
+    assertDocxPath(options.previousOutputPath, "previousOutputPath");
+  } else if (options.previousOutputPath !== undefined) {
+    throw new Error("previousOutputPath is only valid when revising a DOCX.");
+  }
   const input = await extractDocxText(options.inputPath);
   if (!input.text) throw new Error("Phase 4 Pilot input DOCX has no readable text.");
   const previous = options.mode === "revise"
-    ? await extractDocxText(options.outputPath)
+    ? await extractDocxText(options.previousOutputPath!)
     : null;
   if (options.mode === "revise" && !previous?.text) {
     throw new Error("Phase 4 Pilot cannot revise an output without readable prior text.");

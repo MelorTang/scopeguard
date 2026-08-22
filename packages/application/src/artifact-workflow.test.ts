@@ -29,6 +29,8 @@ test("captures a stable Agent-produced Workspace File as immutable content", asy
       producedByRunId: run.id,
       toolchain: "Agent Skill: documents",
       limitations: ["Rendered by an external application."],
+      validationStatus: "passed",
+      validationSummary: "The output reopened with the expected text.",
     });
 
     const expectedHash = hash("first artifact\n");
@@ -49,11 +51,16 @@ test("captures a stable Agent-produced Workspace File as immutable content", asy
     );
 
     await writeFile(sourcePath, "second artifact\n", "utf8");
+    const secondRun = completedRun(store, fixture, "confirmed");
     const second = await workflow.captureWorkspaceFile({
       workspaceId: fixture.workspace.id,
       relativePath: "report.md",
       artifactId: captured.artifact.id,
-      toolchain: "manual external editor",
+      producedByConversationId: fixture.conversation.id,
+      producedByRunId: secondRun.id,
+      toolchain: "external editor",
+      validationStatus: "passed",
+      validationSummary: "The revised output reopened with the expected text.",
     });
     assert.equal(second.version.version, 2);
     assert.equal(second.version.parentVersionId, captured.version.id);
@@ -74,8 +81,11 @@ test("does not promote failed, no-effect, or effect-unknown Runs as successful A
         workflow.captureWorkspaceFile({
           workspaceId: fixture.workspace.id,
           relativePath: "uncertain.txt",
+          producedByConversationId: fixture.conversation.id,
           producedByRunId: run.id,
           toolchain: "Agent write Tool",
+          validationStatus: "passed",
+          validationSummary: "The output reopened.",
         }),
         /completed Run with confirmed Tool effects/i,
       );
@@ -84,14 +94,109 @@ test("does not promote failed, no-effect, or effect-unknown Runs as successful A
   });
 });
 
-test("exports with expected hashes and never silently overwrites a Workspace conflict", async () => {
+test("requires a confirmed producing Run and passed validation for every successful Version", async () => {
+  await withFixture(async ({ store, workflow, workspaceRoot, fixture }) => {
+    await writeFile(join(workspaceRoot, "result.docx"), "candidate\n", "utf8");
+    await assert.rejects(
+      workflow.captureWorkspaceFile({
+        workspaceId: fixture.workspace.id,
+        relativePath: "result.docx",
+        producedByConversationId: fixture.conversation.id,
+        producedByRunId: "",
+        toolchain: "Agent file Tool",
+        validationStatus: "passed",
+        validationSummary: "The output reopened.",
+      }),
+      /confirmed producing Run/i,
+    );
+
+    const run = completedRun(store, fixture, "confirmed");
+    const partialCapture = {
+      workspaceId: fixture.workspace.id,
+      relativePath: "result.docx",
+      producedByConversationId: fixture.conversation.id,
+      producedByRunId: run.id,
+      toolchain: "Agent file Tool",
+      validationStatus: "partial",
+      validationSummary: "The output reopened, but embedded objects were not preserved.",
+    } as const;
+    await assert.rejects(
+      workflow.captureWorkspaceFile(partialCapture),
+      /passed validation/i,
+    );
+    assert.equal(store.listArtifacts(fixture.workspace.id).length, 0);
+  });
+});
+
+test("rejects a new Version whose Workspace File format differs from its Artifact", async () => {
+  await withFixture(async ({ store, workflow, workspaceRoot, fixture }) => {
+    await writeFile(join(workspaceRoot, "result.docx"), "docx bytes\n", "utf8");
+    const firstRun = completedRun(store, fixture, "confirmed");
+    const first = await workflow.captureWorkspaceFile({
+      workspaceId: fixture.workspace.id,
+      relativePath: "result.docx",
+      producedByConversationId: fixture.conversation.id,
+      producedByRunId: firstRun.id,
+      toolchain: "Agent DOCX Tool",
+      validationStatus: "passed",
+      validationSummary: "The DOCX reopened.",
+    });
+    await writeFile(join(workspaceRoot, "result.pdf"), "pdf bytes\n", "utf8");
+    const secondRun = completedRun(store, fixture, "confirmed");
+    await assert.rejects(
+      workflow.captureWorkspaceFile({
+        workspaceId: fixture.workspace.id,
+        relativePath: "result.pdf",
+        artifactId: first.artifact.id,
+        producedByConversationId: fixture.conversation.id,
+        producedByRunId: secondRun.id,
+        toolchain: "Agent PDF Tool",
+        validationStatus: "passed",
+        validationSummary: "The PDF reopened.",
+      }),
+      /format.*Artifact|Artifact.*format/i,
+    );
+    assert.equal(store.listArtifactVersions(first.artifact.id).length, 1);
+  });
+});
+
+test("rolls back a first capture when Version publication fails", async () => {
+  await withFixture(async ({ store, workflow, workspaceRoot, artifactRoot, fixture }) => {
+    await writeFile(join(workspaceRoot, "result.docx"), "candidate\n", "utf8");
+    const run = completedRun(store, fixture, "confirmed");
+    await assert.rejects(
+      workflow.captureWorkspaceFile({
+        workspaceId: fixture.workspace.id,
+        relativePath: "result.docx",
+        producedByConversationId: fixture.conversation.id,
+        producedByRunId: run.id,
+        toolchain: " invalid toolchain ",
+        validationStatus: "passed",
+        validationSummary: "The output reopened.",
+      }),
+      /toolchain/i,
+    );
+    assert.equal(store.listArtifacts(fixture.workspace.id).length, 0);
+    await assert.rejects(
+      stat(join(artifactRoot, "blobs", hash("candidate\n").slice(0, 2), hash("candidate\n"))),
+      /ENOENT/,
+    );
+  });
+});
+
+test("exports only to a new path and never silently overwrites a Workspace conflict", async () => {
   await withFixture(async ({ store, workflow, workspaceRoot, fixture }) => {
     const sourcePath = join(workspaceRoot, "draft.txt");
     await writeFile(sourcePath, "captured\n", "utf8");
+    const run = completedRun(store, fixture, "confirmed");
     const captured = await workflow.captureWorkspaceFile({
       workspaceId: fixture.workspace.id,
       relativePath: "draft.txt",
-      toolchain: "manual import",
+      producedByConversationId: fixture.conversation.id,
+      producedByRunId: run.id,
+      toolchain: "Agent file Tool",
+      validationStatus: "passed",
+      validationSummary: "The output reopened.",
     });
 
     await writeFile(sourcePath, "changed elsewhere\n", "utf8");
@@ -100,7 +205,6 @@ test("exports with expected hashes and never silently overwrites a Workspace con
         workspaceId: fixture.workspace.id,
         versionId: captured.version.id,
         relativePath: "draft.txt",
-        expectedContentHash: captured.version.source!.contentHash,
       }),
       (error: unknown) => error instanceof WorkspaceFileConflictError,
     );
@@ -110,7 +214,6 @@ test("exports with expected hashes and never silently overwrites a Workspace con
       workspaceId: fixture.workspace.id,
       versionId: captured.version.id,
       relativePath: "exports/final.txt",
-      expectedContentHash: null,
     });
     assert.equal(exported.contentHash, captured.version.contentHash);
     assert.equal(await readFile(join(workspaceRoot, "exports/final.txt"), "utf8"), "captured\n");
@@ -119,34 +222,38 @@ test("exports with expected hashes and never silently overwrites a Workspace con
         workspaceId: fixture.workspace.id,
         versionId: captured.version.id,
         relativePath: "exports/final.txt",
-        expectedContentHash: null,
       }),
       /no longer matches|appeared|conflict|version selected/i,
     );
 
-    await writeFile(sourcePath, "replaceable\n", "utf8");
-    const replaceableHash = hash("replaceable\n");
-    const replaced = await workflow.exportArtifactVersion({
-      workspaceId: fixture.workspace.id,
-      versionId: captured.version.id,
-      relativePath: "draft.txt",
-      expectedContentHash: replaceableHash,
-    });
-    assert.equal(replaced.contentHash, captured.version.contentHash);
-    assert.equal(await readFile(sourcePath, "utf8"), "captured\n");
+    await writeFile(sourcePath, "must remain\n", "utf8");
+    await assert.rejects(
+      workflow.exportArtifactVersion({
+        workspaceId: fixture.workspace.id,
+        versionId: captured.version.id,
+        relativePath: "draft.txt",
+      }),
+      /new path|already exists|conflict/i,
+    );
+    assert.equal(await readFile(sourcePath, "utf8"), "must remain\n");
   });
 });
 
 test("rejects Workspace paths that escape through a symlink", async () => {
-  await withFixture(async ({ workflow, workspaceRoot, root, fixture }) => {
+  await withFixture(async ({ store, workflow, workspaceRoot, root, fixture }) => {
     const outside = join(root, "outside.txt");
     await writeFile(outside, "outside\n", "utf8");
     await symlink(outside, join(workspaceRoot, "escape.txt"));
+    const run = completedRun(store, fixture, "confirmed");
     await assert.rejects(
       workflow.captureWorkspaceFile({
         workspaceId: fixture.workspace.id,
         relativePath: "escape.txt",
-        toolchain: "manual import",
+        producedByConversationId: fixture.conversation.id,
+        producedByRunId: run.id,
+        toolchain: "Agent file Tool",
+        validationStatus: "passed",
+        validationSummary: "The output reopened.",
       }),
       /outside its Workspace/i,
     );
@@ -154,12 +261,17 @@ test("rejects Workspace paths that escape through a symlink", async () => {
 });
 
 test("does not create export directories through a Workspace symlink", async () => {
-  await withFixture(async ({ workflow, workspaceRoot, root, fixture }) => {
+  await withFixture(async ({ store, workflow, workspaceRoot, root, fixture }) => {
     await writeFile(join(workspaceRoot, "source.txt"), "captured\n", "utf8");
+    const run = completedRun(store, fixture, "confirmed");
     const captured = await workflow.captureWorkspaceFile({
       workspaceId: fixture.workspace.id,
       relativePath: "source.txt",
-      toolchain: "manual import",
+      producedByConversationId: fixture.conversation.id,
+      producedByRunId: run.id,
+      toolchain: "Agent file Tool",
+      validationStatus: "passed",
+      validationSummary: "The output reopened.",
     });
     const outside = join(root, "outside");
     await mkdir(outside);
@@ -170,7 +282,6 @@ test("does not create export directories through a Workspace symlink", async () 
         workspaceId: fixture.workspace.id,
         versionId: captured.version.id,
         relativePath: "linked/created/final.txt",
-        expectedContentHash: null,
       }),
       /symbolic link|outside its Workspace/i,
     );
@@ -179,12 +290,17 @@ test("does not create export directories through a Workspace symlink", async () 
 });
 
 test("prepares an external-open copy without exposing mutable Artifact storage", async () => {
-  await withFixture(async ({ workflow, workspaceRoot, artifactRoot, fixture }) => {
+  await withFixture(async ({ store, workflow, workspaceRoot, artifactRoot, fixture }) => {
     await writeFile(join(workspaceRoot, "quarterly-report.docx"), "immutable bytes\n", "utf8");
+    const run = completedRun(store, fixture, "confirmed");
     const captured = await workflow.captureWorkspaceFile({
       workspaceId: fixture.workspace.id,
       relativePath: "quarterly-report.docx",
+      producedByConversationId: fixture.conversation.id,
+      producedByRunId: run.id,
       toolchain: "Agent Skill: documents",
+      validationStatus: "passed",
+      validationSummary: "The DOCX reopened with readable text.",
     });
 
     const openedPath = await workflow.prepareArtifactVersionOpen(captured.version.id);

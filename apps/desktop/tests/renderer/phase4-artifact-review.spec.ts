@@ -74,12 +74,18 @@ test("captures an Agent-produced Workspace File with explicit toolchain provenan
   await dialog.getByLabel("实际工具链").fill("Agent Skill: documents + LibreOffice 25.2");
   await dialog.getByLabel("已知限制").fill("复杂宏未验证");
   await dialog.getByLabel("产生结果的 Run").selectOption("run-artifact-demo");
+  await dialog.getByLabel("验证摘要").fill("重新打开 DOCX 并确认正文可读。");
+  await dialog.getByLabel("输出验证结果").selectOption("partial");
+  await expect(dialog.getByRole("button", { name: "捕获不可变版本" })).toBeDisabled();
+  await expect(dialog.getByRole("status")).toContainText("不会被捕获为 Artifact 版本");
+  await dialog.getByLabel("输出验证结果").selectOption("passed");
   await dialog.getByRole("button", { name: "捕获不可变版本" }).click();
 
   const review = page.getByRole("region", { name: "Artifact Review" });
   await expect(review).toContainText("agent-result.docx");
   await expect(review).toContainText("Agent Skill: documents + LibreOffice 25.2");
   await expect(review).toContainText("复杂宏未验证");
+  await expect(review).toContainText("重新打开 DOCX 并确认正文可读。");
   await expect(review.getByRole("region", { name: "工作流输入身份" })).toContainText(
     "inputs/source-data.xlsx",
   );

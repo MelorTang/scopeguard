@@ -17,6 +17,8 @@ export function ArtifactCaptureDialog(props: {
   const [toolchain, setToolchain] = useState("");
   const [limitations, setLimitations] = useState("");
   const [runId, setRunId] = useState("");
+  const [validationStatus, setValidationStatus] = useState<"passed" | "partial" | "failed">("passed");
+  const [validationSummary, setValidationSummary] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const workspaceId = props.workspace.selectedWorkspace?.id;
@@ -37,6 +39,8 @@ export function ArtifactCaptureDialog(props: {
     setToolchain("");
     setLimitations("");
     setRunId("");
+    setValidationStatus("passed");
+    setValidationSummary("");
     setError(null);
   }, [props.open]);
 
@@ -63,7 +67,13 @@ export function ArtifactCaptureDialog(props: {
   };
 
   const capture = async () => {
-    if (!file || !toolchain.trim() || !runId) return;
+    if (
+      !file ||
+      !toolchain.trim() ||
+      !runId ||
+      validationStatus !== "passed" ||
+      !validationSummary.trim()
+    ) return;
     const run = eligibleRuns.find(({ id }) => id === runId);
     if (!run) return;
     setSaving(true);
@@ -77,6 +87,8 @@ export function ArtifactCaptureDialog(props: {
         producedByRunId: run.id,
         toolchain: toolchain.trim(),
         limitations: limitations.split("\n").map((item) => item.trim()).filter(Boolean),
+        validationStatus,
+        validationSummary: validationSummary.trim(),
       });
       props.onClose();
     } catch (cause) {
@@ -165,6 +177,38 @@ export function ArtifactCaptureDialog(props: {
             rows={4}
           />
         </label>
+        <label>
+          <span>输出验证结果</span>
+          <select
+            aria-label="输出验证结果"
+            value={validationStatus}
+            onChange={(event) => setValidationStatus(
+              event.target.value as "passed" | "partial" | "failed",
+            )}
+            required
+          >
+            <option value="passed">通过，可捕获为 Artifact 版本</option>
+            <option value="partial">部分通过，不可捕获</option>
+            <option value="failed">失败，不可捕获</option>
+          </select>
+        </label>
+        <label>
+          <span>验证摘要</span>
+          <textarea
+            aria-label="验证摘要"
+            value={validationSummary}
+            onChange={(event) => setValidationSummary(event.target.value)}
+            placeholder="写清实际执行的验证和结果，例如：重新打开 DOCX 并确认正文可读。"
+            rows={3}
+            maxLength={2048}
+            required
+          />
+        </label>
+        {validationStatus !== "passed" && (
+          <p className="field-help" role="status">
+            部分通过或失败的输出不会被捕获为 Artifact 版本；现有 Run 记录仍会保留。
+          </p>
+        )}
         <p className="field-help">
           ScopeGuard 只捕获当前文件为不可变版本，不会把该工具链提升为全局格式保证。
         </p>
@@ -176,7 +220,14 @@ export function ArtifactCaptureDialog(props: {
           <button
             type="submit"
             className="button button--primary"
-            disabled={saving || !file || !toolchain.trim() || !runId}
+            disabled={
+              saving ||
+              !file ||
+              !toolchain.trim() ||
+              !runId ||
+              validationStatus !== "passed" ||
+              !validationSummary.trim()
+            }
           >
             <FilePlus2 size={15} />
             {saving ? "正在捕获…" : "捕获不可变版本"}

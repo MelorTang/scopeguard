@@ -16,7 +16,6 @@ assertDesktopPilotLaunchAllowed(process.platform);
 const electronPath = (await import("electron")).default;
 
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const repositoryRoot = resolve(desktopRoot, "../..");
 const stageRoot = process.env.SCOPEGUARD_PILOT_STAGE_ROOT
   ? resolve(process.env.SCOPEGUARD_PILOT_STAGE_ROOT)
   : null;
@@ -38,11 +37,11 @@ const startedAt = Date.now();
 try {
   await mkdir(join(workspaceRoot, "inputs"), { recursive: true });
   await copyFile(
-    join(repositoryRoot, "prototypes", "document-runtime-roundtrip", "fixtures", "word-complexity.docx"),
+    join(desktopRoot, "tests", "fixtures", "phase4", "source-v1.docx"),
     join(workspaceRoot, "inputs", "source-v1.docx"),
   );
   await copyFile(
-    join(repositoryRoot, "prototypes", "document-runtime-roundtrip", "fixtures", "word-revisions.docx"),
+    join(desktopRoot, "tests", "fixtures", "phase4", "source-v2.docx"),
     join(workspaceRoot, "inputs", "source-v2.docx"),
   );
 

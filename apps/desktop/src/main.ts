@@ -64,7 +64,7 @@ import {
   type LateWorkspaceLayoutStageReceipt,
   type Phase3LateLayoutObservation,
 } from "./main/phase3-late-layout-observation.js";
-import { Phase3RendererClient } from "./main/phase3-renderer-client.js";
+import { DesktopRendererClient } from "./main/desktop-renderer-client.js";
 import { RendererLayoutLifecycleClient } from "./main/renderer-layout-lifecycle-client.js";
 import {
   canonicalizeProjectDirectory,
@@ -435,7 +435,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
 
 async function createPhase3RendererEvidence() {
   const window = await createMainWindow();
-  const client = new Phase3RendererClient(window.webContents);
+  const client = new DesktopRendererClient(window.webContents);
   const rendererProcessId = window.webContents.getOSProcessId();
   if (!Number.isInteger(rendererProcessId) || rendererProcessId <= 0) {
     throw new Error("Phase 3 Desktop Pilot Renderer process is unavailable.");

@@ -54,7 +54,7 @@ type Row = Record<string, unknown>;
 const TERMINAL: RunStatus[] = ["completed", "failed", "cancelled", "interrupted"];
 const EXPECTED_SCHEMA_COLUMNS = {
   agents: ["id", "workspace_id", "name", "instructions", "provider_profile_id", "model_override", "default_execution_profile", "tool_policy_json", "created_at", "updated_at"],
-  artifact_versions: ["id", "artifact_id", "version", "parent_version_id", "inputs_json", "source_json", "content_hash", "byte_size", "storage_key", "produced_by_conversation_id", "produced_by_run_id", "toolchain", "limitations_json", "created_at"],
+  artifact_versions: ["id", "artifact_id", "version", "parent_version_id", "inputs_json", "source_json", "content_hash", "byte_size", "storage_key", "produced_by_conversation_id", "produced_by_run_id", "toolchain", "limitations_json", "validation_status", "validation_summary", "created_at"],
   artifacts: ["id", "workspace_id", "title", "format", "source_relative_path", "current_version_id", "associated_conversation_id", "created_at", "updated_at"],
   center_state: ["workspace_id", "state_json"],
   conversations: ["id", "workspace_id", "agent_id", "title", "status", "model_override", "execution_profile", "pi_session_file", "pi_session_id", "pi_version", "pi_session_version", "created_at", "updated_at"],
@@ -356,9 +356,38 @@ export class ScopeGuardStore {
     return row ? asString(row.storage_key) : null;
   }
 
+  createArtifactWithVersion(
+    artifactInput: CreateArtifactInput,
+    versionInput: Omit<CreateArtifactVersionInput, "artifactId" | "parentVersionId">,
+    storageKey: string,
+  ): { artifact: Artifact; version: ArtifactVersion } {
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const artifact = this.createArtifact(artifactInput);
+      const version = this.#createArtifactVersion({
+        ...versionInput,
+        artifactId: artifact.id,
+        parentVersionId: null,
+      }, storageKey, true);
+      this.#database.exec("COMMIT");
+      return { artifact: this.getArtifact(artifact.id)!, version };
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   createArtifactVersion(
     input: CreateArtifactVersionInput,
     storageKey: string,
+  ): ArtifactVersion {
+    return this.#createArtifactVersion(input, storageKey, false);
+  }
+
+  #createArtifactVersion(
+    input: CreateArtifactVersionInput,
+    storageKey: string,
+    transactionOpen: boolean,
   ): ArtifactVersion {
     const artifact = this.getArtifact(input.artifactId);
     if (!artifact) throw new Error(`Artifact not found: ${input.artifactId}`);
@@ -382,24 +411,23 @@ export class ScopeGuardStore {
     if (input.source?.workspaceId !== undefined && input.source.workspaceId !== artifact.workspaceId) {
       throw new Error("Artifact Version source must belong to the Artifact Workspace.");
     }
-    if (input.producedByConversationId) {
-      const conversation = this.requireConversation(input.producedByConversationId);
-      if (conversation.workspaceId !== artifact.workspaceId) {
-        throw new Error("Artifact Version producer must belong to the Artifact Workspace.");
-      }
+    if (!input.producedByConversationId || !input.producedByRunId) {
+      throw new Error("Artifact Version requires its producing Conversation and Run.");
     }
-    if (input.producedByRunId) {
-      const run = this.requireRun(input.producedByRunId);
-      if (run.status !== "completed" || run.effect !== "confirmed") {
-        throw new Error("Artifact Version Run must be completed with confirmed Tool effects.");
-      }
-      const conversation = this.requireConversation(run.conversationId);
-      if (
-        conversation.workspaceId !== artifact.workspaceId ||
-        (input.producedByConversationId && input.producedByConversationId !== conversation.id)
-      ) {
-        throw new Error("Artifact Version Run provenance must match its Workspace and Conversation.");
-      }
+    const producer = this.requireConversation(input.producedByConversationId);
+    if (producer.workspaceId !== artifact.workspaceId) {
+      throw new Error("Artifact Version producer must belong to the Artifact Workspace.");
+    }
+    const run = this.requireRun(input.producedByRunId);
+    if (run.status !== "completed" || run.effect !== "confirmed") {
+      throw new Error("Artifact Version Run must be completed with confirmed Tool effects.");
+    }
+    const conversation = this.requireConversation(run.conversationId);
+    if (
+      conversation.workspaceId !== artifact.workspaceId ||
+      input.producedByConversationId !== conversation.id
+    ) {
+      throw new Error("Artifact Version Run provenance must match its Workspace and Conversation.");
     }
     const next = this.#get(
       "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM artifact_versions WHERE artifact_id = ?",
@@ -415,16 +443,18 @@ export class ScopeGuardStore {
       source: input.source ?? null,
       contentHash: input.contentHash,
       byteSize: input.byteSize,
-      producedByConversationId: input.producedByConversationId ?? null,
-      producedByRunId: input.producedByRunId ?? null,
+      producedByConversationId: input.producedByConversationId,
+      producedByRunId: input.producedByRunId,
       toolchain: input.toolchain,
       limitations: input.limitations ?? [],
+      validationStatus: input.validationStatus,
+      validationSummary: input.validationSummary,
       createdAt: now,
     });
     if (storageKey !== `${version.contentHash.slice(0, 2)}/${version.contentHash}`) {
       throw new Error("Artifact storage key must match the Version content identity.");
     }
-    this.#database.exec("BEGIN IMMEDIATE");
+    if (!transactionOpen) this.#database.exec("BEGIN IMMEDIATE");
     try {
       const current = this.#get(
         "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM artifact_versions WHERE artifact_id = ?",
@@ -441,7 +471,7 @@ export class ScopeGuardStore {
         throw new Error("Artifact current Version changed while publication was being prepared.");
       }
       this.#run(
-        "INSERT INTO artifact_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO artifact_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         version.id,
         version.artifactId,
         version.version,
@@ -455,6 +485,8 @@ export class ScopeGuardStore {
         version.producedByRunId,
         version.toolchain,
         JSON.stringify(version.limitations),
+        version.validationStatus,
+        version.validationSummary,
         version.createdAt,
       );
       this.#run(
@@ -463,9 +495,9 @@ export class ScopeGuardStore {
         version.createdAt,
         artifact.id,
       );
-      this.#database.exec("COMMIT");
+      if (!transactionOpen) this.#database.exec("COMMIT");
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      if (!transactionOpen) this.#database.exec("ROLLBACK");
       throw error;
     }
     return version;
@@ -907,6 +939,8 @@ export class ScopeGuardStore {
         produced_by_run_id TEXT REFERENCES runs(id),
         toolchain TEXT NOT NULL,
         limitations_json TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        validation_summary TEXT NOT NULL,
         created_at TEXT NOT NULL,
         UNIQUE(artifact_id, version)
       ) STRICT;
@@ -989,6 +1023,8 @@ export class ScopeGuardStore {
         produced_by_run_id TEXT REFERENCES runs(id),
         toolchain TEXT NOT NULL,
         limitations_json TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        validation_summary TEXT NOT NULL,
         created_at TEXT NOT NULL,
         UNIQUE(artifact_id, version)
       ) STRICT;
@@ -1290,10 +1326,12 @@ function mapArtifactVersion(row: Row): ArtifactVersion {
     source: row.source_json == null ? null : parseObject(row.source_json),
     contentHash: row.content_hash,
     byteSize: row.byte_size,
-    producedByConversationId: row.produced_by_conversation_id ?? null,
-    producedByRunId: row.produced_by_run_id ?? null,
+    producedByConversationId: row.produced_by_conversation_id,
+    producedByRunId: row.produced_by_run_id,
     toolchain: row.toolchain,
     limitations,
+    validationStatus: row.validation_status,
+    validationSummary: row.validation_summary,
     createdAt: row.created_at,
   });
 }

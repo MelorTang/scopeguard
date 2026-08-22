@@ -578,10 +578,12 @@ export type ArtifactVersion = {
   source: WorkspaceFileVersion | null;
   contentHash: Sha256Digest;
   byteSize: number;
-  producedByConversationId: Id | null;
-  producedByRunId: Id | null;
+  producedByConversationId: Id;
+  producedByRunId: Id;
   toolchain: string;
   limitations: string[];
+  validationStatus: "passed";
+  validationSummary: string;
   createdAt: IsoDateTime;
 };
 
@@ -612,10 +614,12 @@ export type CreateArtifactVersionInput = {
   source?: WorkspaceFileVersion | null;
   contentHash: Sha256Digest;
   byteSize: number;
-  producedByConversationId?: Id | null;
-  producedByRunId?: Id | null;
+  producedByConversationId: Id;
+  producedByRunId: Id;
   toolchain: string;
   limitations?: string[];
+  validationStatus: "passed";
+  validationSummary: string;
 };
 
 export function parseArtifactFormat(value: unknown): ArtifactFormat {
@@ -713,6 +717,8 @@ export function parseArtifactVersion(value: unknown): ArtifactVersion {
     "producedByRunId",
     "source",
     "toolchain",
+    "validationStatus",
+    "validationSummary",
     "version",
   ], "Artifact Version");
   if (typeof record.toolchain !== "string" || !record.toolchain.trim() || record.toolchain !== record.toolchain.trim()) {
@@ -722,6 +728,17 @@ export function parseArtifactVersion(value: unknown): ArtifactVersion {
   if (!Array.isArray(record.limitations) || record.limitations.length > 32) {
     throw new Error("Artifact Version limitations must be a bounded text array.");
   }
+  if (record.validationStatus !== "passed") {
+    throw new Error("Artifact Version validationStatus must be passed.");
+  }
+  if (
+    typeof record.validationSummary !== "string" ||
+    !record.validationSummary.trim() ||
+    record.validationSummary !== record.validationSummary.trim()
+  ) {
+    throw new Error("Artifact Version validationSummary must be non-empty trimmed text.");
+  }
+  assertMaximumLength(record.validationSummary, 2_048, "Artifact Version validationSummary");
   const limitations = record.limitations.map((limitation) => {
     if (typeof limitation !== "string" || !limitation.trim() || limitation !== limitation.trim()) {
       throw new Error("Artifact Version limitation must be non-empty trimmed text.");
@@ -750,13 +767,15 @@ export function parseArtifactVersion(value: unknown): ArtifactVersion {
     source: record.source === null ? null : parseWorkspaceFileVersion(record.source),
     contentHash: parseSha256Digest(record.contentHash, "Artifact Version contentHash"),
     byteSize: nonNegativeSafeInteger(record.byteSize, "Artifact Version byteSize"),
-    producedByConversationId: nullableId(
+    producedByConversationId: requiredId(
       record.producedByConversationId,
       "Artifact Version producedByConversationId",
     ),
-    producedByRunId: nullableId(record.producedByRunId, "Artifact Version producedByRunId"),
+    producedByRunId: requiredId(record.producedByRunId, "Artifact Version producedByRunId"),
     toolchain: record.toolchain,
     limitations,
+    validationStatus: record.validationStatus,
+    validationSummary: record.validationSummary,
     createdAt: isoDateTime(record.createdAt, "Artifact Version createdAt"),
   };
 }

@@ -201,6 +201,8 @@ export function ArtifactReview(props: {
               )}
             />
             <Metadata label="实际工具链" value={version.toolchain} />
+            <Metadata label="输出验证" value={version.validationStatus === "passed" ? "通过" : version.validationStatus} />
+            <Metadata label="验证摘要" value={version.validationSummary} />
           </dl>
           <section className="artifact-inputs" aria-label="工作流输入身份">
             <h3>工作流输入身份</h3>
@@ -255,7 +257,6 @@ export function ArtifactReview(props: {
                 const exported = await workspace.exportArtifactVersion({
                   versionId: version.id,
                   relativePath: exportPath.trim(),
-                  expectedContentHash: null,
                 });
                 setFeedback({ tone: "success", text: `已导出 ${exported.relativePath}。` });
               })}

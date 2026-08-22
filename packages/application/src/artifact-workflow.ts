@@ -8,7 +8,6 @@ import {
   open,
   readFile,
   realpath,
-  rename,
   stat,
   unlink,
 } from "node:fs/promises";
@@ -16,7 +15,6 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 
 import {
   parseArtifactFormat,
-  parseSha256Digest,
   parseWorkspaceRelativePath,
   type AgentRun,
   type Artifact,
@@ -36,17 +34,18 @@ export type CaptureWorkspaceFileInput = {
   artifactId?: Id;
   title?: string;
   format?: string;
-  producedByConversationId?: Id | null;
-  producedByRunId?: Id | null;
+  producedByConversationId: Id;
+  producedByRunId: Id;
   toolchain: string;
   limitations?: string[];
+  validationStatus: "passed" | "partial" | "failed";
+  validationSummary: string;
 };
 
 export type ExportArtifactVersionInput = {
   workspaceId: Id;
   versionId: Id;
   relativePath: string;
-  expectedContentHash: string | null;
 };
 
 export type CapturedArtifactVersion = {
@@ -57,7 +56,11 @@ export type CapturedArtifactVersion = {
 export interface ArtifactWorkflowStore {
   getWorkspace(id: Id): Workspace | null;
   getArtifact(id: Id): Artifact | null;
-  createArtifact(input: CreateArtifactInput): Artifact;
+  createArtifactWithVersion(
+    artifact: CreateArtifactInput,
+    version: Omit<CreateArtifactVersionInput, "artifactId" | "parentVersionId">,
+    storageKey: string,
+  ): CapturedArtifactVersion;
   getArtifactVersion(id: Id): ArtifactVersion | null;
   getArtifactVersionStorageKey(id: Id): string | null;
   createArtifactVersion(input: CreateArtifactVersionInput, storageKey: string): ArtifactVersion;
@@ -102,47 +105,51 @@ export class ArtifactWorkflow {
     const relativePath = parseWorkspaceRelativePath(raw.relativePath);
     const sourcePath = await resolveExistingWorkspaceFile(workspace, relativePath);
     const provenance = this.#validateProvenance(workspace, raw);
-    let artifact = raw.artifactId ? this.#store.getArtifact(raw.artifactId) : null;
+    const artifact = raw.artifactId ? this.#store.getArtifact(raw.artifactId) : null;
     if (raw.artifactId && (!artifact || artifact.workspaceId !== workspace.id)) {
       throw new Error("Artifact capture target must belong to the Workspace.");
     }
+    const format = captureFormat(relativePath, raw.format, artifact);
     const observedInputs = await observeWorkspaceInputs(
       workspace,
       raw.inputRelativePaths ?? [],
     );
     const captured = await this.#captureStableFile(sourcePath, workspace.id, relativePath);
-    let storageKey: string;
     try {
       await verifyWorkspaceInputs(observedInputs);
-      storageKey = await this.#publishBlob(captured.stagingPath, captured.version);
     } catch (error) {
       await unlink(captured.stagingPath).catch(() => {});
       throw error;
     }
-
-    if (!artifact) {
-      artifact = this.#store.createArtifact({
-        workspaceId: workspace.id,
-        title: raw.title?.trim() || basenameFromPortablePath(relativePath),
-        format: parseArtifactFormat(raw.format ?? formatFromPath(relativePath)),
-        sourceRelativePath: relativePath,
-        associatedConversationId: provenance.conversationId,
-      });
-    }
-
-    const version = this.#store.createArtifactVersion({
-      artifactId: artifact.id,
-      parentVersionId: artifact.currentVersionId,
-      inputs: observedInputs.map(({ version }) => version),
-      source: captured.version,
-      contentHash: captured.version.contentHash,
-      byteSize: captured.version.byteSize,
-      producedByConversationId: provenance.conversationId,
-      producedByRunId: provenance.runId,
-      toolchain: raw.toolchain,
-      limitations: raw.limitations ?? [],
-    }, storageKey);
-    return { artifact: this.#store.getArtifact(artifact.id)!, version };
+    return this.#publishAndRecord(captured, (storageKey) => {
+      const versionInput = {
+        inputs: observedInputs.map(({ version }) => version),
+        source: captured.version,
+        contentHash: captured.version.contentHash,
+        byteSize: captured.version.byteSize,
+        producedByConversationId: provenance.conversationId,
+        producedByRunId: provenance.runId,
+        toolchain: raw.toolchain,
+        limitations: raw.limitations ?? [],
+        validationStatus: "passed" as const,
+        validationSummary: raw.validationSummary,
+      };
+      if (!artifact) {
+        return this.#store.createArtifactWithVersion({
+          workspaceId: workspace.id,
+          title: raw.title?.trim() || basenameFromPortablePath(relativePath),
+          format,
+          sourceRelativePath: relativePath,
+          associatedConversationId: provenance.conversationId,
+        }, versionInput, storageKey);
+      }
+      const version = this.#store.createArtifactVersion({
+        ...versionInput,
+        artifactId: artifact.id,
+        parentVersionId: artifact.currentVersionId,
+      }, storageKey);
+      return { artifact: this.#store.getArtifact(artifact.id)!, version };
+    });
   }
 
   async exportArtifactVersion(
@@ -150,9 +157,6 @@ export class ArtifactWorkflow {
   ): Promise<WorkspaceFileVersion> {
     const workspace = this.#requireWorkspace(raw.workspaceId);
     const relativePath = parseWorkspaceRelativePath(raw.relativePath);
-    const expected = raw.expectedContentHash === null
-      ? null
-      : parseSha256Digest(raw.expectedContentHash, "Expected Workspace File contentHash");
     const version = this.#store.getArtifactVersion(raw.versionId);
     if (!version) throw new Error(`Artifact Version not found: ${raw.versionId}`);
     const artifact = this.#store.getArtifact(version.artifactId);
@@ -170,14 +174,19 @@ export class ArtifactWorkflow {
     const workspaceRoot = await requireWorkspaceRoot(workspace);
     const destinationPath = resolve(workspaceRoot, ...relativePath.split("/"));
     await ensureWorkspaceParentDirectory(workspaceRoot, destinationPath);
-    return this.#withPathLock(destinationPath, async () => {
+    return this.#withPathLock(pathLockKey(destinationPath), async () => {
       const before = await optionalWorkspaceFileVersion(
         workspaceRoot,
         destinationPath,
         workspace.id,
         relativePath,
       );
-      assertExpectedWorkspaceVersion(relativePath, before, expected);
+      if (before) {
+        throw new WorkspaceFileConflictError(
+          relativePath,
+          "Artifact export requires a new Workspace path; the target already exists.",
+        );
+      }
       const tempPath = join(dirname(destinationPath), `.scopeguard-${randomUUID()}.tmp`);
       try {
         await copyFile(blobPath, tempPath, constants.COPYFILE_EXCL);
@@ -191,23 +200,24 @@ export class ArtifactWorkflow {
           workspace.id,
           relativePath,
         );
-        assertSameObservedWorkspaceVersion(relativePath, before, current);
-        if (current === null) {
-          try {
-            await link(tempPath, destinationPath);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-              throw new WorkspaceFileConflictError(
-                relativePath,
-                "Workspace File appeared before Artifact export could publish it.",
-              );
-            }
-            throw error;
-          }
-          await unlink(tempPath);
-        } else {
-          await rename(tempPath, destinationPath);
+        if (current) {
+          throw new WorkspaceFileConflictError(
+            relativePath,
+            "Workspace File appeared before Artifact export could publish it.",
+          );
         }
+        try {
+          await link(tempPath, destinationPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new WorkspaceFileConflictError(
+              relativePath,
+              "Workspace File appeared before Artifact export could publish it.",
+            );
+          }
+          throw error;
+        }
+        await unlink(tempPath);
         const published = await optionalWorkspaceFileVersion(
           workspaceRoot,
           destinationPath,
@@ -264,29 +274,28 @@ export class ArtifactWorkflow {
   #validateProvenance(
     workspace: Workspace,
     input: CaptureWorkspaceFileInput,
-  ): { conversationId: Id | null; runId: Id | null } {
-    const conversationId = input.producedByConversationId ?? null;
-    const runId = input.producedByRunId ?? null;
-    const conversation = conversationId ? this.#store.getConversation(conversationId) : null;
-    if (conversationId && (!conversation || conversation.workspaceId !== workspace.id)) {
+  ): { conversationId: Id; runId: Id } {
+    if (input.validationStatus !== "passed") {
+      throw new Error("Only an output with passed validation may become an Artifact Version.");
+    }
+    const conversationId = input.producedByConversationId;
+    const runId = input.producedByRunId;
+    if (!conversationId || !runId) {
+      throw new Error("Every Artifact Version requires a confirmed producing Run and Conversation.");
+    }
+    const conversation = this.#store.getConversation(conversationId);
+    if (!conversation || conversation.workspaceId !== workspace.id) {
       throw new Error("Artifact producer Conversation must belong to the Workspace.");
     }
-    if (runId) {
-      const run = this.#store.getRun(runId);
-      if (!run || run.status !== "completed" || run.effect !== "confirmed") {
-        throw new Error("Only a completed Run with confirmed Tool effects may produce an Artifact Version.");
-      }
-      const owner = this.#store.getConversation(run.conversationId);
-      if (
-        !owner ||
-        owner.workspaceId !== workspace.id ||
-        (conversation && conversation.id !== owner.id)
-      ) {
-        throw new Error("Artifact producer Run must match its Workspace and Conversation.");
-      }
-      return { conversationId: owner.id, runId: run.id };
+    const run = this.#store.getRun(runId);
+    if (!run || run.status !== "completed" || run.effect !== "confirmed") {
+      throw new Error("Only a completed Run with confirmed Tool effects may produce an Artifact Version.");
     }
-    return { conversationId, runId: null };
+    const owner = this.#store.getConversation(run.conversationId);
+    if (!owner || owner.workspaceId !== workspace.id || conversation.id !== owner.id) {
+      throw new Error("Artifact producer Run must match its Workspace and Conversation.");
+    }
+    return { conversationId: owner.id, runId: run.id };
   }
 
   async #captureStableFile(
@@ -328,15 +337,43 @@ export class ArtifactWorkflow {
     }
   }
 
+  async #publishAndRecord(
+    captured: { stagingPath: string; version: WorkspaceFileVersion },
+    record: (storageKey: string) => CapturedArtifactVersion,
+  ): Promise<CapturedArtifactVersion> {
+    const storageKey = `${captured.version.contentHash.slice(0, 2)}/${captured.version.contentHash}`;
+    const destination = resolveStorageKey(this.#artifactRoot, storageKey);
+    return this.#withPathLock(destination, async () => {
+      const published = await this.#publishBlob(captured.stagingPath, captured.version);
+      try {
+        return record(published.storageKey);
+      } catch (error) {
+        if (published.created) {
+          try {
+            await unlink(published.destination);
+          } catch (cleanupError) {
+            throw new AggregateError(
+              [error, cleanupError],
+              "Artifact publication failed and its unreferenced Blob could not be removed.",
+            );
+          }
+        }
+        throw error;
+      }
+    });
+  }
+
   async #publishBlob(
     stagingPath: string,
     version: WorkspaceFileVersion,
-  ): Promise<string> {
+  ): Promise<{ storageKey: string; destination: string; created: boolean }> {
     const storageKey = `${version.contentHash.slice(0, 2)}/${version.contentHash}`;
     const destination = resolveStorageKey(this.#artifactRoot, storageKey);
     await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+    let created = false;
     try {
       await link(stagingPath, destination);
+      created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const existing = await hashRegularFile(destination);
@@ -349,7 +386,7 @@ export class ArtifactWorkflow {
     } finally {
       await unlink(stagingPath).catch(() => {});
     }
-    return storageKey;
+    return { storageKey, destination, created };
   }
 
   async #withPathLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
@@ -528,37 +565,6 @@ function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function assertExpectedWorkspaceVersion(
-  relativePath: string,
-  observed: WorkspaceFileVersion | null,
-  expectedContentHash: string | null,
-): void {
-  if (expectedContentHash === null && observed === null) return;
-  if (expectedContentHash !== null && observed?.contentHash === expectedContentHash) return;
-  throw new WorkspaceFileConflictError(
-    relativePath,
-    observed
-      ? "Workspace File no longer matches the version selected for Artifact export."
-      : "Workspace File was removed before Artifact export.",
-  );
-}
-
-function assertSameObservedWorkspaceVersion(
-  relativePath: string,
-  before: WorkspaceFileVersion | null,
-  current: WorkspaceFileVersion | null,
-): void {
-  if (
-    before?.contentHash === current?.contentHash &&
-    before?.byteSize === current?.byteSize
-  ) return;
-  if (before === null && current === null) return;
-  throw new WorkspaceFileConflictError(
-    relativePath,
-    "Workspace File changed while Artifact export was being prepared.",
-  );
-}
-
 function resolveStorageKey(root: string, storageKey: string): string {
   if (!/^[a-f0-9]{2}\/[a-f0-9]{64}$/.test(storageKey)) {
     throw new Error("Artifact storage key is invalid.");
@@ -569,6 +575,26 @@ function resolveStorageKey(root: string, storageKey: string): string {
 function formatFromPath(relativePath: string): string {
   const extension = extname(relativePath).slice(1).toLowerCase();
   return extension || "file";
+}
+
+function captureFormat(
+  relativePath: string,
+  declaredFormat: string | undefined,
+  artifact: Artifact | null,
+): string {
+  const pathFormat = parseArtifactFormat(formatFromPath(relativePath));
+  const format = parseArtifactFormat(declaredFormat ?? pathFormat);
+  if (pathFormat !== "file" && format !== pathFormat) {
+    throw new Error("Artifact format must match the Workspace File extension.");
+  }
+  if (artifact && artifact.format !== format) {
+    throw new Error("A new Artifact Version format must match its Artifact.");
+  }
+  return format;
+}
+
+function pathLockKey(path: string): string {
+  return process.platform === "win32" ? path.toLowerCase() : path;
 }
 
 function basenameFromPortablePath(relativePath: string): string {

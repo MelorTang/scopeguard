@@ -46,6 +46,7 @@ export async function startPiRuntimeFakeProvider(expectedKey, options = {}) {
           options.phase4WorkflowScript,
           "create",
           "source-v1.docx",
+          "agent-result-v1.docx",
         ),
       });
       return;
@@ -56,6 +57,8 @@ export async function startPiRuntimeFakeProvider(expectedKey, options = {}) {
           options.phase4WorkflowScript,
           "revise",
           "source-v2.docx",
+          "agent-result-v2.docx",
+          "agent-result-v1.docx",
         ),
       });
       return;
@@ -102,7 +105,7 @@ function sendToolCall(response, id, name, args) {
   response.end("data: [DONE]\n\n");
 }
 
-function phase4WorkflowCommand(scriptPath, mode, sourceName) {
+function phase4WorkflowCommand(scriptPath, mode, sourceName, outputName, previousName) {
   if (typeof scriptPath !== "string" || !scriptPath) {
     throw new Error("Phase 4 fake Provider requires a workflow script path.");
   }
@@ -111,7 +114,8 @@ function phase4WorkflowCommand(scriptPath, mode, sourceName) {
     JSON.stringify(scriptPath),
     mode,
     `inputs/${sourceName}`,
-    "reports/agent-result.docx",
+    ...(previousName ? [`reports/${previousName}`] : []),
+    `reports/${outputName}`,
   ].join(" ");
 }
 

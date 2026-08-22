@@ -16,14 +16,15 @@ test("test-only Agent workflow inspects, creates, revises, and reopens a DOCX", 
   try {
     const firstInput = join(root, "input-v1.docx");
     const secondInput = join(root, "input-v2.docx");
-    const output = join(root, "reports", "agent-result.docx");
+    const firstOutput = join(root, "reports", "agent-result-v1.docx");
+    const secondOutput = join(root, "reports", "agent-result-v2.docx");
     await writeDocx(firstInput, "First representative office input.");
     await writeDocx(secondInput, "Second representative office input.");
 
     const created = await runPhase4FilePilotWorkflow({
       mode: "create",
       inputPath: firstInput,
-      outputPath: output,
+      outputPath: firstOutput,
     });
     assert.match(created.inputText, /First representative office input/);
     assert.match(created.outputText, /版本 1/);
@@ -31,12 +32,14 @@ test("test-only Agent workflow inspects, creates, revises, and reopens a DOCX", 
     const revised = await runPhase4FilePilotWorkflow({
       mode: "revise",
       inputPath: secondInput,
-      outputPath: output,
+      previousOutputPath: firstOutput,
+      outputPath: secondOutput,
     });
     assert.match(revised.inputText, /Second representative office input/);
     assert.match(revised.previousOutputText ?? "", /版本 1/);
     assert.match(revised.outputText, /版本 2/);
-    assert.match(await readPhase4PilotDocxText(output), /版本 2/);
+    assert.match(await readPhase4PilotDocxText(firstOutput), /版本 1/);
+    assert.match(await readPhase4PilotDocxText(secondOutput), /版本 2/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

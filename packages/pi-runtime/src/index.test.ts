@@ -61,7 +61,7 @@ test("Electron Node bootstrap removes its launch marker before Pi loads", () => 
   );
   const output = execFileSync(process.execPath, [
     "--import",
-    bootstrapPath,
+    pathToFileURL(bootstrapPath).href,
     "--eval",
     "process.stdout.write(String(Object.hasOwn(process.env, 'ELECTRON_RUN_AS_NODE')))",
   ], {

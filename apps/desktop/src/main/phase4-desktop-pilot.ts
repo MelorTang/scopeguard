@@ -34,7 +34,7 @@ type Phase4PilotState = {
   runIds: [string, string];
   artifactId: string;
   versionIds: [string, string];
-  inputHashes: [string, string];
+  inputHashes: [string, string, string];
   hashes: [string, string];
   conflictStopped: true;
   reviewRestored: true;
@@ -90,18 +90,20 @@ async function firstProcess(
 
   const firstRun = await runFileWorkflow(renderer, conversation.id, "[phase4-file-v1]");
   const firstInputHash = await fileHash(join(workspaceRoot, "inputs", "source-v1.docx"));
-  const firstHash = await fileHash(join(workspaceRoot, "reports", "agent-result.docx"));
+  const firstHash = await fileHash(join(workspaceRoot, "reports", "agent-result-v1.docx"));
   const first = await renderer.client.invoke<CapturedArtifactVersion>("captureWorkspaceFile", {
     workspaceId: workspace.id,
-    relativePath: "reports/agent-result.docx",
+    relativePath: "reports/agent-result-v1.docx",
     inputRelativePaths: ["inputs/source-v1.docx"],
     producedByConversationId: conversation.id,
     producedByRunId: firstRun.id,
     toolchain: "Pi bash Tool + docx 9.7.1 + mammoth 1.12.1",
     limitations: [
       "Test-only workflow regenerates a simple DOCX; complex styles, macros, revisions, and embedded objects are not preserved.",
-      "Evidence applies only to the public synthetic fixtures and declared toolchain.",
+      "Evidence applies only to the public fixed test fixtures and declared toolchain.",
     ],
+    validationStatus: "passed",
+    validationSummary: "The generated DOCX reopened and contained the expected version-1 marker.",
   });
   assert.equal(first.version.contentHash, firstHash);
   assert.equal(first.version.source?.contentHash, firstHash);
@@ -110,26 +112,31 @@ async function firstProcess(
 
   const secondRun = await runFileWorkflow(renderer, conversation.id, "[phase4-file-v2]");
   const secondInputHash = await fileHash(join(workspaceRoot, "inputs", "source-v2.docx"));
-  const secondHash = await fileHash(join(workspaceRoot, "reports", "agent-result.docx"));
+  const secondHash = await fileHash(join(workspaceRoot, "reports", "agent-result-v2.docx"));
   assert.notEqual(secondHash, firstHash);
   const second = await renderer.client.invoke<CapturedArtifactVersion>("captureWorkspaceFile", {
     workspaceId: workspace.id,
-    relativePath: "reports/agent-result.docx",
-    inputRelativePaths: ["inputs/source-v2.docx"],
+    relativePath: "reports/agent-result-v2.docx",
+    inputRelativePaths: ["reports/agent-result-v1.docx", "inputs/source-v2.docx"],
     artifactId: first.artifact.id,
     producedByConversationId: conversation.id,
     producedByRunId: secondRun.id,
     toolchain: "Pi bash Tool + docx 9.7.1 + mammoth 1.12.1",
     limitations: [
       "Test-only workflow regenerates a simple DOCX; complex styles, macros, revisions, and embedded objects are not preserved.",
-      "Evidence applies only to the public synthetic fixtures and declared toolchain.",
+      "Evidence applies only to the public fixed test fixtures and declared toolchain.",
     ],
+    validationStatus: "passed",
+    validationSummary: "The revised DOCX reopened, retained the prior-version summary, and contained the expected version-2 marker.",
   });
   assert.equal(second.version.version, 2);
   assert.equal(second.version.parentVersionId, first.version.id);
   assert.equal(second.version.contentHash, secondHash);
   assert.equal(second.version.source?.contentHash, secondHash);
-  assert.deepEqual(second.version.inputs.map(({ contentHash }) => contentHash), [secondInputHash]);
+  assert.deepEqual(
+    second.version.inputs.map(({ contentHash }) => contentHash),
+    [firstHash, secondInputHash],
+  );
 
   const review: WorkspaceCenterState = {
     workspaceId: workspace.id,
@@ -149,18 +156,17 @@ async function firstProcess(
     toolchain: first.version.toolchain,
     inputHash: firstInputHash,
   });
-  assert.match(rendererReview.text, /public synthetic fixtures/);
+  assert.match(rendererReview.text, /public fixed test fixtures/);
 
-  const conflictingPath = join(workspaceRoot, "reports", "agent-result.docx");
+  const conflictingPath = join(workspaceRoot, "reports", "agent-result-v2.docx");
   await writeFile(conflictingPath, "external concurrent write\n", "utf8");
   await assert.rejects(
     renderer.client.invoke("exportArtifactVersion", {
       workspaceId: workspace.id,
       versionId: first.version.id,
-      relativePath: "reports/agent-result.docx",
-      expectedContentHash: secondHash,
+      relativePath: "reports/agent-result-v2.docx",
     }),
-    /no longer matches|conflict|version selected/i,
+    /new Workspace path|already exists|conflict/i,
   );
   assert.equal(await readFile(conflictingPath, "utf8"), "external concurrent write\n");
 
@@ -168,7 +174,6 @@ async function firstProcess(
     workspaceId: workspace.id,
     versionId: first.version.id,
     relativePath: "exports/recovered-v1.docx",
-    expectedContentHash: null,
   });
   assert.equal(exported.contentHash, firstHash);
   assert.equal(await fileHash(join(workspaceRoot, "exports", "recovered-v1.docx")), firstHash);
@@ -187,7 +192,7 @@ async function firstProcess(
     runIds: [firstRun.id, secondRun.id],
     artifactId: first.artifact.id,
     versionIds: [first.version.id, second.version.id],
-    inputHashes: [firstInputHash, secondInputHash],
+    inputHashes: [firstInputHash, firstHash, secondInputHash],
     hashes: [firstHash, secondHash],
     conflictStopped: true,
     reviewRestored: true,
@@ -207,10 +212,13 @@ async function secondProcess(
   const artifact = requireArtifact(snapshot, previous.artifactId);
   const versions = previous.versionIds.map((id) => requireVersion(snapshot, id));
   assert.deepEqual(versions.map(({ contentHash }) => contentHash), previous.hashes);
-  assert.deepEqual(
-    versions.map(({ inputs }) => inputs[0]?.contentHash),
-    previous.inputHashes,
-  );
+  assert.deepEqual(versions[0]?.inputs.map(({ contentHash }) => contentHash), [
+    previous.inputHashes[0],
+  ]);
+  assert.deepEqual(versions[1]?.inputs.map(({ contentHash }) => contentHash), [
+    previous.inputHashes[1],
+    previous.inputHashes[2],
+  ]);
   assert.equal(artifact.currentVersionId, previous.versionIds[1]);
   const review = snapshot.centerStates.find(({ workspaceId }) => workspaceId === previous.workspaceId);
   assert.deepEqual(review, {
@@ -234,7 +242,6 @@ async function secondProcess(
     workspaceId: previous.workspaceId,
     versionId: previous.versionIds[1],
     relativePath: "exports/recovered-v2.docx",
-    expectedContentHash: null,
   });
   assert.equal(exported.contentHash, previous.hashes[1]);
   await persistState(statePath, {

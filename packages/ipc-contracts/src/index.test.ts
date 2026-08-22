@@ -307,6 +307,8 @@ test("accepts only bounded Artifact capture, export, and Review requests", () =>
     inputRelativePaths: ["inputs/source.docx"],
     toolchain: "Agent Skill: documents",
     limitations: ["External preview."],
+    validationStatus: "passed",
+    validationSummary: "The output reopened with readable text.",
   }), {
     workspaceId: "workspace",
     relativePath: "reports/final.docx",
@@ -318,17 +320,17 @@ test("accepts only bounded Artifact capture, export, and Review requests", () =>
     inputRelativePaths: ["inputs/source.docx"],
     toolchain: "Agent Skill: documents",
     limitations: ["External preview."],
+    validationStatus: "passed",
+    validationSummary: "The output reopened with readable text.",
   });
   assert.deepEqual(parseExportArtifactVersionRequest({
     workspaceId: "workspace",
     versionId: "version",
     relativePath: "exports/final.docx",
-    expectedContentHash: null,
   }), {
     workspaceId: "workspace",
     versionId: "version",
     relativePath: "exports/final.docx",
-    expectedContentHash: null,
   });
   assert.deepEqual(parseOpenArtifactVersionRequest({ versionId: "version" }), {
     versionId: "version",
@@ -347,6 +349,12 @@ test("accepts only bounded Artifact capture, export, and Review requests", () =>
     conversationPanelOpen: false,
   }).mode, "artifact-review");
 
+  const validCapture = {
+    producedByConversationId: "conversation",
+    producedByRunId: "run",
+    validationStatus: "passed",
+    validationSummary: "The output reopened.",
+  } as const;
   for (const invalid of [
     {
       workspaceId: "workspace",
@@ -378,13 +386,17 @@ test("accepts only bounded Artifact capture, export, and Review requests", () =>
       absolutePath: "/private/file.docx",
     },
   ]) {
-    assert.throws(() => parseCaptureWorkspaceFileRequest(invalid), /path|duplicate|supported fields/i);
+    assert.throws(
+      () => parseCaptureWorkspaceFileRequest({ ...validCapture, ...invalid }),
+      /path|duplicate|supported fields/i,
+    );
   }
   assert.throws(() => parseExportArtifactVersionRequest({
     workspaceId: "workspace",
     versionId: "version",
     relativePath: "file.docx",
-  }), /expectedContentHash/i);
+    expectedContentHash: null,
+  }), /supported fields/i);
 });
 
 test("validates provider and Agent inputs at the IPC boundary", () => {

@@ -154,6 +154,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       producedByRunId: demoArtifactRun.id,
       toolchain: "Agent Skill: documents",
       limitations: ["复杂宏未验证"],
+      validationStatus: "passed",
+      validationSummary: "已重新打开并确认正文可读。",
       createdAt: now,
     }, {
       id: "artifact-version-2",
@@ -178,6 +180,8 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
       producedByRunId: demoArtifactRun.id,
       toolchain: "Agent Skill: documents + LibreOffice 25.2",
       limitations: ["复杂宏未验证"],
+      validationStatus: "passed",
+      validationSummary: "已重新打开并确认修订正文可读。",
       createdAt: now,
     }],
     centerStates: [
@@ -606,10 +610,12 @@ function createMockDesktopApi(): ScopeGuardDesktopApi {
         },
         contentHash: "a".repeat(64),
         byteSize: 1,
-        producedByConversationId: request.producedByConversationId ?? null,
-        producedByRunId: request.producedByRunId ?? null,
+        producedByConversationId: request.producedByConversationId,
+        producedByRunId: request.producedByRunId,
         toolchain: request.toolchain,
         limitations: request.limitations ?? [],
+        validationStatus: "passed" as const,
+        validationSummary: request.validationSummary,
         createdAt: timestamp,
       };
       const artifact = {

@@ -434,6 +434,8 @@ test("persists immutable Artifact Versions, provenance, current selection, and R
   try {
     const store = new ScopeGuardStore(path);
     const fixture = createWorkspaceFixture(store, 2);
+    const firstRun = createTerminalRun(store, fixture, "completed", "confirmed");
+    const secondRun = createTerminalRun(store, fixture, "completed", "confirmed");
     const artifact = store.createArtifact({
       workspaceId: fixture.workspace.id,
       title: "Quarterly report",
@@ -452,7 +454,10 @@ test("persists immutable Artifact Versions, provenance, current selection, and R
       contentHash: "a".repeat(64),
       byteSize: 40,
       producedByConversationId: fixture.conversations[0]!.id,
+      producedByRunId: firstRun.id,
       toolchain: "import",
+      validationStatus: "passed",
+      validationSummary: "The source reopened with readable content.",
     }, `aa/${"a".repeat(64)}`);
     const second = store.createArtifactVersion({
       artifactId: artifact.id,
@@ -466,8 +471,11 @@ test("persists immutable Artifact Versions, provenance, current selection, and R
       contentHash: "b".repeat(64),
       byteSize: 41,
       producedByConversationId: fixture.conversations[0]!.id,
+      producedByRunId: secondRun.id,
       toolchain: "Agent Skill: documents",
       limitations: ["External viewer required."],
+      validationStatus: "passed",
+      validationSummary: "The revised source reopened with readable content.",
     }, `bb/${"b".repeat(64)}`);
     assert.equal(first.version, 1);
     assert.equal(second.version, 2);
@@ -519,6 +527,7 @@ test("rejects cross-Workspace Artifact provenance and Review selections", () => 
   try {
     const first = createWorkspaceFixture(store, 1);
     const second = createWorkspaceFixture(store, 1);
+    const run = createTerminalRun(store, first, "completed", "confirmed");
     assert.throws(() => store.createArtifact({
       workspaceId: first.workspace.id,
       title: "Wrong owner",
@@ -540,7 +549,11 @@ test("rejects cross-Workspace Artifact provenance and Review selections", () => 
       },
       contentHash: "c".repeat(64),
       byteSize: 1,
+      producedByConversationId: first.conversations[0]!.id,
+      producedByRunId: run.id,
       toolchain: "import",
+      validationStatus: "passed",
+      validationSummary: "The output reopened.",
     }, `cc/${"c".repeat(64)}`), /source must belong/i);
   } finally {
     store.close();
@@ -564,7 +577,37 @@ test("rejects Artifact Versions backed by an unconfirmed Run at the storage boun
       producedByConversationId: fixture.conversations[0]!.id,
       producedByRunId: run.id,
       toolchain: "Agent write Tool",
+      validationStatus: "passed",
+      validationSummary: "The output reopened.",
     }, `dd/${"d".repeat(64)}`), /confirmed Tool effects/i);
+  } finally {
+    store.close();
+  }
+});
+
+test("rejects Artifact Run provenance without its producing Conversation", () => {
+  const store = new ScopeGuardStore(":memory:");
+  try {
+    const fixture = createWorkspaceFixture(store, 1);
+    const artifact = store.createArtifact({
+      workspaceId: fixture.workspace.id,
+      title: "Incomplete provenance",
+      format: "txt",
+    });
+    const run = createTerminalRun(store, fixture, "completed", "confirmed");
+    const incomplete = {
+      artifactId: artifact.id,
+      contentHash: "f".repeat(64),
+      byteSize: 1,
+      producedByRunId: run.id,
+      toolchain: "Agent write Tool",
+      validationStatus: "passed",
+      validationSummary: "The output reopened.",
+    } as unknown as Parameters<ScopeGuardStore["createArtifactVersion"]>[0];
+    assert.throws(
+      () => store.createArtifactVersion(incomplete, `ff/${"f".repeat(64)}`),
+      /producing Conversation/i,
+    );
   } finally {
     store.close();
   }
@@ -589,6 +632,8 @@ test("keeps Artifact provenance Runs in the snapshot after they leave the recent
       producedByConversationId: fixture.conversations[0]!.id,
       producedByRunId: provenanceRun.id,
       toolchain: "Agent write Tool",
+      validationStatus: "passed",
+      validationSummary: "The output reopened.",
     }, `ee/${"e".repeat(64)}`);
     for (let index = 0; index < 100; index += 1) {
       createTerminalRun(store, fixture, "completed", "confirmed");

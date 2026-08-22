@@ -1,7 +1,6 @@
 import {
   parseArtifactFormat,
   parseDispatchPrompt,
-  parseSha256Digest,
   parseWorkspaceCenterState,
   parseWorkspaceLayout,
   parseWorkspaceRelativePath,
@@ -206,10 +205,12 @@ export type CaptureWorkspaceFileRequest = {
   artifactId?: Id;
   title?: string;
   format?: string;
-  producedByConversationId?: Id | null;
-  producedByRunId?: Id | null;
+  producedByConversationId: Id;
+  producedByRunId: Id;
   toolchain: string;
   limitations?: string[];
+  validationStatus: "passed" | "partial" | "failed";
+  validationSummary: string;
 };
 
 export type CapturedArtifactVersion = {
@@ -221,7 +222,6 @@ export type ExportArtifactVersionRequest = {
   workspaceId: Id;
   versionId: Id;
   relativePath: string;
-  expectedContentHash: string | null;
 };
 
 export type SetArtifactCurrentVersionRequest = {
@@ -715,11 +715,27 @@ export function parseCaptureWorkspaceFileRequest(
     "relativePath",
     "title",
     "toolchain",
+    "validationStatus",
+    "validationSummary",
     "workspaceId",
   ]);
   const toolchain = requireNonEmptyString(record.toolchain, "toolchain");
   if (new TextEncoder().encode(toolchain).byteLength > 512) {
     throw new Error("toolchain must not exceed 512 bytes of UTF-8 text.");
+  }
+  if (
+    record.validationStatus !== "passed" &&
+    record.validationStatus !== "partial" &&
+    record.validationStatus !== "failed"
+  ) {
+    throw new Error("validationStatus must be passed, partial, or failed.");
+  }
+  const validationSummary = requireNonEmptyString(
+    record.validationSummary,
+    "validationSummary",
+  );
+  if (new TextEncoder().encode(validationSummary).byteLength > 2_048) {
+    throw new Error("validationSummary must not exceed 2048 bytes of UTF-8 text.");
   }
   return {
     workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
@@ -728,16 +744,15 @@ export function parseCaptureWorkspaceFileRequest(
     artifactId: optionalNonEmptyString(record.artifactId, "artifactId"),
     title: optionalNonEmptyString(record.title, "title"),
     format: record.format === undefined ? undefined : parseArtifactFormat(record.format),
-    producedByConversationId: optionalNullableNonEmptyString(
+    producedByConversationId: requireNonEmptyString(
       record.producedByConversationId,
       "producedByConversationId",
     ),
-    producedByRunId: optionalNullableNonEmptyString(
-      record.producedByRunId,
-      "producedByRunId",
-    ),
+    producedByRunId: requireNonEmptyString(record.producedByRunId, "producedByRunId"),
     toolchain,
     limitations: parseLimitations(record.limitations),
+    validationStatus: record.validationStatus,
+    validationSummary,
   };
 }
 
@@ -745,21 +760,14 @@ export function parseExportArtifactVersionRequest(
   value: unknown,
 ): ExportArtifactVersionRequest {
   const record = requireExactRecord(value, "Artifact export input", [
-    "expectedContentHash",
     "relativePath",
     "versionId",
     "workspaceId",
   ]);
-  if (record.expectedContentHash !== null && record.expectedContentHash === undefined) {
-    throw new Error("expectedContentHash must be a SHA-256 digest or null.");
-  }
   return {
     workspaceId: requireNonEmptyString(record.workspaceId, "workspaceId"),
     versionId: requireNonEmptyString(record.versionId, "versionId"),
     relativePath: parseWorkspaceRelativePath(record.relativePath),
-    expectedContentHash: record.expectedContentHash === null
-      ? null
-      : parseSha256Digest(record.expectedContentHash, "expectedContentHash"),
   };
 }
 
