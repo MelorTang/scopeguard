@@ -99,7 +99,15 @@ try {
     /版本 2/,
   );
   assert.equal(provider.requests.every(({ authorized }) => authorized), true);
-  assert.equal(provider.requests.filter(({ roles }) => roles.includes("tool")).length, 2);
+  assert.equal(provider.requests.length, 4);
+  const requestsWithToolHistory = provider.requests.filter(
+    ({ roles }) => roles.includes("tool"),
+  ).length;
+  const toolContinuations = provider.requests.filter(
+    ({ roles }) => roles.at(-1) === "tool",
+  ).length;
+  assert.equal(requestsWithToolHistory, 3);
+  assert.equal(toolContinuations, 2);
   await assertTreeDoesNotContain(root, [secret, pilotStorageKey]);
 
   console.log(JSON.stringify({
@@ -120,7 +128,8 @@ try {
     conflictStopped: second.conflictStopped,
     reviewRestoredAcrossDesktopRestart: second.reviewRestored,
     exportedRelativePaths: second.exportedRelativePaths,
-    providerToolContinuations: provider.requests.filter(({ roles }) => roles.includes("tool")).length,
+    providerRequestsWithToolHistory: requestsWithToolHistory,
+    providerToolContinuations: toolContinuations,
     officeWorkflow: "Pi bash Tool + docx 9.7.1 + mammoth 1.12.1",
     outputReopenedAfterCreateAndRevise: true,
     credentialRecoveredFromDiskVault: true,
