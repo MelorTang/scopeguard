@@ -53,7 +53,7 @@ try {
   assert.equal(first.phase, 1);
   assert.equal(first.rendererApi, "production-preload-ipc");
   assert.equal(first.versionIds.length, 2);
-  assert.equal(first.inputHashes.length, 2);
+  assert.equal(first.inputHashes.length, 3);
   assert.notEqual(first.hashes[0], first.hashes[1]);
   assert.equal(first.conflictStopped, true);
   assert.equal(first.reviewRestored, true);
