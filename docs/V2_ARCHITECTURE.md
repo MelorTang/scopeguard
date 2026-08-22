@@ -146,8 +146,9 @@ unopenable state stops startup; it never creates an empty replacement Session.
 4. Phase 3: multi-Conversation workbench, explicit Dispatch, and recovery.
    Candidate implementation has passed independent review but still awaits
    exact-candidate Windows development and staged Pilot acceptance.
-5. Phase 4: Artifact Review and the Agent file-editing lifecycle. Candidate
-   implementation under verification; not yet accepted.
+5. Phase 4: Artifact Review and the Agent file-editing lifecycle. Accepted on
+   2026-08-22 at runtime evidence commit `9e4064f` after exact-candidate Windows
+   development/staged Pilots and independent Standards and Spec review passed.
 6. Phase 5: packaging, cross-platform verification, and real-project pilot.
 
 Each phase advances only after the exit gate in

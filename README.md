@@ -19,7 +19,9 @@ implementation replaces the active Native Harness composition with
 by [ADR 0026](./docs/adr/0026-replace-the-native-harness-with-pi-runtime.md).
 The Phase 3 multi-Conversation layout and explicit Dispatch implementation is a
 candidate on GitHub issue #26; it is not accepted until the Windows development
-and staged Pilots and independent review pass.
+and staged Pilots and independent review pass. Phase 4 Artifact Review and the
+Agent file-editing lifecycle are accepted at runtime evidence commit `9e4064f`
+after both Windows Pilots and independent Standards and Spec review passed.
 
 The retired enterprise route remains recoverable at:
 
@@ -71,6 +73,8 @@ pnpm pilot:pi-runtime:staged
 pnpm --filter @scopeguard/desktop test:renderer
 pnpm pilot:phase3
 pnpm pilot:phase3:staged
+pnpm pilot:phase4
+pnpm pilot:phase4:staged
 pnpm dev:web
 pnpm dev
 ```
@@ -81,7 +85,7 @@ a disposable Desktop host, deterministic Provider, real pinned Pi RPC, full
 host restart, opaque Session resume, and a continued second turn. Linux Pilots
 are optional engineering evidence and do not imply product support.
 
-On macOS, unsigned Phase 2 and Phase 3 Pilot commands intentionally fail before
+On macOS, unsigned Phase 2 through Phase 4 Pilot commands intentionally fail before
 Electron is spawned. There is no environment-variable override. Signed macOS
 installation, `safeStorage`, and restart recovery use a separate Phase 5 entry point.
 Acceptance gates are defined in [VERIFICATION.md](./docs/VERIFICATION.md).

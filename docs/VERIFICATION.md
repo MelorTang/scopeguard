@@ -1,8 +1,9 @@
 # ScopeGuard V1 Verification
 
 Status: Current acceptance entry for the personal multi-Agent reset. Phases 0,
-1, and 2 are accepted. Historical Native Harness and Managed Execution checks
-are not release gates for the active Runtime.
+1, 2, and 4 are accepted. Phase 3 remains under its separate #26 acceptance
+gate. Historical Native Harness and Managed Execution checks are not release
+gates for the active Runtime.
 
 ## Phase 0: Product Reset
 
@@ -134,9 +135,9 @@ Exit gate:
 
 ## Phase 4: Artifact Review And Agent File Editing
 
-Status: candidate implementation under verification. Phase 4 is not accepted
-until GitHub issue #27 passes the exact-candidate Windows development and staged
-Pilots plus an independent Standards and Spec review.
+Status: Accepted on 2026-08-22. Runtime evidence commit `9e4064f` passed the
+exact-candidate Windows development and staged Pilots plus independent Standards
+and Spec review. GitHub issue #27 records the complete evidence.
 
 Exit gate:
 
@@ -170,6 +171,23 @@ that the test-only DOCX libraries are absent from the staged product. This
 evidence applies only to the declared workflow; it does not add a ScopeGuard
 DOCX editing guarantee. Unsigned macOS Phase 4 Pilot automation rejects before
 Electron spawn.
+
+Acceptance evidence on `9e4064f`:
+
+- Windows 11 development and staged each passed all 38 Pilot checks with two
+  distinct Desktop, Agent Host, and Renderer processes, immutable v1/v2
+  restoration, three exact input identities, conflict rejection, export
+  recovery, Provider Tool history, and disk Vault credential recovery.
+- The external post-run check found zero candidate-related Electron or Node
+  processes. Successful Pilot state and package staging were removed; failed
+  assertion diagnostics from earlier candidates remain retained as failures.
+- Repository tests passed 175/175, Renderer Playwright passed 11/11, and Pi RPC
+  qualification passed 26/26. Frozen install, typecheck, build, package
+  verification, Markdown links, secret/temp scans, and `git diff --check`
+  passed. Package verification reported one Pi Runtime tree, no source maps or
+  bundled Workspace imports, and no test-only file-workflow dependencies.
+- Standards review passed with zero hard findings and one non-blocking naming
+  smell. Spec implementation review passed with zero findings.
 
 ## Phase 5: Usable Desktop Milestone
 
@@ -211,7 +229,7 @@ pnpm pilot:phase3
 pnpm pilot:phase3:staged
 ```
 
-The Phase 4 candidate adds:
+The accepted Phase 4 gate adds:
 
 ```bash
 pnpm pilot:phase4
